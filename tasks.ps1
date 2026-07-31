@@ -13,6 +13,20 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Invoke-Native {
+    param(
+        [string]$Name,
+        [string[]]$Arguments
+    )
+    try {
+        & $Name @Arguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "$Name exited with code $LASTEXITCODE"
+        }
+    } finally {
+    }
+}
+
 function Show-Help {
     Write-Host @"
 Usage: .\tasks.ps1 <command>
@@ -57,6 +71,11 @@ switch ($Command) {
             exit 1
         }
         Fail-IfMissing "node" "Node.js LTS is required. See docs/LOCAL_DEVELOPMENT.md"
+        $nodeVersion = node --version 2>&1
+        if ($nodeVersion -notmatch "v2[0-9]") {
+            Write-Host "ERROR: Node.js LTS (v20+) is required. Found: $nodeVersion" -ForegroundColor Red
+            exit 1
+        }
         Fail-IfMissing "npm" "npm is required. See docs/LOCAL_DEVELOPMENT.md"
         Fail-IfMissing "docker" "Docker Compose v2 is required. See docs/LOCAL_DEVELOPMENT.md"
         Fail-IfMissing "supabase" "Supabase CLI is required. See docs/LOCAL_DEVELOPMENT.md"
@@ -65,67 +84,67 @@ switch ($Command) {
         if (-not (Test-Path ".env.local")) { Copy-Item .env.example .env.local; Write-Host "Created .env.local" } else { Write-Host ".env.local already exists, skipping" }
         if (-not (Test-Path ".env.test")) { Copy-Item .env.example .env.test; Write-Host "Created .env.test" } else { Write-Host ".env.test already exists, skipping" }
         Write-Host "==> Installing backend dependencies..." -ForegroundColor Cyan
-        Set-Location backend; python -m pip install -e ".[dev]"; Set-Location ..
+        try { Push-Location backend; Invoke-Native python -m pip install -e ".[dev]" -r requirements.txt } finally { Pop-Location }
         Write-Host "==> Installing frontend dependencies..." -ForegroundColor Cyan
-        Set-Location frontend; npm ci; Set-Location ..
+        try { Push-Location frontend; Invoke-Native npm ci } finally { Pop-Location }
         Write-Host "==> Bootstrap complete." -ForegroundColor Green
     }
     "format" {
         Write-Host "==> Formatting backend..." -ForegroundColor Cyan
-        Set-Location backend; ruff format .; Set-Location ..
+        try { Push-Location backend; Invoke-Native ruff format . } finally { Pop-Location }
         Write-Host "==> Formatting frontend..." -ForegroundColor Cyan
-        Set-Location frontend; npm run format; Set-Location ..
+        try { Push-Location frontend; Invoke-Native npm run format } finally { Pop-Location }
         Write-Host "==> Format complete." -ForegroundColor Green
     }
     "lint" {
         Write-Host "==> Linting backend..." -ForegroundColor Cyan
-        Set-Location backend; ruff check .; Set-Location ..
+        try { Push-Location backend; Invoke-Native ruff check . } finally { Pop-Location }
         Write-Host "==> Linting frontend..." -ForegroundColor Cyan
-        Set-Location frontend; npm run lint; Set-Location ..
+        try { Push-Location frontend; Invoke-Native npm run lint } finally { Pop-Location }
         Write-Host "==> Lint complete." -ForegroundColor Green
     }
     "type-check" {
         Write-Host "==> Type-checking backend..." -ForegroundColor Cyan
-        Set-Location backend; mypy app; Set-Location ..
+        try { Push-Location backend; Invoke-Native mypy app } finally { Pop-Location }
         Write-Host "==> Type-checking frontend..." -ForegroundColor Cyan
-        Set-Location frontend; npm run type-check; Set-Location ..
+        try { Push-Location frontend; Invoke-Native npm run type-check } finally { Pop-Location }
         Write-Host "==> Type-check complete." -ForegroundColor Green
     }
     "test" {
         Write-Host "==> Running backend tests..." -ForegroundColor Cyan
-        Set-Location backend; python -m pytest tests/ -v; Set-Location ..
+        try { Push-Location backend; Invoke-Native python -m pytest tests/ -v } finally { Pop-Location }
         Write-Host "==> Running frontend tests..." -ForegroundColor Cyan
-        Set-Location frontend; npm test; Set-Location ..
+        try { Push-Location frontend; Invoke-Native npm test } finally { Pop-Location }
         Write-Host "==> Tests complete." -ForegroundColor Green
     }
     "local-up" {
         Write-Host "==> Starting local Supabase stack..." -ForegroundColor Cyan
-        supabase start
+        Invoke-Native supabase start
         Write-Host "==> Local services started." -ForegroundColor Green
     }
     "local-down" {
         Write-Host "==> Stopping local Supabase stack..." -ForegroundColor Cyan
-        supabase stop
+        Invoke-Native supabase stop
         Write-Host "==> Local services stopped." -ForegroundColor Green
     }
     "local-reset" {
         Write-Host "==> Resetting local Supabase..." -ForegroundColor Cyan
-        supabase stop
-        supabase start
-        supabase db reset
+        Invoke-Native supabase stop
+        Invoke-Native supabase start
+        Invoke-Native supabase db reset
         Write-Host "==> Local reset complete." -ForegroundColor Green
     }
     "api-dev" {
         Write-Host "==> Starting FastAPI dev server..." -ForegroundColor Cyan
-        Set-Location backend; python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000; Set-Location ..
+        try { Push-Location backend; Invoke-Native python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 } finally { Pop-Location }
     }
     "frontend-dev" {
         Write-Host "==> Starting Vite dev server..." -ForegroundColor Cyan
-        Set-Location frontend; npm run dev; Set-Location ..
+        try { Push-Location frontend; Invoke-Native npm run dev } finally { Pop-Location }
     }
     "research-cycle" {
         Write-Host "==> Running research cycle..." -ForegroundColor Cyan
-        Set-Location backend; python -m app.cli.run_research_cycle --experiment-id dummy --occurrence 2026-01-01T00:00:00Z; Set-Location ..
+        try { Push-Location backend; Invoke-Native python -m app.cli.run_research_cycle --experiment-id dummy --occurrence 2026-01-01T00:00:00Z } finally { Pop-Location }
     }
     "all-checks" {
         .\tasks.ps1 format
@@ -135,7 +154,7 @@ switch ($Command) {
     }
     "security-test" {
         Write-Host "==> Running security tests..." -ForegroundColor Cyan
-        Set-Location backend; bandit -r app/; pip-audit; Set-Location ..
+        try { Push-Location backend; Invoke-Native bandit -r app/; Invoke-Native pip-audit } finally { Pop-Location }
     }
     "docs-check" {
         Write-Host "==> Checking README structure matches implementation..." -ForegroundColor Cyan
@@ -147,6 +166,13 @@ switch ($Command) {
         if (-not (Test-Path "tasks.ps1")) { $errors += "tasks.ps1 missing" }
         if (-not (Test-Path ".env.example")) { $errors += ".env.example missing" }
         if (-not (Test-Path ".gitignore")) { $errors += ".gitignore missing" }
+        if (-not (Test-Path "backend/requirements.txt")) { $errors += "backend/requirements.txt missing" }
+        if (-not (Test-Path "frontend/package-lock.json")) { $errors += "frontend/package-lock.json missing" }
+        if (-not (Test-Path "frontend/public")) { $errors += "frontend/public/ missing" }
+        if (-not (Test-Path "supabase/migrations")) { $errors += "supabase/migrations/ missing" }
+        if (-not (Test-Path "tests")) { $errors += "tests/ missing" }
+        if (-not (Test-Path "generated-artifacts")) { $errors += "generated-artifacts/ missing" }
+        if (-not (Test-Path "cloudflare-pages.toml")) { $errors += "cloudflare-pages.toml missing" }
         if ($errors.Count -gt 0) {
             foreach ($e in $errors) { Write-Host "FAIL: $e" -ForegroundColor Red }
             exit 1

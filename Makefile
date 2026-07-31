@@ -75,14 +75,18 @@ security-test: ## Run static, dependency, secret, and artifact checks
 
 docs-check: ## Run documentation and generated-artifact checks
 	@echo "==> Checking README structure matches implementation..."
-	@test -f backend/app/main.py || { echo "FAIL: backend/app/main.py missing"; exit 1; }
-	@test -f frontend/src/App.tsx || { echo "FAIL: frontend/src/App.tsx missing"; exit 1; }
-	@test -f supabase/config.toml || { echo "FAIL: supabase/config.toml missing"; exit 1; }
-	@test -f Makefile || { echo "FAIL: Makefile missing"; exit 1; }
-	@test -f tasks.ps1 || { echo "FAIL: tasks.ps1 missing"; exit 1; }
-	@test -f .env.example || { echo "FAIL: .env.example missing"; exit 1; }
-	@test -f .gitignore || { echo "FAIL: .gitignore missing"; exit 1; }
-	@echo "==> README structure matches implementation. Docs check passed."
+	@errors=0; \
+	for f in backend/app/main.py frontend/src/App.tsx supabase/config.toml Makefile tasks.ps1 .env.example .gitignore backend/requirements.txt frontend/package-lock.json frontend/public supabase/migrations tests generated-artifacts cloudflare-pages.toml; do \
+		if [ ! -e "$$f" ]; then \
+			echo "FAIL: $$f missing"; \
+			errors=$$((errors + 1)); \
+		fi; \
+	done; \
+	if [ $$errors -gt 0 ]; then \
+		echo "Docs check failed: $$errors path(s) missing"; \
+		exit 1; \
+	fi; \
+	echo "==> README structure matches implementation. Docs check passed."
 
 export-test: ## Create a test logical export
 	@echo "==> Export test placeholder."

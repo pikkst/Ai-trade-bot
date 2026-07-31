@@ -7,9 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "format": "echo \"No formatter configured yet\" && exit 0",
+    "format": "echo \"Frontend formatter not yet configured\" && exit 1",
     "type-check": "tsc --noEmit",
-    "test": "echo \"No tests configured yet\" && exit 0",
+    "test": "echo \"Frontend tests not yet configured\" && exit 1",
     "preview": "vite preview"
   },
   "dependencies": {
