@@ -1,227 +1,323 @@
 # AGENTS.md
 
-## Purpose
+Last reviewed: 2026-08-01  
+Status: Authoritative implementation guide for AI coding agents and human contributors
 
-This is the authoritative implementation guide for AI coding agents and human contributors working on **The Daily Roast AI**.
+## 1. Purpose
 
-The Daily Roast AI is an evidence-driven market-intelligence, backtesting, paper-trading, and Gemini-assisted decision-support platform. The MVP and production research service never execute live trades.
+This file governs implementation work for **The Daily Roast AI**, an evidence-driven market-intelligence, backtesting, paper-trading, and Gemini-assisted decision-support platform.
 
-## Instruction Precedence
+The MVP, cloud demo, controlled experiment, staging environment, and production research service remain paper-only. This repository does not authorize live trading, private Binance execution, withdrawals, custody, leverage, margin, futures, options, or short selling.
 
-1. Security, financial integrity, privacy, and fail-closed requirements
-2. This file
-3. `docs/PRODUCT_REQUIREMENTS.md`
-4. `docs/PRODUCT_VISION.md`
-5. `docs/ARCHITECTURE.md`, environment architecture documents, and accepted ADRs
-6. `docs/BRAND_GUIDELINES.md`, `docs/MISSION_AND_VALUES.md`, `docs/DESIGN_PRINCIPLES.md`, and `docs/NAMING_CONVENTIONS.md`
-7. Domain specifications
-8. The selected detailed task file
-9. Existing implementation conventions
+## 2. Instruction Precedence
 
-Material conflicts must be corrected in documentation before implementation.
+1. security, privacy, financial-integrity, and fail-closed requirements;
+2. this file;
+3. `docs/PRODUCT_REQUIREMENTS.md`;
+4. accepted architecture documents and ADRs;
+5. domain and workspace implementation specifications;
+6. `TASKS.md` for implementation order and hard dependencies;
+7. the detailed task cards referenced by the selected master task;
+8. existing implementation conventions.
 
-## Official Product Identity
+A material conflict must be corrected in documentation before implementation. Do not choose whichever file is newest or easiest.
 
-- Official product name: **The Daily Roast AI**
-- Official tagline: **Evidence-Driven Market Intelligence**
-- Primary domain: `thedailyroast.online`
-- Application domain: `app.thedailyroast.online`
-- API domain: `api.thedailyroast.online`
-- Documentation domain: `docs.thedailyroast.online`
+## 3. Canonical Task Workflow
 
-`Ai-trade-bot` is a technical repository identifier. User-facing copy, interface headings, reports, emails, notifications, metadata, and new documentation titles MUST use **The Daily Roast AI**.
+`TASKS.md` is the only execution-order authority.
 
-Do not introduce user-facing names such as `AI Trade Bot`, `Crypto Bot`, `Trading Bot`, or `Daily Roast Bot`. Historical technical references may remain only where changing them would break repository URLs, migration history, or external identifiers.
+- Start with Master Task 1 (`M001`).
+- Select one master task whose hard dependencies are `[x] VERIFIED`.
+- Select the exact detailed cards referenced by that master task.
+- Do not begin a later workspace sprint because its documentation exists.
+- A detailed task file provides acceptance criteria but does not override `TASKS.md` dependencies.
+- Documentation creation is not implementation completion.
+- Only `[x] VERIFIED` is complete.
 
-## Brand and Communication Rules
+Detailed task catalogs include:
 
-All product-facing output MUST follow the brand foundation:
+- `UX_DESIGN_TASKS.md`;
+- `CLOUD_MVP_TASKS.md`;
+- `LOCAL_AND_PRODUCTION_TASKS.md`;
+- `SPRINT_3_TASKS.md` through `SPRINT_20_TASKS.md`.
 
-- evidence over hype;
-- research before execution;
-- uncertainty must be explicit;
-- AI confidence must never be presented as probability of profit;
-- simulated results must be labeled as simulated;
-- no guaranteed-return, urgency, fear-of-missing-out, or get-rich-quick language;
-- no rocket, moon, lambo, or casino framing;
-- user control, risk, provenance, and data freshness must remain visible.
+Read `docs/IMPLEMENTATION_EXECUTION_PLAN.md` before starting implementation.
 
-Use calm, professional, concise American English. Prefer precise terms defined in `docs/NAMING_CONVENTIONS.md`.
+## 4. Official Product Identity
 
-## Task Sources
+- Product name: **The Daily Roast AI**
+- Tagline: **Evidence-Driven Market Intelligence**
+- Product domain: `thedailyroast.online`
+- Application: `app.thedailyroast.online`
+- API: `api.thedailyroast.online`
+- Documentation: `docs.thedailyroast.online`
+- Status: `status.thedailyroast.online`
 
-- `TASKS.md` — shared domain implementation
-- `CLOUD_MVP_TASKS.md` — free cloud demo and experiment deployment
-- `LOCAL_AND_PRODUCTION_TASKS.md` — local development, test automation, staging, production research, and post-launch work
+`Ai-trade-bot` is a technical repository identifier only. User-facing copy must use the official product name.
 
-Select one focused task from the correct task source and read all references before editing code.
+## 5. Brand and Communication Rules
 
-## Mandatory Rules
+All user-facing output must:
 
-1. Do not implement live trading, private Binance execution, leverage, margin, futures, shorting, withdrawals, or custody.
-2. Gemini is advisory and cannot bypass deterministic strategy, risk, execution, accounting, or reconciliation.
-3. Risk and integrity failures fail closed.
-4. Use `Decimal` for all financial values.
-5. Use timezone-aware UTC timestamps.
-6. External side effects, scheduled cycles, migrations, and financial commands must be idempotent or safely single-execution.
-7. Every decision and scheduled cycle must be reproducible and auditable.
-8. Never commit or expose secrets, production data, personal data, or provider credentials.
-9. Never weaken tests, RLS, authorization, typing, validation, risk, accounting, backup, or recovery controls to make CI pass.
-10. Do not claim profitability, production availability, or recovery capability without measured evidence.
-11. Do not treat a free-tier service as a guaranteed production dependency.
-12. Do not copy production data into local or test environments without an approved anonymization process.
-13. Do not introduce a new user-facing product name, tagline, sub-brand, color token, or terminology without updating the brand foundation and audit.
+- put evidence before claims;
+- label simulation and paper execution explicitly;
+- expose uncertainty, freshness, risk, reconciliation, limitations, and provenance;
+- distinguish Gemini interpretation from deterministic strategy and risk;
+- describe AI confidence as analytical confidence, never probability of profit;
+- avoid guaranteed-return, urgency, fear-of-missing-out, casino, moon, rocket, or get-rich-quick language;
+- avoid financial advice or personal suitability claims;
+- preserve equivalent safety meaning in English and Estonian.
 
-## Environment Rules
+## 6. Active MVP Architecture
+
+The active implementation profile uses:
+
+- Python 3.12 modular monolith;
+- FastAPI API and one-shot research-cycle CLI sharing application/domain services;
+- React, TypeScript, Vite, React Router, and TanStack Query;
+- Supabase PostgreSQL and Auth;
+- SQLAlchemy 2 and additive Alembic/Supabase migrations;
+- Binance Spot public REST and finalized candles;
+- Google Gemini through the official `google-genai` SDK;
+- GitHub Actions best-effort scheduling;
+- Cloudflare Pages and Render Free for the first cloud demo;
+- PostgreSQL advisory locks or durable leases;
+- append-only double-entry ledger and mandatory reconciliation.
+
+Deferred unless measured need, ADR, migration plan, tests, cost review, and owner approval exist:
+
+- Redis and ARQ;
+- persistent workers;
+- Binance WebSocket ingestion;
+- hosted Prometheus and Grafana;
+- Kubernetes;
+- paid/high-availability infrastructure;
+- Binance test/private credentials;
+- live trading.
+
+Do not implement a deferred component merely because an old task card mentions it.
+
+## 7. Repository Boundaries
+
+```text
+backend/         FastAPI, CLI, application/domain services, provider adapters
+frontend/        React/TypeScript product and public demo
+ai/              prompts, schemas, evaluations, and fixtures
+supabase/        local config, migrations, RLS, functions, and seed data
+infrastructure/  CI, deployment, scripts, and environment definitions
+tests/           unit, property, integration, contract, E2E, security, recovery
+docs/            product, architecture, domain, UX, operations, and governance
+```
+
+Domain code must not import FastAPI, SQLAlchemy ORM models, Supabase SDK types, Binance SDK types, or Gemini SDK types.
+
+## 8. Mandatory Safety Invariants
+
+1. Gemini never executes trades or mutates state.
+2. Strategies emit intents and never create orders.
+3. Every non-HOLD intent passes deterministic risk.
+4. Missing or invalid risk configuration fails closed.
+5. The append-only ledger is the financial source of truth.
+6. Fills and accounting effects commit atomically.
+7. Portfolio projections reconcile to the ledger.
+8. A reconciliation mismatch halts new entry activity.
+9. All financial values use decimal arithmetic and explicit currency/asset units.
+10. All timestamps are timezone-aware UTC internally.
+11. External side effects are idempotent or safely single-execution.
+12. Network calls do not occur inside database transactions.
+13. Finalized decision inputs and used configuration versions are immutable.
+14. Browser roles cannot write directly to critical financial/control tables.
+15. No secret appears in source, fixtures, frontend bundles, prompts, responses, logs, metrics, traces, screenshots, or artifacts.
+16. A running experiment keeps its frozen behavior-set hash.
+17. No automatic test score, AI output, browser control, or CI result can approve a strategy, release, or behavior activation.
+18. Live trading remains disabled.
+
+## 9. Backend Rules
+
+- Use a modular monolith.
+- FastAPI and the research-cycle CLI reuse the same application/domain services.
+- Route handlers and CLI parsing contain no domain logic.
+- Use Pydantic v2 project-owned request/response models.
+- Use SQLAlchemy 2 transaction boundaries owned by application services.
+- Use stable domain errors and safe API envelopes.
+- Require idempotency keys for repeatable side-effect commands.
+- Use optimistic concurrency or expected-version guards for privileged state changes.
+- Persist actor, correlation ID, reason, outcome, and evidence for material commands.
+- Map provider errors to project-owned types.
+- Keep local/runtime filesystems disposable and non-authoritative.
+
+## 10. Supabase and Database Rules
+
+- Local development uses Supabase CLI/PostgreSQL/Auth without needing a cloud project.
+- Cloud environments use separate projects and credentials.
+- Applied migrations are immutable; create new migrations for every change.
+- CI upgrades a clean database to one expected migration head.
+- RLS is enabled on every Data API-visible object.
+- Browser access is deny-by-default.
+- Approved browser reads use documented views or APIs.
+- Browser writes to ledger, fills, risk decisions, AI runs, audit events, experiments, releases, or security-control records are prohibited.
+- Service-role and migration credentials are scoped, separated, and server/workflow-only.
+- A backup is not accepted until restore, migration verification, ledger rebuild, and reconciliation succeed.
+
+## 11. Research-Cycle Rules
+
+One logical cycle must:
+
+1. load the frozen experiment configuration;
+2. acquire a PostgreSQL lock or durable lease;
+3. fetch actual eligible finalized Binance REST data;
+4. validate quality, freshness, ordering, and gaps;
+5. create an immutable snapshot;
+6. calculate versioned deterministic features;
+7. reserve/check Gemini budget and optionally request structured analysis;
+8. validate grounding, schema, safety, certainty, and source validity;
+9. evaluate deterministic strategy;
+10. evaluate deterministic risk;
+11. simulate approved paper execution;
+12. atomically post order/fill/ledger/audit effects;
+13. rebuild or update the portfolio projection;
+14. reconcile;
+15. persist complete cycle and audit evidence;
+16. release or safely expire the lock.
+
+Retries must return existing results or deterministic conflicts and must never duplicate a financial side effect.
+
+## 12. Gemini Rules
+
+- Use `google-genai` only inside the Gemini infrastructure adapter.
+- Use project-owned structured schemas.
+- Send only minimum required structured market evidence.
+- Never send credentials, tokens, personal data, database URLs, unrelated content, or private provider payloads.
+- Separate trusted instructions from untrusted evidence.
+- Disable execution, shell, database, exchange, search, and code tools for the MVP analysis flow.
+- Handle authentication, timeout, cancellation, 429, 5xx, refusal, safety block, empty response, malformed output, invalid schema, unsupported claims, injection, stale source, and budget exhaustion explicitly.
+- Provider success is not validation acceptance.
+- Invalid or unavailable AI evidence degrades to deterministic fallback or HOLD.
+- Normal CI uses deterministic fake providers.
+- Model, provider, prompt, schema, safety, validation, fallback, usage, and budget behavior are versioned.
+
+## 13. Strategy, Risk, Execution, and Accounting Rules
+
+- Deterministic inputs and versions produce deterministic outputs and hashes.
+- Shorting, leverage, margin, futures, options, custody, and withdrawals are prohibited.
+- Position size and order notional are bounded by deterministic risk.
+- Execution models include fees, spread, slippage, precision, minimum notional, partial fills, cancellation, time-in-force, and conservative event timing.
+- One approved risk evaluation creates at most one paper order.
+- Filled quantity never exceeds approved quantity.
+- Ledger transactions balance and remain append-only.
+- Corrections use reversal/replacement evidence rather than mutation.
+- Reconciliation failure blocks final performance and experiment completion.
+
+## 14. Frontend and Accessibility Rules
+
+- TypeScript strict mode is mandatory.
+- Consume project-owned generated API types where available.
+- Use TanStack Query for server state.
+- Use versioned design tokens and canonical components.
+- Preserve environment, simulation, freshness, halt, reconciliation, incident, and critical blocker state globally.
+- Never rely on color alone.
+- Primary workflows support keyboard, screen readers, 200% zoom/reflow, reduced motion, and mobile layouts.
+- Charts require text or tabular alternatives.
+- Frontend calculations are presentation-only; authoritative financial, risk, freshness, reconciliation, permission, SLO, cost, or compatibility results come from the server.
+- No secret-bearing environment variable may enter a client bundle.
+
+## 15. Environment Rules
 
 ### Local
 
-- Use Supabase CLI/local PostgreSQL and Auth.
-- Use fake Binance and Gemini providers by default.
-- Do not require paid credentials for normal development or tests.
-- Support Windows 11 and a Unix-like environment where practical.
-- Use deterministic seed data and isolated test data.
+- no paid provider or cloud credential required;
+- deterministic fakes by default;
+- resettable Supabase/PostgreSQL/Auth;
+- Windows 11 and one Unix-like path documented;
+- synthetic fixtures only.
 
 ### CI
 
-- Use ephemeral or resettable test infrastructure.
-- Never access production Supabase, paid Gemini, or private Binance credentials in ordinary pull requests.
-- Reuse repository commands rather than duplicating hidden CI-only behavior.
-- Verify migrations, RLS, Auth, financial invariants, frontend bundle safety, documentation links, naming consistency, and generated artifacts.
+- ephemeral or resettable infrastructure;
+- fake providers by default;
+- no production data, secrets, paid Gemini, or private Binance access;
+- reuse repository commands;
+- verify migrations, RLS, Auth, financial invariants, builds, security, accessibility, documentation, and generated artifacts.
 
 ### Free Cloud Demo and Paper Experiment
 
-- Use Cloudflare Pages, Render Free, dedicated Supabase Free, GitHub Actions, Binance Spot REST, and bounded Gemini usage.
-- The existing Eventnexus Supabase project must not be reused.
-- Redis, ARQ, persistent WebSocket, hosted Prometheus/Grafana, and private Binance APIs are deferred.
-- Render cold start must not stop the scheduled research cycle.
-- GitHub Actions schedule delay is expected and must never cause fabricated trades.
-- Cloudflare custom domains must follow the domain strategy in `docs/BRAND_GUIDELINES.md`.
+- dedicated Supabase project;
+- Cloudflare Pages, Render Free, GitHub Actions, Binance REST, bounded Gemini;
+- Render is not the scheduler;
+- GitHub schedule is best effort;
+- free-tier limits are not SLA claims;
+- no persistent worker, Redis, ARQ, WebSocket requirement, hosted Prometheus/Grafana, or private Binance.
 
 ### Staging and Production Research
 
-- Use separate database, Auth, Gemini credentials, domains, secrets, and deployment environments.
-- Production artifacts must be validated in staging.
-- Production deployment requires protected environments and manual approval.
-- Migrations run once through a controlled step.
-- Backup and restore evidence, measured SLOs, incident routing, security review, privacy review, and brand-content review are required.
-- A production research service still uses simulated trading only.
+- separate database, Auth, Gemini credentials, domains, secrets, storage, monitoring, and deployment credentials;
+- production artifacts validated in staging;
+- protected environments and manual approval;
+- controlled migration step;
+- tested backup/restore, measured SLOs, incident routing, security/privacy review, cost planning, and rollback readiness;
+- paper-only and live-trading-disabled.
 
-## Repository Boundaries
+## 16. Testing Requirements
 
-```text
-backend/         FastAPI, one-shot CLI, domains, persistence, provider adapters
-frontend/        React and TypeScript interface
-ai/              prompts, schemas, evaluations, fixtures
-supabase/        config, migrations, RLS, database functions, seed data
-infrastructure/  CI, deployment, local tooling, environment definitions
-tests/           unit, property, integration, contract, E2E, recovery tests
-docs/            product, brand, engineering, design, and operations specifications
-```
+Use the layers required by the selected master task:
 
-## Backend Rules
+- unit tests;
+- property tests;
+- migration, constraint, RLS, Auth, transaction, and lease integration tests;
+- provider contract tests using fakes/fixtures;
+- API contract tests;
+- frontend component, accessibility, visual, build, and E2E tests;
+- idempotency, restart, concurrency, and duplicate-delivery tests;
+- ledger, reconstruction, reconciliation, and halt tests;
+- export, restore, rollback, resilience, and incident drills;
+- security scans and secret/bundle inspection;
+- documentation, task, link, OpenAPI, schema, and generated-artifact checks.
 
-- Use a modular monolith.
-- FastAPI and the research-cycle CLI reuse application/domain services.
-- Domain code does not import FastAPI, SQLAlchemy ORM models, Supabase SDK types, Binance types, or Gemini SDK types.
-- The CLI runs without Redis, ARQ, WebSocket, Render availability, or persistent local disk in the active MVP profile.
-- Use PostgreSQL advisory locks or durable leases to prevent overlapping research cycles.
-- Do not perform network calls inside database transactions.
-- Fill, order transition, ledger posting, and audit/outbox state commit atomically.
-- Production architecture changes require an ADR and migration plan.
+Flaky tests are defects. A quarantine requires an issue, owner, reason, and expiry.
 
-## Supabase and Database Rules
+## 17. Work Procedure
 
-- Supabase-managed PostgreSQL is authoritative for the cloud MVP.
-- Supabase Auth supplies identity; FastAPI enforces application roles.
-- Enable RLS on every Data API-visible table or view.
-- Browser access is deny-by-default.
-- Browser writes to ledger, fills, risk decisions, AI runs, audit events, and experiment-control tables are prohibited.
-- Frontend may receive only public URL and publishable-key values.
-- Service-role key, direct database credentials, Gemini key, and future Binance secrets remain server/workflow-only.
-- Migrations are version-controlled and additive. Never edit an applied migration.
-- Local and cloud filesystems are disposable and never authoritative.
-- Backup is not accepted until restore and ledger reconciliation succeed.
+Before editing:
 
-## Research-Cycle Rules
+1. confirm the selected `Mxxx` task and detailed cards;
+2. confirm all hard dependencies are verified;
+3. inspect relevant code, tests, migrations, schemas, and generated artifacts;
+4. list invariants, failure cases, security/privacy impact, environment impact, and verification commands;
+5. avoid unrelated scope.
 
-The one-shot cycle must acquire a database lock or lease, fetch and validate finalized Binance REST data, repair gaps, create immutable snapshot and features, invoke Gemini within budget, validate output, evaluate strategy and risk, simulate approved paper actions, atomically post ledger state, reconcile, persist results, and release the lease.
+During implementation:
 
-Retries must never duplicate financial side effects. Decisions use actual finalized market data, not the intended cron timestamp.
+- keep changes focused;
+- add tests before or with behavior;
+- use project-owned types at boundaries;
+- preserve backward compatibility or document migration;
+- update documentation and generated artifacts in the same change;
+- do not weaken controls to make tests pass.
 
-## Gemini Rules
+Before marking verified:
 
-- Use the official `google-genai` SDK behind `LLMProvider`.
-- Use project-owned structured schemas.
-- Handle authentication, 429, 5xx, timeout, safety block, refusal, empty output, and invalid schema explicitly.
-- Normal CI uses a fake provider.
-- No function calling, search grounding, code execution, database mutation, or order tools.
-- Gemini quota exhaustion degrades to deterministic fallback or HOLD.
-- Production model, prompt, schema, safety settings, usage, and costs are versioned and monitored.
-- Gemini-generated user copy must follow the brand voice and must not make unsupported financial claims.
+1. satisfy every mandatory acceptance criterion;
+2. run and record relevant commands;
+3. verify financial precision, idempotency, RLS, Auth, redaction, risk, ledger, reconciliation, and environment separation;
+4. update `TASKS.md` status/evidence;
+5. update affected specifications, API/schema/database docs, runbooks, changelog, and release evidence;
+6. inspect the final diff and commit;
+7. fetch the commit/PR and verify intended files and test evidence;
+8. record limitations and follow-up IDs.
 
-## Strategy, Risk, and Accounting Rules
-
-- Strategies emit intents; they do not place orders or decide final size.
-- Every actionable intent passes deterministic risk.
-- The append-only double-entry ledger is the financial source of truth.
-- Projections must reconcile with the ledger.
-- Reconciliation mismatch halts the experiment or production research workspace.
-- Paper execution includes fees, spread, slippage, precision, minimum notional, partial fills, and conservative ambiguity handling.
-
-## Frontend and Design Rules
-
-- TypeScript strict mode.
-- Server state uses TanStack Query.
-- Follow `docs/DESIGN_PRINCIPLES.md` and future design-system tokens.
-- Local, demo, paper, staging, production research, stale, cold-start, paused, and halted states must be unmistakable.
-- Never present AI confidence as probability of profit.
-- Risk, uncertainty, provenance, simulation mode, and freshness must not be hidden for visual simplicity.
-- Built assets must contain no server secret.
-- React Router fallback, CSP, CORS, HTTPS, accessibility, and environment-variable allowlists are tested.
-
-## Testing Requirements
-
-- unit and property tests for calculations, state machines, ledger, precision, risk, and idempotency;
-- local Supabase migration, constraint, Auth, and RLS tests;
-- Binance and Gemini contract tests using fakes or controlled fixtures;
-- frontend component, accessibility, build, brand-copy, and E2E tests;
-- one-shot cycle, paper execution, halt, reconciliation, export, and restore drills;
-- duplicate workflow, scheduling delay, cold-start, quota, stale-data, database outage, and recovery tests;
-- staging validation before production research promotion.
-
-See `docs/LOCAL_DEVELOPMENT.md`, `docs/TEST_ENVIRONMENTS.md`, and `docs/PRODUCTION_DEVELOPMENT.md`.
-
-## Task Workflow
-
-Before coding:
-
-1. select one task;
-2. verify dependencies;
-3. read all references;
-4. inspect existing code, migrations, tests, generated artifacts, and relevant brand documents;
-5. define failure cases and evidence.
-
-Before completion:
-
-1. run format, lint, type, tests, migrations, builds, security scans, and applicable recovery checks;
-2. verify no secret or production data in source, logs, artifacts, fixtures, or frontend bundle;
-3. verify idempotency, monetary precision, RLS, risk, reconciliation, environment separation, naming, and user-facing copy;
-4. update documentation and changelog;
-5. satisfy every acceptance criterion and Definition of Done item.
-
-## Prohibited Without Explicit Owner Approval
+## 18. Prohibited Without a Separate Approved Milestone
 
 - live or private exchange execution;
-- weakening RLS, risk limits, halts, ledger, backup, or recovery design;
-- reusing the Eventnexus database;
+- Binance test-environment activation;
+- leverage, margin, derivatives, options, shorting, custody, or withdrawals;
+- weakening RLS, Auth, risk, ledger, reconciliation, backup, recovery, or release gates;
+- reusing the Eventnexus Supabase project;
 - enabling paid usage automatically;
-- introducing Redis, ARQ, or WebSocket as mandatory MVP infrastructure;
-- exposing service-role or provider secrets;
+- adding mandatory Redis/ARQ/WebSocket/hosted metrics without measured need and ADR;
+- exposing service-role, database, Gemini, signing, or exchange secrets;
 - allowing Gemini side-effect tools;
 - editing applied migrations;
-- bypassing staging for production research releases;
-- disabling security or test gates;
-- representing demo success as live-trading approval;
-- changing the official brand name, tagline, or primary domain;
-- using hype, guaranteed-return, or deceptive urgency in product content.
+- bypassing staging for production research;
+- automatic release, strategy, prompt, model, or configuration activation;
+- representing demo or paper performance as live-readiness or profit proof;
+- changing official product identity or using hype/guarantee language without approved brand governance.
