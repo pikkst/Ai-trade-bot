@@ -7,20 +7,20 @@ Status: Authoritative implementation-order and task-governance specification
 
 This document defines the single executable path for building The Daily Roast AI from an empty implementation repository to a verified production-grade research service.
 
-The repository contains detailed domain specifications, UX workstreams, Sprint 3–19 workspace task files, cloud tasks, and local/production tasks. Those files remain authoritative for detailed acceptance criteria, but they do not independently define execution order. `TASKS.md` is the only canonical implementation sequence.
+The repository contains detailed domain specifications, UX workstreams, Sprint 3–20 workspace and synchronization task files, cloud tasks, and local/production tasks. Those files remain authoritative for detailed acceptance criteria, but they do not independently define execution order. `TASKS.md` is the only canonical implementation sequence.
 
-## 2. Problem Being Corrected
+## 2. Problem Corrected by Sprint 20
 
-The previous task system contained valid detailed work but exposed several conflicting execution assumptions:
+The previous task system contained valid detailed work but exposed conflicting execution assumptions:
 
-- `TASKS.md` still treated Redis, ARQ, persistent workers, WebSocket ingestion, Prometheus, and Grafana as MVP P0 requirements;
+- the former `TASKS.md` treated Redis, ARQ, persistent workers, WebSocket ingestion, Prometheus, and Grafana as MVP P0 requirements;
 - the active architecture deliberately defers those systems until measured need and an accepted ADR;
 - local, cloud, UX, and sprint task files could be read as parallel entry points;
 - some supplemental dependencies were cyclic or environment-specific;
 - Sprint 3–19 workspace tasks were not integrated into the root implementation sequence;
-- the documentation audit claimed consistency while the root task backlog still contained superseded architecture.
+- the previous documentation audit claimed consistency while the root task backlog still contained superseded architecture.
 
-This plan replaces those conflicting schedule assumptions without deleting the detailed specifications.
+Sprint 20 replaced those conflicting schedule assumptions without deleting the detailed acceptance catalogs.
 
 ## 3. Canonical Authority
 
@@ -33,7 +33,7 @@ Implementation precedence is:
 5. domain and workspace implementation specifications;
 6. `TASKS.md` for execution order and dependency gates;
 7. detailed task cards referenced by the selected master task;
-8. existing code conventions.
+8. existing implementation conventions.
 
 When a supplemental task file conflicts with `TASKS.md`, the dependency and scope in `TASKS.md` win. The conflict must be corrected during the selected task rather than silently implemented.
 
@@ -91,7 +91,7 @@ A master task is complete only when every referenced mandatory detailed card and
 - `CLOUD_MVP_TASKS.md` — free-cloud deployment and experiment detail;
 - `LOCAL_AND_PRODUCTION_TASKS.md` — local, testing, staging, and production-research detail.
 
-### Workspace sprint catalogs
+### Workspace and governance catalogs
 
 - `SPRINT_3_TASKS.md` — frontend application shell;
 - `SPRINT_4_TASKS.md` — accessible component library;
@@ -109,9 +109,10 @@ A master task is complete only when every referenced mandatory detailed card and
 - `SPRINT_16_TASKS.md` — data lifecycle and dataset governance;
 - `SPRINT_17_TASKS.md` — research review and strategy lifecycle;
 - `SPRINT_18_TASKS.md` — incident response, postmortems, and learning;
-- `SPRINT_19_TASKS.md` — governed behavior changes and staged rollout.
+- `SPRINT_19_TASKS.md` — governed behavior changes and staged rollout;
+- `SPRINT_20_TASKS.md` — documentation synchronization and canonical implementation backlog.
 
-Sprint numbers are documentation-workstream identifiers, not permission to implement them before their master-task dependencies.
+Sprint numbers identify documentation workstreams. They do not grant permission to implement a workstream before its `TASKS.md` dependencies.
 
 ## 7. Implementation Stages
 
@@ -123,11 +124,11 @@ No cloud project or paid provider is required.
 
 ### Stage B — Core Research Domains
 
-Implement finalized market data, quality controls, immutable snapshots, deterministic features, Gemini validation, strategy, risk, paper execution, ledger, reconciliation, and the one-shot research cycle.
+Implement finalized market data, quality controls, immutable snapshots, deterministic features, Gemini validation, strategy, risk, paper execution, ledger, reconciliation, the one-shot research cycle, and backtesting.
 
 ### Stage C — API and Product Experience
 
-Implement versioned read models and commands, OpenAPI, authorization, the application shell, accessible components, Today’s Roast, market evidence, Gemini, decisions/risk, portfolio, backtests, experiments, and audit views.
+Implement versioned read models and commands, OpenAPI, authorization, the application shell, accessible components, Today’s Roast, market evidence, Gemini, decisions/risk, portfolio, backtests, experiments, governance, product-wide navigation, and developer traceability.
 
 ### Stage D — Verification and Local Completion
 
@@ -141,7 +142,7 @@ Provision the dedicated Supabase project, deploy API/frontend, schedule the one-
 
 ### Stage F — Research Review and Product Hardening
 
-Complete experiment review, dataset governance, performance/FinOps evidence, incident controls, developer traceability, strategy lifecycle review, and change-management controls.
+Complete experiment review, dataset governance, performance/FinOps evidence, incident controls, strategy lifecycle review, and change-management controls.
 
 ### Stage G — Staging and Production Research
 
@@ -180,10 +181,10 @@ Allowed master-task states:
 - `NOT_STARTED`;
 - `IN_PROGRESS`;
 - `BLOCKED`;
-- `IMPLEMENTED`;
+- `IMPLEMENTED_NOT_VERIFIED`;
 - `VERIFIED`;
 - `DEFERRED`;
-- `NOT_APPLICABLE`.
+- `NOT_APPLICABLE_WITH_APPROVAL`.
 
 Only `VERIFIED` is complete.
 
@@ -204,7 +205,7 @@ Completion evidence includes:
 
 The project is complete for the production-research milestone only when:
 
-- every mandatory master task is `VERIFIED`;
+- every mandatory master task M001–M036 is `VERIFIED`;
 - the formal paper experiment and post-experiment review are complete;
 - no unresolved critical financial-integrity, security, privacy, migration, or RLS finding remains;
 - backup and restore evidence is current;
@@ -217,17 +218,18 @@ The project is complete for the production-research milestone only when:
 
 Every implementation change must update all affected contracts in the same pull request or commit set:
 
-- `TASKS.md` status/evidence;
+- `TASKS.md` status and evidence;
 - relevant domain or workspace specification;
-- OpenAPI/schema catalogs after implementation;
+- OpenAPI and schema catalogs after implementation;
 - database schema and migration manifest;
-- runbooks and observability where behavior changes;
-- README or ROADMAP only when entry points or phase gates change;
+- runbooks and observability when behavior changes;
+- README or ROADMAP when entry points or phase gates change;
 - changelog for material behavior.
 
 ## 13. Related Documents
 
 - `TASKS.md`
+- `SPRINT_20_TASKS.md`
 - `AGENTS.md`
 - `README.md`
 - `ROADMAP.md`
