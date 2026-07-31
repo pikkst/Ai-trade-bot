@@ -28,7 +28,7 @@ bootstrap: ## Install dependencies and verify tools (L1.1)
 
 format: ## Format supported languages
 	cd backend && ruff format .
-	cd $(FRONTEND) && npm run format
+	cd $(FRONTEND) && npx prettier --write . || [ $$? -eq 2 ]
 
 lint: ## Run lint checks
 	cd backend && ruff check .
