@@ -20,13 +20,11 @@ jobs:
       - name: Install backend dependencies
         run: |
           cd backend
-          python -m pip install -e ".[dev]" -r requirements.txt
-      - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm ci
-      - name: Format
-        run: make format
+          python -m pip install pip-tools
+          python -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml
+          python -m pip install -r requirements.txt
+      - name: Format check
+        run: make format-check
       - name: Lint
         run: make lint
       - name: Type check
@@ -42,11 +40,9 @@ jobs:
       - name: Install backend dependencies
         run: |
           cd backend
-          python -m pip install -e ".[dev]" -r requirements.txt
-      - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm ci
+          python -m pip install pip-tools
+          python -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml
+          python -m pip install -r requirements.txt
       - name: Run tests
         run: make test
 
@@ -88,7 +84,9 @@ jobs:
       - name: Install backend dependencies
         run: |
           cd backend
-          python -m pip install -e ".[dev]" -r requirements.txt
+          python -m pip install pip-tools
+          python -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml
+          python -m pip install -r requirements.txt
       - name: Install frontend dependencies
         run: |
           cd frontend
@@ -97,9 +95,17 @@ jobs:
         run: .\tasks.ps1 help
       - name: Docs check
         run: .\tasks.ps1 docs-check
+      - name: Format check
+        run: .\tasks.ps1 format-check
       - name: Lint
         run: .\tasks.ps1 lint
       - name: Type check
         run: .\tasks.ps1 type-check
+      - name: Frontend test
+        run: .\tasks.ps1 frontend-test
       - name: Research cycle smoke
         run: .\tasks.ps1 research-cycle
+      - name: Verify failure propagation (deliberate failure)
+        run: |
+          .\tasks.ps1 docs-check
+          if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: docs-check did not propagate failure" -ForegroundColor Red; exit 1 }
