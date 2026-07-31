@@ -1,239 +1,433 @@
-# Market Data
+# Market Data and Feature Evidence
 
-Last reviewed: 2026-07-31
-Status: Authoritative MVP market-data specification
+Last reviewed: 2026-08-01  
+Status: Authoritative M007–M008 market-data, quality, snapshot, dataset, and feature-input contract
 
-## 1. Scope
+## 1. Active Scope
 
-The MVP uses Binance Spot public market data. Required data:
+The active M007 profile uses Binance Spot public REST for:
 
 - exchange server time;
-- exchange and symbol metadata;
+- exchange/symbol metadata;
 - finalized OHLCV candles;
-- public ticker where operationally useful;
-- public WebSocket candle updates.
+- bounded checkpointed historical backfill;
+- idempotent gap detection and repair;
+- optional public ticker diagnostics where explicitly useful.
 
-Order-book, aggregate trades, funding, open interest, derivatives, on-chain, news, and social data are outside the initial MVP unless added through a new specification and tasks.
+Only finalized, quality-approved, fresh persisted evidence may enter normal snapshots, features, Gemini analysis, strategy, risk, paper execution, backtests, or research review.
 
-## 2. Canonical Models
+Out of active M007 scope:
 
-Internal symbols use `BASE/QUOTE`, for example `BTC/EUR`. The exchange-native symbol is retained separately.
+- private Binance credentials or order endpoints;
+- persistent WebSocket ingestion;
+- order book, aggregate trades, funding, open interest, derivatives, on-chain, news, social, or alternative data;
+- cross-exchange aggregation;
+- live-trading or exchange-reconciliation data.
 
-All timestamps are timezone-aware UTC. Candle identity is:
+A new source or persistent stream requires product requirements, source/licensing/terms review, schema and quality policy, M030 capacity/reliability evidence, M034 change governance, ADR, migration/rollback, security/privacy review, tests, staged paper verification, and owner approval.
+
+## 2. Master-Task Ownership
+
+| Capability | Master Tasks |
+|---|---|
+| provider protocol and deterministic fake | M006 |
+| REST metadata/candles, quality, repair, corrections | M007 |
+| immutable snapshots and deterministic features | M008 |
+| API and Market Evidence workspace | M014, M017 |
+| integrated/recovery tests | M026–M027 |
+| cloud cycle and experiment | M028–M029 |
+| performance, dataset lifecycle, research, and changes | M030–M034 |
+
+## 3. Canonical Identity and Values
+
+Internal symbol format: `BASE/QUOTE`, for example `BTC/EUR`.
+
+Persist separately:
+
+- provider/exchange code;
+- exchange-native symbol;
+- normalized base and quote assets;
+- effective symbol-metadata version.
+
+Candle identity:
 
 - exchange;
-- exchange-native symbol;
+- exchange-native symbol/effective symbol version;
 - interval;
 - exchange-provided open time.
 
-Financial values use decimal representation.
+Rules:
 
-## 3. Symbol Metadata
+- timestamps are timezone-aware UTC;
+- price, quantity, volume, and notional values use decimal representation;
+- provider response order is not trusted until validated;
+- local wall clock is not provider server time;
+- current provider limits and retry guidance come from timestamped approved evidence rather than frozen prose constants.
 
-Persist effective versions of:
+## 4. Symbol Metadata Versions
 
-- base and quote assets;
-- trading status;
+Persist immutable effective versions containing:
+
+- base/quote asset;
+- trading/data status;
 - price and quantity precision;
-- tick size;
-- step size;
-- minimum and maximum quantity;
+- tick size and step size;
+- minimum/maximum quantity where supplied;
 - minimum notional where supplied;
-- supported order types where relevant to future phases;
-- raw metadata hash;
-- retrieval and effective timestamps.
+- supported public data capabilities;
+- raw metadata hash and approved normalized hash;
+- retrieval/effective timestamps;
+- source request and provider version evidence;
+- supersession/correction relationship.
 
-Exchange metadata is authoritative for exchange constraints, not CCXT defaults or hardcoded values.
+Exchange metadata is authoritative for provider constraints. CCXT defaults or hidden application constants are not.
 
-## 4. Candle Model
+A metadata change invalidates or limits dependent configuration, risk, execution, backtest, or report evidence according to explicit compatibility rules.
+
+## 5. Candle Contract
 
 Required fields:
 
-- open time;
-- close time;
+- symbol-metadata version;
+- interval;
+- open time and close time;
 - open, high, low, close;
 - base volume;
 - quote volume when available;
 - trade count when available;
 - finalized flag;
-- source request/session reference;
-- content hash.
+- source ingestion/page reference;
+- provider timestamps where available;
+- canonical content hash.
 
-Only finalized candles may be consumed by normal feature, Gemini, strategy, risk, and backtest workflows.
+Finalized candles are immutable in ordinary paths.
 
-## 5. Validation Rules
+## 6. Validation Rules
 
-A candle is invalid when any required condition fails:
+A candle is invalid when any applicable invariant fails:
 
-- prices are positive;
-- high is greater than or equal to open, close, and low;
-- low is less than or equal to open, close, and high;
-- volume is non-negative;
+- all required prices are positive;
+- `high >= open`, `high >= close`, and `high >= low`;
+- `low <= open`, `low <= close`, and `low <= high`;
+- volume and trade counts are non-negative;
 - close time is after open time;
-- interval boundaries are valid;
-- symbol and interval are recognized;
-- sequence is not duplicated or out of order;
-- finalization state matches exchange semantics.
+- interval boundaries and duration are valid;
+- symbol and interval are allowed by exact configuration;
+- sequence is ordered;
+- identity is not duplicated inconsistently;
+- finalization matches provider semantics;
+- normalized decimals satisfy configured/source precision policy;
+- payload size and schema are bounded;
+- content hash is deterministic.
 
-## 6. Quality Status
+Invalid provider data is never coerced into valid evidence silently.
 
-Quality status should distinguish:
+## 7. Quality State
+
+Canonical quality outcomes include:
 
 - `approved`;
 - `incomplete`;
 - `stale`;
-- `duplicate_detected`;
+- `duplicate_consistent`;
+- `duplicate_conflict`;
 - `invalid_value`;
+- `invalid_interval`;
 - `out_of_order`;
 - `gap_detected`;
+- `gap_repair_pending`;
 - `provider_unavailable`;
-- `correction_pending`.
+- `rate_limited`;
+- `clock_drift_exceeded`;
+- `correction_pending`;
+- `quarantined`;
+- `invalidated`.
 
-Downstream analysis requires `approved` and fresh status.
+Only the exact approved/fresh states permitted by the frozen workflow policy may enter actionable paths.
 
-## 7. Freshness
+Missing evidence must not appear as an empty successful dataset.
 
-Freshness tolerance is configured by interval and workflow.
+## 8. Time and Freshness
 
-The system compares:
+Freshness evaluation references:
 
-- local UTC clock;
+- trusted application UTC clock abstraction;
 - Binance server time;
-- expected candle close time;
+- expected interval boundary and close time;
 - latest persisted finalized candle;
-- ingestion completion time.
+- ingestion completion time;
+- workflow purpose and tolerance-policy version;
+- intended and actual cycle time.
 
-Excessive clock drift or stale data blocks new analysis and entries.
+Rules:
 
-## 8. REST Backfill
+- excessive provider/local clock skew blocks affected processing;
+- a delayed cycle evaluates the latest actual eligible finalized event;
+- a missed cycle is recorded and never reconstructed as an imagined trade;
+- freshness is calculated server-side and persisted with policy/version evidence;
+- frontend calculations are presentation-only;
+- stale or unavailable source data blocks new entry intent according to risk/configuration policy.
 
-Backfill must be:
+## 9. REST Ingestion
 
-- bounded by explicit symbol, interval, start, and end;
-- chunked according to current provider limits;
+Every REST ingestion/backfill is:
+
+- bounded by provider, market, interval, start, end, and configured maximum range;
+- chunked according to current approved provider evidence;
 - rate-limit aware;
-- idempotent;
-- checkpointed;
-- restartable;
-- observable;
-- protected against overlapping duplicate jobs.
+- timeout/cancellation aware;
+- checkpointed and restart-safe;
+- protected from overlapping duplicate work;
+- idempotent by page/range/content identity;
+- observable by request, page, count, duration, retry, and safe error;
+- independent of Render availability and local persistent disk.
 
-A page is persisted only after validation. Duplicate records do not create duplicate rows. Partial progress is preserved for safe retry.
+A page is normalized, validated, and committed through an application-owned transaction. Duplicate consistent records do not create new rows. Duplicate conflicts create quality/correction evidence.
 
-## 9. WebSocket Ingestion
+No network request occurs inside the persistence transaction.
 
-WebSocket handling must include:
+## 10. Gap Detection and Repair
 
-- explicit subscription state;
-- heartbeat or liveness monitoring where supported;
-- bounded reconnect with jitter;
-- session and message metrics;
-- duplicate event handling;
-- out-of-order event handling;
-- transition from partial to finalized candle;
-- gap detection after reconnect;
-- REST repair before downstream approval.
+Expected candle boundaries are derived from:
 
-WebSocket data is not assumed complete merely because the connection is open.
+- interval semantics;
+- requested/available range;
+- provider server time;
+- finalization policy;
+- existing approved sequence;
+- market/calendar policy where future adapters require it.
 
-## 10. Corrections
+A gap produces:
 
-Finalized candles are immutable in ordinary paths.
+- explicit range and expected identities;
+- detection policy/version;
+- severity and downstream impact;
+- repair job/checkpoint;
+- provider request evidence;
+- repaired/unresolved outcome;
+- snapshot/dataset invalidation or block.
 
-When source correction is detected:
+Repair uses bounded REST pages and the same validation/idempotency rules. The application never interpolates or invents OHLCV values for actionable evidence.
 
-1. create a data-quality event;
-2. persist replacement/version evidence;
-3. identify dependent snapshots, features, analyses, backtests, and reports;
-4. mark affected derived artifacts invalid or superseded according to policy;
-5. never silently rewrite historical lineage.
+## 11. Corrections and Invalidations
 
-## 11. Market Snapshots
+When finalized source evidence changes:
 
-An immutable snapshot contains:
+1. preserve the original candle and source lineage;
+2. create a quality/correction event;
+3. persist replacement version/evidence;
+4. identify dependent snapshots, features, AI reports, decisions, orders/fills, backtests, datasets, research reviews, and reports;
+5. mark derived resources invalid, limited, or superseded according to versioned policy;
+6. rebuild/re-run only through explicit commands or workflows;
+7. preserve historical decisions and financial evidence as originally made;
+8. record audit and incident/change references where material.
 
-- workspace;
-- exchange and symbol;
-- interval;
-- analysis timestamp;
-- exact ordered candle IDs;
-- first and last candle time;
-- candle count;
-- data-quality state;
-- freshness result;
-- snapshot hash;
-- creation job and correlation IDs.
+Corrections never rewrite prior decision, order, fill, ledger, or approval evidence.
 
-Every feature calculation, Gemini request, strategy evaluation, and backtest references an exact snapshot or immutable historical dataset hash.
+## 12. Immutable Market Snapshots
 
-## 12. Idempotency
+A snapshot contains:
 
-Deterministic keys are required for:
+- workspace and environment;
+- exchange/symbol metadata version;
+- interval and analysis timestamp;
+- exact ordered candle IDs/versions;
+- first/last event time and count;
+- quality and freshness outcome/version;
+- data source and ingestion lineage;
+- snapshot schema/serialization version;
+- canonical snapshot hash;
+- creator/cycle/backtest/job/correlation references;
+- invalidation/supersession state;
+- limitations.
 
-- metadata refresh;
-- REST page ingestion;
-- candle upsert/validation;
-- gap-repair job;
-- snapshot creation.
+Constraints:
 
-Duplicate delivery must not duplicate candles, snapshots, or quality events.
+- identical canonical membership and metadata produce the same hash;
+- a snapshot never changes after creation;
+- invalidated snapshots remain readable for audit;
+- every feature, AI request, strategy/risk evaluation, paper decision, or backtest references an exact snapshot/dataset identity.
 
-## 13. Rate Limits and Failure Handling
+## 13. Historical Dataset Versions
 
-Current provider quotas and limits must be obtained from official Binance responses/documentation and adapter metadata, not frozen prose values.
+Backtests, AI evaluations, and research reviews use immutable dataset versions containing:
 
-Behavior:
+- dataset class and purpose;
+- market, interval, requested and actual range;
+- exact source partitions/candles and metadata versions;
+- finalized/quality/gap/correction state;
+- schema/manifest version;
+- canonical manifest and content hashes;
+- creation/approval owner and timestamps;
+- retention, hold, archive, restore, and invalidation state;
+- source-to-derived lineage;
+- limitations and excluded data.
 
-- honor retry guidance when present;
-- use bounded exponential backoff with jitter;
-- avoid reconnect storms;
-- separate market-data queues from Gemini/backtest work;
-- preserve checkpoints;
-- mark data stale when recovery exceeds tolerance;
-- block downstream entry decisions until repaired.
+Train/design, validation, final untouched test, and walk-forward windows are explicit resources/relationships. Reuse or contamination must be visible.
 
-## 14. Retention
+## 14. Feature Input Contract
 
-Validated candles and snapshot lineage are retained indefinitely for project reproducibility unless a later legal/operational policy changes this. Raw transport payload retention should be bounded and configurable.
+M008 feature calculations receive only:
 
-## 15. Metrics
+- exact immutable snapshot/dataset reference;
+- feature-set version/configuration hash;
+- required history and warm-up policy;
+- typed decimal/boolean/string input values;
+- clock/replay context;
+- deterministic seed only if an approved feature requires one;
+- workspace and purpose scope.
 
-Required categories:
+Features do not call live providers or read hidden mutable state.
 
-- latest finalized candle time;
-- ingestion lag;
-- candles inserted;
-- duplicates;
-- gaps;
-- invalid records;
-- stale status;
-- REST request outcomes;
-- WebSocket connection and reconnects;
-- backfill duration and checkpoints;
-- snapshot creation and rejection.
+## 15. Feature Output Contract
 
-## 16. Tests
+Feature calculation evidence includes:
 
-Required tests:
+- calculation ID and idempotency key;
+- source snapshot/dataset hash;
+- feature-set/version/configuration hash;
+- status and required-history/warm-up result;
+- typed values and explicit units;
+- input/output hashes;
+- start/end/duration;
+- warnings, missing values, null reasons, or safe error;
+- cycle/backtest/evaluation references.
 
-- reference candle parsing;
-- OHLC invariant failures;
-- duplicates and ordering;
-- gap detection and repair;
-- partial/final candle transitions;
-- reconnect behavior;
-- idempotent backfill replay;
-- rate-limit and timeout handling;
-- clock drift;
-- immutable correction flow;
-- snapshot hash determinism;
-- stale data blocks downstream processing.
+Identical inputs, code version, configuration, clock/replay context, and seed produce identical outputs and hashes.
 
-## 17. Related Documents
+## 16. Required Baseline Features
 
-- `BINANCE_INTEGRATION.md`
+The baseline may include versioned:
+
+- simple and logarithmic returns;
+- SMA and EMA;
+- RSI;
+- ATR;
+- rolling volatility;
+- volume-relative features;
+- trend/regime evidence;
+- data-quality/freshness-derived guards.
+
+Exact formulas, periods, annualization, warm-up, null behavior, decimal precision, and edge cases are documented in source/tests and registered by version. No hidden default influences a running experiment.
+
+## 17. Feature Failure Behavior
+
+Explicit states include:
+
+- insufficient history;
+- missing required source value;
+- invalid source quality/freshness;
+- unsupported interval/market;
+- division by zero/undefined statistic;
+- incompatible metadata/configuration;
+- invalid decimal/domain range;
+- deterministic calculation failure;
+- cancelled/timed out.
+
+Undefined values use explicit null plus reason. They are never replaced with misleading zero or fabricated data.
+
+## 18. Idempotency and Concurrency
+
+Stable identities are required for:
+
+- symbol metadata refresh;
+- REST page/range ingestion;
+- gap detection/repair;
+- candle validation/correction;
+- snapshot creation;
+- dataset manifest creation;
+- feature calculation.
+
+Duplicate delivery returns existing resources or deterministic conflicts. Locks/leases prevent overlapping logical cycle work, while database constraints protect canonical identities.
+
+## 19. Security and Privacy
+
+- public market data requests contain no credentials;
+- provider URLs, query parameters, and responses are bounded/validated;
+- logs omit unrestricted provider payloads and unbounded IDs;
+- raw transport payload retention is minimized and versioned;
+- provider terms, regions, limits, and use restrictions are reviewed before deployment;
+- source/licensing restrictions flow to dataset/publication/export policy;
+- browser access uses approved read models and RLS;
+- direct browser market-data mutation is prohibited.
+
+## 20. Observability
+
+Durable/operational evidence includes:
+
+- provider/server-time outcomes and skew;
+- request/page latency, status, retry, rate-limit, and safe error;
+- inserted, duplicate, invalid, corrected, quarantined counts;
+- latest finalized candle and ingestion lag;
+- gap detection/repair duration/outcome;
+- snapshot creation/rejection/hash;
+- feature duration/status/warm-up/null reasons/hash;
+- stale-data blocks and affected cycle/decision;
+- correction/invalidation propagation;
+- dataset manifest/quality/archive/restore outcomes.
+
+Metrics use bounded labels. Profit is not a market-data or feature SLI.
+
+## 21. Testing
+
+Required tests include:
+
+- reference metadata/candle parsing;
+- decimal and OHLC invariants;
+- duplicate consistent/conflict behavior;
+- ordering and interval boundaries;
+- gaps and bounded repair;
+- provider timeout, cancellation, rate limit, malformed/partial response;
+- clock skew/freshness;
+- idempotent page/cycle replay;
+- immutable correction and dependent invalidation;
+- snapshot/dataset hash determinism;
+- feature formula reference cases and properties;
+- warm-up/insufficient history/null/undefined behavior;
+- no look-ahead and replay clock isolation;
+- stale/invalid evidence blocks actionable downstream work;
+- RLS/read-only exposure;
+- export/archive/restore preserves hashes and lineage.
+
+Normal CI uses fixtures/fakes. Protected public REST smoke tests are bounded and never use private credentials.
+
+## 22. Deferred Persistent Streaming
+
+Persistent WebSocket ingestion is not part of M007 acceptance.
+
+If later activated, it must:
+
+- preserve REST as gap-repair and canonical continuity mechanism;
+- model subscription/session/heartbeat/reconnect state;
+- handle partial-to-final transition, duplicates, ordering, and provider outages;
+- not treat an open connection as complete data;
+- use durable checkpointing and bounded resource behavior;
+- pass M030 capacity/reliability evidence and M034 approval;
+- include migration, rollback, cost, security/privacy, and staged paper verification.
+
+## 23. Completion Gate
+
+M007–M008 are verified only when:
+
+- public REST and fake provider contracts pass;
+- metadata/candles/gaps/corrections/snapshots/features are deterministic and idempotent;
+- invalid/stale evidence fails closed;
+- provider retries/limits are bounded;
+- exact lineage and hashes exist;
+- no WebSocket, private exchange, or live execution dependency exists;
+- API/schema/docs/tests and task evidence are synchronized;
+- final commits are fetched and inspected.
+
+## 24. Related Documents
+
+- `/TASKS.md`
+- `IMPLEMENTATION_EXECUTION_PLAN.md`
+- `TASK_CATALOG_INDEX.md`
 - `ARCHITECTURE.md`
-- `DATABASE_SCHEMA.md`
 - `BACKEND.md`
-- `TESTING.md`
+- `BINANCE_INTEGRATION.md`
+- `DATABASE_SCHEMA.md`
+- `API_SPECIFICATION.md`
+- `DATA_LIFECYCLE_DATASET_GOVERNANCE_WORKSPACE_IMPLEMENTATION.md`
 - `OBSERVABILITY.md`
+- `TESTING.md`
