@@ -7,6 +7,7 @@ Status: Gated product and engineering evolution plan mapped to `TASKS.md`
 
 - `TASKS.md` is the only implementation-order authority.
 - This roadmap describes outcomes and promotion gates, not an alternative backlog.
+- `docs/TASK_CATALOG_INDEX.md` maps detailed task IDs to Master Tasks.
 - Detailed task catalogs do not override Master Task dependencies.
 - Evidence and safety gates are more important than dates.
 - Gemini remains advisory.
@@ -16,19 +17,21 @@ Status: Gated product and engineering evolution plan mapped to `TASKS.md`
 
 ## Phase 0 — Documentation Synchronization
 
-**Master-plan status:** documentation complete; implementation not started.
+**Master-plan status:** synchronized and implementation-ready; product implementation not started.
 
 Completed documentation outcomes:
 
 - official product identity and brand foundation;
 - product, architecture, domain, UX, security, testing, deployment, and operations specifications;
 - Sprint 3–19 detailed workspace catalogs;
-- Sprint 20 task-system synchronization;
-- one canonical Master Task 1–36 sequence;
+- Sprint 20 canonical task-system synchronization;
+- Sprint 21 task-catalog and environment lifecycle mapping;
+- one canonical Master Task M001–M036 sequence;
+- a stable index mapping legacy, UX, cloud, local/production, and Sprint IDs to Master Tasks;
 - active free-cloud architecture aligned around Supabase, REST, one-shot CLI, GitHub Actions, Render, and Cloudflare Pages;
 - Redis, ARQ, persistent workers, WebSocket ingestion, hosted Prometheus/Grafana, private Binance, and live trading deferred.
 
-**Exit:** contributors start from `M001` without hidden architectural or dependency decisions.
+**Exit:** contributors start from `M001` and can locate every applicable detailed card without hidden architectural or dependency decisions.
 
 ## Phase 1 — Repository and Local Foundation
 
@@ -63,7 +66,7 @@ Deliver:
 - idempotent one-shot research cycle;
 - reproducible backtests and required benchmarks.
 
-**Exit:** the entire paper-research domain flow works deterministically against fake providers and approved fixtures.
+**Exit:** the paper-research domain flow works deterministically against fake providers and approved fixtures.
 
 ## Phase 3 — API and Product Workspaces
 
@@ -100,7 +103,7 @@ Deliver:
 - database/provider/interruption/duplicate/halt/recovery drills;
 - release-blocking finding resolution and verified runbooks.
 
-**Exit:** cloud deployment is unnecessary to prove correctness, security boundaries, and recoverability.
+**Exit:** correctness, security boundaries, and recoverability are proven before cloud deployment.
 
 ## Phase 5 — Free-Cloud Demo
 
@@ -115,7 +118,7 @@ Deliver:
 - Cloudflare Pages frontend deployment;
 - HTTPS, domains, CORS, CSP, Auth redirects, environment separation, and secret isolation;
 - public demo or approved authenticated paper environment;
-- proof that Render cold start does not control the scheduled cycle.
+- proof that Render cold start does not control scheduled execution.
 
 **Exit:** The Daily Roast AI runs in the cloud without the owner’s computer and without mandatory paid infrastructure.
 
@@ -127,7 +130,7 @@ Frozen baseline:
 
 - virtual EUR 20;
 - BTC/EUR;
-- finalized 1-hour candles;
+- finalized one-hour candles;
 - approximately hourly best-effort cycles;
 - maximum position 25%;
 - maximum order EUR 5;
@@ -142,7 +145,7 @@ Deliver:
 
 - cloud observability and cycle status;
 - export/restore evidence;
-- exact configuration-hash preflight;
+- exact configuration and behavior-set hash preflight;
 - owner approval and immutable start evidence;
 - monitoring, incidents, pauses/halts, reconciliation, audit, and final report;
 - no fabricated missed-cycle trades or hidden manual database repair.
@@ -157,7 +160,7 @@ Deliver:
 
 - measured performance, resilience, SLO, error-budget, capacity, quota, cost, and FinOps evidence;
 - dataset/version registry, quality gates, lineage, retention, holds, archive/restore, and deletion/anonymization controls;
-- hypothesis, evidence snapshot, robustness, untouched-test, paper-observation, reviewer, approval, promotion, rollback, and strategy lifecycle controls;
+- hypothesis, evidence snapshot, robustness, untouched-test, paper observation, reviewer, approval, promotion, rollback, and strategy lifecycle controls;
 - alert routing, incident lifecycle, integrity verification, postmortems, corrective actions, and effectiveness review;
 - behavior-set change proposals, risk classification, compatibility, evaluation plans, immutable approvals, staged paper canaries, stop conditions, rollback, emergency expiry, and deprecation.
 
@@ -174,7 +177,7 @@ Deliver:
 - isolated production-like staging when advancement is approved;
 - separate database, Auth, Gemini credentials, domains, storage, and deployment credentials;
 - immutable production artifacts deployed unchanged;
-- migration rehearsal, rollback/forward-fix, restore, E2E, load, failure, accessibility, security, privacy, content, and operational gates.
+- migration rehearsal, rollback/forward fix, restore, E2E, load, failure, accessibility, security, privacy, content, and operational gates.
 
 **Exit:** one release candidate passes production-like staging with complete approval evidence.
 
@@ -247,6 +250,7 @@ Requires separate legal, exchange-eligibility, tax, security, financial-risk, ac
 
 ## Task Source Policy
 
-- [`TASKS.md`](TASKS.md) — canonical Master Task 1–36 sequence and dependencies;
+- [`TASKS.md`](TASKS.md) — canonical M001–M036 sequence and dependencies;
 - [`docs/IMPLEMENTATION_EXECUTION_PLAN.md`](docs/IMPLEMENTATION_EXECUTION_PLAN.md) — task governance and completion model;
-- `UX_DESIGN_TASKS.md`, `CLOUD_MVP_TASKS.md`, `LOCAL_AND_PRODUCTION_TASKS.md`, and `SPRINT_3_TASKS.md` through `SPRINT_20_TASKS.md` — detailed acceptance catalogs used only through their mapped master tasks.
+- [`docs/TASK_CATALOG_INDEX.md`](docs/TASK_CATALOG_INDEX.md) — mapping and classification of detailed task IDs;
+- `UX_DESIGN_TASKS.md`, `CLOUD_MVP_TASKS.md`, `LOCAL_AND_PRODUCTION_TASKS.md`, and `SPRINT_3_TASKS.md` through `SPRINT_21_TASKS.md` — detailed acceptance catalogs used only through mapped Master Tasks.
