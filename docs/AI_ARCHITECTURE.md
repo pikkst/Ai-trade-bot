@@ -6,26 +6,26 @@ AI interprets structured evidence and produces explainable research. It has no o
 
 ## Provider Boundary
 
-All providers implement a common `LLMProvider` protocol with typed request, response, usage, timeout, cancellation, and error contracts.
+All providers implement a common `LLMProvider` protocol with typed request, response, usage, timeout, cancellation, safety, and error contracts.
 
-Supported paths:
+Version 1 providers:
 
-- OpenAI Responses API for new cloud integration work
-- Ollama for local development
-- vLLM for future local high-throughput serving
+- Google Gemini API as the required cloud provider
 - Deterministic fake provider for CI and tests
 
-Provider SDK objects must not leak into domain code.
+Future local providers such as Ollama or vLLM require an ADR. Provider SDK objects must not leak into domain code.
 
-## OpenAI Integration Rules
+## Gemini Integration Rules
 
-- Use the Responses API for new work.
-- Prefer strict JSON Schema Structured Outputs where the configured model supports them.
-- Use pinned model identifiers or snapshots for reproducible experiments.
-- Generate a unique client request ID and retain provider response IDs.
-- Record model, prompt version, schema version, latency, token usage, cost estimate, status, and retry count.
-- Use `store=false` unless a documented requirement explicitly needs provider-side storage.
-- Do not grant web, code execution, exchange, database mutation, or other side-effect tools to the market-analysis model in the MVP.
+The authoritative provider-specific specification is [GEMINI_INTEGRATION.md](GEMINI_INTEGRATION.md).
+
+- Use the official `google-genai` Python SDK.
+- Use structured output with a project-owned JSON Schema or Pydantic model where supported by the selected stable model.
+- Configure the model through environment and experiment configuration; do not hardcode it in domain logic.
+- Persist provider request metadata, model identifier, prompt version, schema version, safety outcome, latency, token usage, estimated cost, status, and retry count.
+- Apply explicit timeout, retry, rate-limit, and budget policies.
+- Do not grant web search, code execution, exchange, database mutation, shell, or order-execution tools to the market-analysis model in the MVP.
+- Do not use preview models for production-facing deployments unless current Google documentation and terms explicitly allow it.
 
 ## Input Contract
 
@@ -38,7 +38,7 @@ Provider SDK objects must not leak into domain code.
 - Optional trusted summaries with source references
 - Prompt version
 - Output schema version
-- Provider and pinned model configuration
+- Provider and model configuration version
 
 Untrusted news or social text must be placed in explicit data fields and surrounded by instructions that it is evidence, not executable guidance.
 
@@ -69,21 +69,23 @@ Untrusted news or social text must be placed in explicit data fields and surroun
 
 ## Validation Pipeline
 
-1. Confirm provider request completed successfully.
-2. Parse structured output.
-3. Validate against the exact JSON Schema version.
-4. Reject unknown fields when strict mode is required.
-5. Validate ranges, enums, lengths, and references.
-6. Verify cited evidence exists in the supplied snapshot.
-7. Detect unsupported factual claims.
-8. Apply policy checks.
-9. Persist raw response, validated report, lineage, usage, and validation result.
-10. Publish a typed analysis-completed or analysis-rejected event.
+1. Confirm the provider request completed successfully.
+2. Classify timeout, rate limit, provider error, refusal, safety block, or empty response.
+3. Parse structured output.
+4. Validate against the exact JSON Schema version.
+5. Reject unknown fields when strict mode is required.
+6. Validate ranges, enums, lengths, and references.
+7. Verify cited evidence exists in the supplied snapshot.
+8. Detect unsupported factual claims.
+9. Apply application policy checks.
+10. Persist raw provider metadata, validated report, lineage, usage, safety result, and validation result.
+11. Publish a typed analysis-completed or analysis-rejected event.
 
 ## Failure Behavior
 
-- Timeout: bounded retry, then deterministic fallback or HOLD.
-- Refusal: persist status and use deterministic fallback or HOLD.
+- Timeout: bounded retry with jitter, then deterministic fallback or HOLD.
+- Rate limit: bounded retry, budget accounting, then deterministic fallback or HOLD.
+- Safety block or refusal: persist status and use deterministic fallback or HOLD.
 - Invalid schema: reject; do not auto-trade.
 - Unsupported claim: reject or lower trust according to policy.
 - Stale source snapshot: reject.
@@ -94,24 +96,25 @@ Untrusted news or social text must be placed in explicit data fields and surroun
 
 Every prompt and model candidate must be evaluated against a versioned dataset for:
 
-- Schema success rate
-- Evidence grounding
-- Unsupported claim rate
-- Action consistency
-- Sensitivity to irrelevant or malicious text
-- Latency
-- Token use and cost
-- Stability across repeated runs
+- schema success rate;
+- evidence grounding;
+- unsupported claim rate;
+- action consistency;
+- sensitivity to irrelevant or malicious text;
+- safety-block behavior;
+- latency;
+- token use and cost;
+- stability across repeated runs.
 
-A prompt or model change is a versioned behavior change and must not silently alter an active experiment.
+A prompt, schema, safety-setting, or model change is a versioned behavior change and must not silently alter an active experiment.
 
 ## Safety Invariants
 
 - No execution tools
 - No secrets in prompts
 - No direct database mutation
-- No position sizing authority
+- No position-sizing authority
 - No risk-policy modification
 - Prompt injection treated as untrusted content
-- Malformed or stale output fails closed
+- Malformed, blocked, or stale output fails closed
 - Complete decision lineage is mandatory
