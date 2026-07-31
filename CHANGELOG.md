@@ -4,6 +4,36 @@ All notable project changes are documented here.
 
 ## Unreleased
 
+### Sprint 20 — Canonical Implementation Plan — 2026-08-01
+
+#### Added
+
+- `docs/IMPLEMENTATION_EXECUTION_PLAN.md` defining the sole implementation-order authority, execution stages, dependency rules, task status model, verification evidence, and project completion gate.
+- `SPRINT_20_TASKS.md` documenting the repository-wide synchronization sprint.
+- A canonical Master Task sequence from `M001` through `M036` covering repository foundation, domains, API/UI workspaces, verification, cloud deployment, the controlled experiment, governance, staging, and production research.
+
+#### Changed
+
+- Replaced the legacy root backlog with an authoritative `TASKS.md` master plan.
+- Updated `AGENTS.md` so coding agents begin at `M001` and use detailed task catalogs only through mapped master tasks.
+- Updated README to expose one implementation entry point and the active paper-only architecture.
+- Updated ROADMAP so every implementation phase maps to Master Tasks rather than forming a competing backlog.
+- Updated `docs/DOCUMENTATION_AUDIT.md` to correct the prior incomplete consistency conclusion and record verified synchronization evidence.
+- Updated `docs/IMPLEMENTATION_EXECUTION_PLAN.md` to include Sprint 20 and the final M001–M036 task model.
+
+#### Fixed
+
+- Removed Redis, ARQ, persistent workers, Binance WebSocket ingestion, Prometheus, and Grafana from mandatory MVP task dependencies.
+- Removed the conflict between the active one-shot free-cloud architecture and the former root task backlog.
+- Removed ambiguous parallel task entry points across root, cloud, local/production, UX, and sprint task files.
+- Removed canonical local-to-cloud dependency cycles; local Supabase development no longer depends on creating a cloud project.
+- Integrated Sprint 3–19 workspace catalogs into the root implementation sequence.
+- Established that only `VERIFIED` implementation evidence marks a Master Task complete; documentation creation alone is not completion.
+
+#### Safety
+
+- Preserved paper-only execution, deterministic non-bypassable risk, append-only accounting, mandatory reconciliation, environment isolation, no-auto-spend, no private Binance credentials, and no live-trading authority.
+
 ### The Daily Roast AI Brand Foundation — 2026-07-31
 
 #### Added
