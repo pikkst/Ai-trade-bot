@@ -1,191 +1,206 @@
 # The Daily Roast AI Roadmap
 
-Last reviewed: 2026-07-31  
-Status: Gated product and engineering evolution plan
+Last reviewed: 2026-08-01  
+Status: Gated product and engineering evolution plan mapped to `TASKS.md`
 
-## Roadmap Principles
+## Roadmap Rules
 
+- `TASKS.md` is the only implementation-order authority.
+- This roadmap describes outcomes and promotion gates, not an alternative backlog.
+- Detailed task catalogs do not override Master Task dependencies.
 - Evidence and safety gates are more important than dates.
-- The Daily Roast AI is a market-intelligence product, not merely a trading bot.
-- Cryptocurrency is the first supported market, not the permanent limit of the product.
 - Gemini remains advisory.
-- Production development means a production-grade research service, not automatic real-money execution.
-- Live trading is not authorized by this roadmap.
-- Every phase must preserve explainability, reproducibility, auditability, and deterministic risk controls.
+- Production research remains paper-only.
+- Live trading and private Binance execution are not authorized.
+- No phase advances solely because a backtest or paper experiment was profitable.
 
-## Phase 0 — Documentation, Brand, and Governance
+## Phase 0 — Documentation Synchronization
 
-Complete:
+**Master-plan status:** documentation complete; implementation not started.
 
-- product vision, mission, values, brand, design, and naming foundations;
-- requirements, architecture, Gemini, market data, strategy, risk, accounting, security, testing, deployment, and operations specifications;
-- coding-agent rules and detailed task cards;
-- documentation, brand, naming, and cross-reference audits.
+Completed documentation outcomes:
 
-**Exit:** the repository consistently uses **The Daily Roast AI**, the README inventory matches real files, and implementation can begin without hidden product or architecture decisions.
+- official product identity and brand foundation;
+- product, architecture, domain, UX, security, testing, deployment, and operations specifications;
+- Sprint 3–19 detailed workspace catalogs;
+- Sprint 20 task-system synchronization;
+- one canonical Master Task 1–36 sequence;
+- active free-cloud architecture aligned around Supabase, REST, one-shot CLI, GitHub Actions, Render, and Cloudflare Pages;
+- Redis, ARQ, persistent workers, WebSocket ingestion, hosted Prometheus/Grafana, private Binance, and live trading deferred.
 
-## Phase 1 — Local Engineering Foundation
+**Exit:** contributors start from `M001` without hidden architectural or dependency decisions.
 
-Implement:
+## Phase 1 — Repository and Local Foundation
 
-- Python 3.12 backend and React/TypeScript frontend foundations;
-- locked dependencies and cross-platform bootstrap;
-- local Supabase/PostgreSQL and Auth;
-- migrations, deterministic seed data, and RLS tests;
-- fake Binance and Gemini providers;
-- stable local command runner;
-- one-shot research-cycle CLI;
-- structured logs and correlation IDs.
+**Tasks:** `M001–M006`
 
-Use `T1.1`, `T1.2`, and `L1.1-L1.4`.
+Deliver:
 
-**Exit:** a clean checkout becomes a working local environment without paid credentials, migrations apply from zero, and the fake-provider flow is reproducible on Windows and CI.
+- backend/frontend repository scaffold;
+- locked Python and Node toolchains;
+- stable cross-platform commands;
+- baseline CI and security checks;
+- local Supabase/PostgreSQL/Auth;
+- additive migrations, deterministic seed data, and RLS;
+- frontend design tokens and test foundation;
+- typed settings, logs, errors, transactions, idempotency;
+- project-owned provider protocols and deterministic fakes.
 
-## Phase 2 — Automated Test and Quality Foundation
+**Exit:** a clean checkout becomes a working local foundation on Windows and CI without cloud or paid credentials.
 
-Implement:
+## Phase 2 — Core Research Domains
 
-- unit and property tests;
-- Supabase migration, constraint, Auth, and RLS integration tests;
-- provider contract tests;
-- frontend component, accessibility, copy, and browser E2E tests;
-- security scanning;
-- documentation, brand, naming, and generated-artifact checks;
-- export and restore tests.
+**Tasks:** `M007–M013`
 
-Use `L2.1-L2.6`.
+Deliver:
 
-**Exit:** financial invariants, authorization, RLS, idempotency, recovery, critical E2E flows, and user-facing trust requirements pass automatically.
+- Binance Spot public REST metadata and finalized candles;
+- data-quality validation, continuity checks, gap repair, corrections, and freshness;
+- immutable snapshots and deterministic features;
+- Gemini adapter, prompts, schemas, grounding, safety, retries, fallback, and budgets;
+- deterministic strategy and risk;
+- paper execution, append-only ledger, portfolio projection, rebuild, and reconciliation;
+- idempotent one-shot research cycle;
+- reproducible backtests and required benchmarks.
 
-## Phase 3 — Free Cloud Foundation
+**Exit:** the entire paper-research domain flow works deterministically against fake providers and approved fixtures.
 
-Follow `C1-C7`:
+## Phase 3 — API and Product Workspaces
 
-- dedicated Supabase Free project;
-- migrations, Auth, RLS, and read views;
-- one-shot research-cycle CLI;
-- scheduled GitHub Actions workflow;
-- Render Free FastAPI deployment;
+**Tasks:** `M014–M025`
+
+Deliver:
+
+- authenticated, versioned `/api/v1` contracts and deterministic OpenAPI;
+- owner/operator/viewer authorization and RLS assurance;
+- accessible application shell and component system;
+- Today’s Roast dashboard;
+- Market Evidence workspace;
+- Gemini Analysis and Validation workspace;
+- Strategy and Risk workspace;
+- Portfolio, Execution, Ledger, and Reconciliation workspace;
+- Backtest, Benchmark, Reproducibility, and Comparison workspace;
+- Experiment Operations, Cycle, Incident, and Audit workspace;
+- Auth, Governance, Security, Privacy, and Release workspace;
+- onboarding, search, notifications, Trust Center, English/Estonian localization;
+- developer portal, documentation health, runbooks, and traceability.
+
+**Exit:** users can inspect complete evidence and lineage through accessible, authorized, paper-only interfaces.
+
+## Phase 4 — Local and CI Verification
+
+**Tasks:** `M026–M027`
+
+Deliver:
+
+- deterministic full local demo;
+- unit, property, migration, RLS, Auth, integration, provider contract, API contract, component, accessibility, visual, E2E, documentation, and security tests;
+- no-secret and frontend-bundle checks;
+- export, isolated restore, migration verification, ledger rebuild, and reconciliation;
+- database/provider/interruption/duplicate/halt/recovery drills;
+- release-blocking finding resolution and verified runbooks.
+
+**Exit:** cloud deployment is unnecessary to prove correctness, security boundaries, and recoverability.
+
+## Phase 5 — Free-Cloud Demo
+
+**Task:** `M028`
+
+Deliver:
+
+- dedicated Supabase project separate from Eventnexus;
+- controlled migrations, Auth, RLS, and read models;
+- scheduled/manual GitHub Actions one-shot cycle;
+- Render FastAPI deployment;
 - Cloudflare Pages frontend deployment;
-- `thedailyroast.online` custom-domain integration;
-- free-tier logs, cycle status, export, and restore procedure.
+- HTTPS, domains, CORS, CSP, Auth redirects, environment separation, and secret isolation;
+- public demo or approved authenticated paper environment;
+- proof that Render cold start does not control the scheduled cycle.
 
-**Exit:** The Daily Roast AI runs without a local computer, has public HTTPS frontend and API URLs, and has proven duplicate protection and restore.
+**Exit:** The Daily Roast AI runs in the cloud without the owner’s computer and without mandatory paid infrastructure.
 
-## Phase 4 — Market and Feature Core
+## Phase 6 — Controlled 30-Day Paper Experiment
 
-Implement Binance Spot REST metadata, finalized candle backfill, data quality, immutable snapshots, and versioned features.
+**Task:** `M029`
 
-Persistent WebSocket ingestion is deferred.
-
-**Exit:** complete hourly data can be reproduced, provenance is visible, and stale or missing data blocks entries.
-
-## Phase 5 — Gemini Research Intelligence
-
-Implement:
-
-- provider protocol and deterministic fake;
-- official Gemini adapter;
-- structured report schema;
-- prompt and schema versioning;
-- evidence-reference validation;
-- usage and budget controls;
-- evaluation suite;
-- brand-safe, non-promotional user summaries.
-
-**Exit:** invalid, blocked, unavailable, or quota-exhausted Gemini calls degrade safely; normal CI uses no paid call; generated content follows brand and financial-claim rules.
-
-## Phase 6 — Strategy, Risk, Portfolio, and Paper Execution
-
-Implement HOLD baseline, BTC/EUR trend baseline, risk policy, append-only ledger, reconciliation, market and limit paper orders, fees, spread, slippage, precision, and minimum-notional rules.
-
-**Exit:** no duplicate side effects, all actionable intents pass deterministic risk, accounting property tests pass, and every displayed action is explicitly simulated.
-
-## Phase 7 — Backtesting, API, and Product Interface
-
-Implement reproducible backtesting, benchmarks, reports, FastAPI resources, Supabase Auth authorization, and primary product views:
-
-- Today's Roast;
-- market evidence and regime;
-- Gemini analysis;
-- strategy and risk lineage;
-- paper portfolio;
-- backtest reports;
-- experiment status;
-- audit timeline.
-
-**Exit:** OpenAPI, API tests, UI states, RLS, accessibility, naming, and audit lineage pass.
-
-## Phase 8 — Public Cloud Demo
-
-Deploy a testable branded demonstration at `thedailyroast.online` or `app.thedailyroast.online` using synthetic or clearly labeled sample data.
-
-**Exit:** branding, auth, API, frontend, fake-provider demo, protected Gemini configuration, simulation labeling, cold-start behavior, reset, export, and restore are verified.
-
-## Phase 9 — Controlled 30-Day Free-Cloud Experiment
-
-Follow `C8`.
-
-Configuration:
+Frozen baseline:
 
 - virtual EUR 20;
-- BTC/EUR and 1h finalized candles;
-- approximately hourly GitHub Actions cycle;
+- BTC/EUR;
+- finalized 1-hour candles;
+- approximately hourly best-effort cycles;
 - maximum position 25%;
 - maximum order EUR 5;
-- daily and total drawdown halts 5% and 15%;
-- one open order;
+- daily drawdown halt 5%;
+- total drawdown halt 15%;
+- maximum one open order;
 - no leverage or shorting;
 - Gemini cost budget EUR 0 by default;
 - cash and buy-and-hold benchmarks.
 
-**Exit:** complete report, no unresolved reconciliation mismatch, no duplicate financial side effect, no manual database repair, and complete decision lineage. Profit is not an exit criterion.
+Deliver:
 
-## Phase 10 — Post-Experiment Product Review
+- cloud observability and cycle status;
+- export/restore evidence;
+- exact configuration-hash preflight;
+- owner approval and immutable start evidence;
+- monitoring, incidents, pauses/halts, reconciliation, audit, and final report;
+- no fabricated missed-cycle trades or hidden manual database repair.
 
-Review:
+**Exit:** the experiment reaches an auditable terminal state. Profit is not an exit criterion.
 
-- reliability and data completeness;
-- Gemini validity and usefulness;
-- user comprehension and trust;
-- incidents and free-tier behavior;
-- costs and quotas;
-- security findings;
-- interface and brand consistency;
-- value of evidence, scenario, and paper-trading workflows.
+## Phase 7 — Evidence Hardening and Governance
 
-**Exit:** explicit decision to stop, repeat, improve the demo, or begin staging and production research development.
+**Tasks:** `M030–M034`
 
-## Phase 11 — Staging Environment
+Deliver:
 
-Create an isolated production-like environment with separate database, Auth, Gemini key, domains, deployment credentials, synthetic data, migration rehearsal, E2E, load, failure, and content validation.
+- measured performance, resilience, SLO, error-budget, capacity, quota, cost, and FinOps evidence;
+- dataset/version registry, quality gates, lineage, retention, holds, archive/restore, and deletion/anonymization controls;
+- hypothesis, evidence snapshot, robustness, untouched-test, paper-observation, reviewer, approval, promotion, rollback, and strategy lifecycle controls;
+- alert routing, incident lifecycle, integrity verification, postmortems, corrective actions, and effectiveness review;
+- behavior-set change proposals, risk classification, compatibility, evaluation plans, immutable approvals, staged paper canaries, stop conditions, rollback, emergency expiry, and deprecation.
 
-**Exit:** production artifacts deploy unchanged to staging and all release-candidate checks pass.
+**Exit:** reliability, cost, data, strategy, incident, and behavior-change claims are governed by evidence and human approval.
 
-## Phase 12 — Production Research Readiness
+## Phase 8 — Post-Experiment Decision and Staging
 
-Complete:
+**Task:** `M035`
+
+Deliver:
+
+- explicit owner decision to stop, repeat, improve, or advance;
+- complete review of reliability, data, AI validity, strategy evidence, user comprehension, incidents, security, privacy, recovery, costs, and limitations;
+- isolated production-like staging when advancement is approved;
+- separate database, Auth, Gemini credentials, domains, storage, and deployment credentials;
+- immutable production artifacts deployed unchanged;
+- migration rehearsal, rollback/forward-fix, restore, E2E, load, failure, accessibility, security, privacy, content, and operational gates.
+
+**Exit:** one release candidate passes production-like staging with complete approval evidence.
+
+## Phase 9 — Production Research Service
+
+**Task:** `M036`
+
+Deliver:
 
 - protected CI/CD and manual approvals;
-- hardened Auth and role controls;
-- managed backups, restore, RPO, and RTO;
-- centralized observability and measured SLOs;
-- security, privacy, legal, and content review;
-- cost and quota planning;
-- incident response and runbooks;
-- brand and domain launch verification.
+- controlled migration and immutable deployment evidence;
+- hardened account/session/access controls;
+- managed backups and tested restore;
+- measured SLOs, incident routing, status communication, support, and runbooks;
+- privacy and data policies;
+- cost and capacity governance;
+- periodic security, access, recovery, model/prompt, strategy, documentation, and change reviews;
+- authenticated market research, backtests, audit history, and paper portfolios.
 
-**Exit:** the production research launch gate in `docs/PRODUCTION_DEVELOPMENT.md` is satisfied. Live trading remains disabled.
+**Exit:** stable production-grade research and paper-trading operation with current evidence and live trading disabled.
 
-## Phase 13 — Production Research Service
+## Phase 10 — Multi-Market Research Assessment
 
-Launch an authenticated production-grade service for market research, Gemini-assisted analysis, backtesting, audit history, and paper portfolios.
+Not part of `M001–M036` unless separately approved.
 
-**Exit:** stable operation, measured reliability and cost evidence, support process, and post-launch review.
-
-## Phase 14 — Multi-Market Research Expansion
-
-After the cryptocurrency research architecture is proven, evaluate additional market-data adapters for:
+Potential adapters:
 
 - equities;
 - ETFs;
@@ -193,53 +208,45 @@ After the cryptocurrency research architecture is proven, evaluate additional ma
 - commodities;
 - macroeconomic indicators.
 
-Requirements:
+Each market requires separate product requirements, licensing/terms review, session/calendar models, corporate-action handling where applicable, risk assumptions, data-quality rules, ADR, tasks, and approval.
 
-- adapter-specific licensing and terms review;
-- distinct market-session and corporate-action models;
-- no reuse of crypto assumptions where they do not apply;
-- consistent evidence, provenance, risk, and simulation contracts.
+## Phase 11 — Reliability and Capacity Evolution
 
-**Exit:** an approved ADR and product requirements exist for each added market class.
+Future architecture changes use `M034` change governance and measured `M030` evidence.
 
-## Phase 15 — Reliability and Capacity Evolution
-
-Use measured evidence to decide whether to introduce:
+Possible changes:
 
 - paid always-on API or worker hosting;
 - Redis/ARQ or another durable queue;
 - persistent exchange streams;
 - managed observability;
-- upgraded database and backup capabilities;
-- stronger availability architecture.
+- upgraded PostgreSQL/backups;
+- high-availability architecture.
 
-Every material change requires an ADR.
+Free tiers must never be represented as permanent production capacity.
 
-## Phase 16 — Binance Test Environment
+## Phase 12 — Binance Test Environment Assessment
 
-Only after explicit owner approval and a separate private-credential, reconciliation, security, and operational design. No live capital.
+Not authorized by this roadmap.
 
-## Phase 17 — Real-Capital Assessment
+Requires a separate milestone for:
 
-Not approved by this roadmap. Requires separate legal, security, accounting, operational, exchange-eligibility, tax, and loss-limit review plus explicit owner approval.
+- private test credentials;
+- credential threat model;
+- exchange order/reconciliation contracts;
+- capital and loss limits even in test mode;
+- incident and emergency disablement;
+- independent security and accounting review;
+- owner approval.
 
-## Future Product Family
+## Phase 13 — Real-Capital Assessment
 
-Potential modules, subject to evidence and separate requirements:
+Not authorized.
 
-- The Daily Roast AI Markets;
-- The Daily Roast AI Research;
-- The Daily Roast AI Portfolio;
-- The Daily Roast AI Strategies;
-- The Daily Roast AI Backtests;
-- The Daily Roast AI Alerts;
-- The Daily Roast AI Labs;
-- The Daily Roast AI Enterprise.
+Requires separate legal, exchange-eligibility, tax, security, financial-risk, accounting, operational, loss-limit, independent-review, and owner-approval work. No current task or phase may silently create a live-order path.
 
-Sub-brands are not approved automatically. They must follow `docs/BRAND_GUIDELINES.md` and `docs/NAMING_CONVENTIONS.md`.
+## Task Source Policy
 
-## Task Sources
-
-- `TASKS.md` — shared domain implementation
-- `CLOUD_MVP_TASKS.md` — free cloud deployment
-- `LOCAL_AND_PRODUCTION_TASKS.md` — local development, test automation, staging, production research, and post-launch work
+- [`TASKS.md`](TASKS.md) — canonical Master Task 1–36 sequence and dependencies;
+- [`docs/IMPLEMENTATION_EXECUTION_PLAN.md`](docs/IMPLEMENTATION_EXECUTION_PLAN.md) — task governance and completion model;
+- `UX_DESIGN_TASKS.md`, `CLOUD_MVP_TASKS.md`, `LOCAL_AND_PRODUCTION_TASKS.md`, and `SPRINT_3_TASKS.md` through `SPRINT_20_TASKS.md` — detailed acceptance catalogs used only through their mapped master tasks.
