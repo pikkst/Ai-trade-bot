@@ -1,337 +1,103 @@
 # Roadmap
 
 Last reviewed: 2026-07-31
-Status: Product evolution plan; later phases require explicit owner approval
+Status: Gated product evolution plan
 
-## Roadmap Principles
+## Principles
 
-- Safety gates are more important than calendar dates.
-- A later phase cannot weaken invariants proven in an earlier phase.
-- Google Gemini remains advisory.
-- Live trading is not part of MVP and is never enabled by completing documentation alone.
-- Every promotion requires evidence, audit, tests, security review, and an owner decision.
+Safety gates are more important than dates. Gemini remains advisory. Live trading is not part of MVP. Free-cloud services are experimental and do not provide an SLA.
 
 ## Phase 0 — Documentation and Governance
 
-### Objective
+Complete requirements, architecture, Gemini, risk, accounting, security, testing, deployment, coding-agent rules, detailed tasks, and audit.
 
-Create a coherent implementation specification and AI-coding workflow.
+**Exit:** documents are coherent and implementation may begin without hidden architecture decisions.
 
-### Deliverables
+## Phase 1 — Shared Engineering Foundation
 
-- authoritative product requirements;
-- system architecture and ADRs;
-- AI coding-agent rules;
-- Gemini integration and AI guardrails;
-- backend, API, and database specifications;
-- market data, strategy, risk, portfolio, paper execution, and backtesting specifications;
-- security, testing, deployment, and observability baselines;
-- detailed task cards with acceptance criteria and definition of done;
-- documentation audit and cross-reference checks.
+Implement Python 3.12 backend structure, FastAPI, typed settings, SQLAlchemy/Alembic, tests, security checks, structured logs, and deterministic fakes.
 
-### Exit Gate
+**Exit:** `T1.1` and `T1.2` plus required foundation tasks pass.
 
-- no material contradiction between documents;
-- README inventory matches real files;
-- Gemini is the only required cloud AI provider for MVP;
-- MVP scope and prohibited features are consistent everywhere;
-- implementation may begin from `T1.1` without making hidden architecture decisions.
+## Phase 2 — Free Cloud Foundation
 
-## Phase 1 — Engineering Foundation
+Follow `C1` through `C7` in `CLOUD_MVP_TASKS.md`:
 
-### Objective
+- dedicated Supabase Free project;
+- migrations, Auth, RLS, and read views;
+- one-shot research-cycle CLI;
+- scheduled GitHub Actions workflow;
+- Render Free FastAPI deployment;
+- Cloudflare Pages frontend deployment;
+- free-tier logs, cycle status, export, and restore procedure.
 
-Create a secure, typed, testable runtime foundation.
+**Exit:** the platform runs without a local computer, has public HTTPS frontend/API URLs, and has proven duplicate protection and restore.
 
-### Deliverables
+## Phase 3 — Market and Feature Core
 
-- Python 3.12 backend structure;
-- FastAPI application;
-- PostgreSQL and Redis integration;
-- Alembic migrations;
-- ARQ worker and scheduler;
-- settings validation;
-- structured logging and correlation IDs;
-- authentication and role authorization;
-- CI quality and security gates;
-- Docker Compose development environment.
+Implement Binance Spot REST metadata and finalized candle backfill, data quality, immutable snapshots, and versioned features.
 
-### Exit Gate
+Persistent WebSocket ingestion is deferred.
 
-- foundation P0 tasks pass;
-- migration and startup tests pass;
-- no secret required for normal CI;
-- no live-trading path exists.
+**Exit:** complete hourly data can be reproduced; stale or missing data blocks entries.
 
-## Phase 2 — Market Research Core
+## Phase 4 — Gemini Analysis
 
-### Objective
+Implement provider protocol, fake provider, official Gemini adapter, structured report schema, validation, budgets, and evaluation suite.
 
-Build reliable market-data and deterministic analysis foundations.
+**Exit:** invalid, blocked, unavailable, or quota-exhausted Gemini calls degrade safely; normal CI uses no paid call.
 
-### Deliverables
+## Phase 5 — Strategy, Risk, Portfolio, and Paper Execution
 
-- Binance Spot public REST adapter;
-- Binance public WebSocket streams;
-- symbol filters and precision metadata;
-- finalized OHLCV ingestion;
-- data-quality detection and gap repair;
-- immutable market snapshots;
-- versioned feature calculations;
-- audit lineage and operational metrics.
+Implement HOLD baseline, BTC/EUR trend baseline, risk policy, append-only ledger, reconciliation, market/limit paper orders, fees, spread, slippage, precision, and minimum-notional rules.
 
-### Exit Gate
+**Exit:** no duplicate side effects, all actionable intents pass risk, and accounting property tests pass.
 
-- representative historical backfill succeeds;
-- duplicate and gap tests pass;
-- stale data blocks downstream decisions;
-- snapshots and feature hashes are reproducible.
+## Phase 6 — Backtesting and API/UI Completion
 
-## Phase 3 — Google Gemini Analysis
+Implement reproducible backtesting, benchmarks, reports, FastAPI resources, Supabase Auth authorization, and the primary frontend views.
 
-### Objective
+**Exit:** OpenAPI, API tests, UI states, RLS, and audit lineage pass.
 
-Add bounded, structured, explainable AI analysis without execution authority.
+## Phase 7 — Controlled 30-Day Free-Cloud Experiment
 
-### Deliverables
+Follow `C8`.
 
-- provider-independent `LLMProvider` protocol;
-- deterministic fake provider;
-- Google Gemini adapter using the official SDK;
-- structured report schema;
-- prompt and schema versioning;
-- grounding and unsupported-claim validation;
-- budget reservation and cost tracking;
-- provider failure, refusal, safety-block, and rate-limit handling;
-- Gemini evaluation dataset and reports.
+Configuration:
 
-### Exit Gate
-
-- Gemini output cannot bypass deterministic controls;
-- invalid or unsafe output always produces safe degradation;
-- schema-valid and grounding metrics are measured;
-- CI uses fake provider;
-- Gemini key is never committed or logged.
-
-## Phase 4 — Strategy, Risk, and Portfolio Core
-
-### Objective
-
-Implement deterministic decision and accounting boundaries.
-
-### Deliverables
-
-- HOLD-only smoke strategy;
-- BTC/EUR baseline trend strategy;
-- immutable strategy versions;
-- deterministic risk engine;
-- EUR 20 research risk profile;
-- append-only double-entry ledger;
-- reconciled portfolio projections;
-- portfolio and workspace halt controls.
-
-### Exit Gate
-
-- all actionable intents pass risk;
-- risk failures fail closed;
-- ledger property tests pass;
-- reconciliation mismatch halts activity;
-- AI has no position-sizing or order authority.
-
-## Phase 5 — Paper Trading
-
-### Objective
-
-Run realistic internal simulated execution.
-
-### Deliverables
-
-- market and limit paper orders;
-- cancellation and partial fills;
-- fee, spread, slippage, precision, and minimum-notional models;
-- idempotent order/fill workflow;
-- atomic fill and ledger posting;
-- paper portfolio API and UI;
-- reconciliation jobs and alerts.
-
-### Exit Gate
-
-- no duplicate order, fill, or ledger entry under replay/restart tests;
-- fill quantity never exceeds approval;
-- fees and slippage cannot be silently disabled;
-- critical E2E paper-trading flows pass.
-
-## Phase 6 — Backtesting and Evaluation
-
-### Objective
-
-Validate strategies and execution assumptions through reproducible historical replay.
-
-### Deliverables
-
-- event-driven backtest engine;
-- shared strategy, risk, execution, and portfolio contracts;
-- cash and buy-and-hold benchmarks;
-- performance and risk metrics;
-- reproducibility metadata;
-- walk-forward evaluation as a P1 enhancement;
-- report exports and comparison UI.
-
-### Exit Gate
-
-- look-ahead prevention tests pass;
-- identical runs are reproducible;
-- fee and slippage assumptions are explicit;
-- no profitability claim is made solely from optimized in-sample results.
-
-## Phase 7 — Observability and User Interface
-
-### Objective
-
-Make the system operable, auditable, and understandable.
-
-### Deliverables
-
-- React and TypeScript UI;
-- workspace and experiment views;
-- market and Gemini analysis views;
-- strategy/risk lineage;
-- paper portfolio and backtest reports;
-- audit timeline;
-- Prometheus metrics;
-- Grafana dashboards and alerts;
-- operational runbooks.
-
-### Exit Gate
-
-- simulation and halt states are visually unmistakable;
-- critical alerts have valid runbooks;
-- users can trace a decision end to end;
-- primary workflows meet accessibility requirements.
-
-## Phase 8 — Controlled 30-Day Paper Experiment
-
-### Objective
-
-Evaluate the complete system under a frozen configuration using EUR 20 virtual capital.
-
-### Configuration
-
-- BTC/EUR primary symbol;
-- no leverage or shorting;
+- virtual EUR 20;
+- BTC/EUR and 1h finalized candles;
+- approximately hourly GitHub Actions cycle;
 - maximum position 25%;
-- maximum order EUR 5 equivalent;
-- daily drawdown halt 5%;
-- total drawdown halt 15%;
-- one open order maximum;
-- fees and slippage enabled;
-- cash and buy-and-hold benchmarks;
-- real Gemini analysis within approved budget;
-- human/owner oversight.
+- maximum order EUR 5;
+- daily/total drawdown halts 5%/15%;
+- one open order;
+- no leverage or shorting;
+- Gemini cost budget EUR 0 by default;
+- cash and buy-and-hold benchmarks.
 
-### Deliverables
+**Exit:** complete report, no unresolved reconciliation mismatch, no duplicate financial side effect, and no manual database repair. Profit is not an exit criterion.
 
-- preflight report;
-- frozen experiment configuration;
-- continuous data-quality, AI, risk, and portfolio monitoring;
-- incident and halt records;
-- final experiment report;
-- explicit recommendation to stop, repeat paper testing, or consider Binance sandbox design.
+## Phase 8 — Reliability Upgrade Assessment
 
-### Exit Gate
+After the experiment, decide whether free-tier limitations justify:
 
-- zero unresolved reconciliation mismatch;
-- zero duplicate financial side effect;
-- complete decision lineage;
-- final report produced without manual database repair;
-- owner reviews all safety and quality evidence.
+- paid always-on API/worker hosting;
+- Redis/ARQ or another durable queue;
+- persistent Binance WebSocket ingestion;
+- hosted Prometheus/Grafana;
+- managed backups and higher availability.
 
-Profit is not an exit criterion.
+Every addition requires measured evidence and an ADR.
 
-## Phase 9 — Binance Test Environment Design and Validation
+## Phase 9 — Binance Test Environment
 
-### Objective
+Only after explicit owner approval and a separate credential/security design. No live capital.
 
-Validate private API order lifecycle using a Binance-provided test or demo environment where currently supported.
+## Phase 10 — Real-Capital Assessment
 
-### Preconditions
+Not approved by this roadmap. Requires legal, security, accounting, operational, and loss-limit review plus explicit owner approval.
 
-- Phase 8 complete;
-- separate private API and credential threat model;
-- exact current Binance test-environment capability verified against official documentation;
-- restricted environment-specific credentials;
-- no withdrawal permission;
-- complete reconciliation design;
-- explicit owner approval.
+## Future Productization
 
-### Deliverables
-
-- private exchange adapter contract;
-- signed-request handling;
-- clock and receive-window controls;
-- order, fill, balance, and open-order reconciliation;
-- credential rotation runbook;
-- sandbox-specific alerts and incident procedures.
-
-### Exit Gate
-
-- private API tests and reconciliation pass;
-- credential handling audit passes;
-- no live capital is used.
-
-## Phase 10 — Tiny Live Experiment Assessment
-
-This phase is not approved by the roadmap alone.
-
-Before any real-capital experiment, create a separate milestone and owner decision covering:
-
-- current legal and regulatory review;
-- Binance availability and terms for the user's jurisdiction;
-- production security assessment;
-- independent code and accounting review;
-- explicit real-money loss limits;
-- manual approval flow;
-- restricted credentials with no withdrawals;
-- immediate kill switch;
-- operational coverage and incident response;
-- evidence that extended paper and sandbox testing justify the risk.
-
-The possible EUR 20 real-capital test is a future hypothesis, not a promised feature.
-
-## Phase 11 — Productization
-
-Possible future scope:
-
-- multi-user and multi-tenant isolation;
-- additional exchanges behind audited adapters;
-- billing and subscription management;
-- stronger reporting and experiment comparison;
-- optional local models behind the provider protocol;
-- managed deployment;
-- compliance controls;
-- enterprise audit and retention policies.
-
-Public SaaS requires separate product, security, privacy, legal, support, and operational plans.
-
-## Deferred Ideas
-
-The following are intentionally deferred until evidence exists:
-
-- multi-agent debate orchestration;
-- news and social-data ingestion;
-- whale or on-chain analysis;
-- multi-exchange execution;
-- automated strategy search;
-- self-learning or self-modifying strategies;
-- futures, leverage, margin, options, shorting, market making, or arbitrage.
-
-## Roadmap Change Control
-
-A roadmap change must:
-
-1. identify the business or engineering reason;
-2. state security and financial-risk impact;
-3. update product requirements and tasks;
-4. add or update an ADR when architectural;
-5. preserve current safety invariants;
-6. receive explicit owner approval for live, leveraged, private-exchange, or customer-facing scope.
+Possible later scope includes multi-user tenancy, additional exchanges, billing, optional local models, stronger analytics, and compliance controls. Public SaaS requires separate planning.
