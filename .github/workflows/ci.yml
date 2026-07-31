@@ -17,12 +17,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
       - name: Install backend dependencies
         run: |
           cd backend
-          python -m pip install pip-tools
-          python -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml
           python -m pip install -r requirements.txt
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
       - name: Format check
         run: make format-check
       - name: Lint
@@ -37,12 +42,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
       - name: Install backend dependencies
         run: |
           cd backend
-          python -m pip install pip-tools
-          python -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml
           python -m pip install -r requirements.txt
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
       - name: Run tests
         run: make test
 
@@ -57,6 +67,8 @@ jobs:
         run: |
           cd frontend
           npm ci
+      - name: Format check
+        run: cd frontend && npm run format-check 2>/dev/null || npx prettier --check .
       - name: Lint
         run: cd frontend && npm run lint
       - name: Build
@@ -84,8 +96,6 @@ jobs:
       - name: Install backend dependencies
         run: |
           cd backend
-          python -m pip install pip-tools
-          python -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml
           python -m pip install -r requirements.txt
       - name: Install frontend dependencies
         run: |
@@ -95,8 +105,6 @@ jobs:
         run: .\tasks.ps1 help
       - name: Docs check
         run: .\tasks.ps1 docs-check
-      - name: Format check
-        run: .\tasks.ps1 format-check
       - name: Lint
         run: .\tasks.ps1 lint
       - name: Type check
@@ -105,7 +113,3 @@ jobs:
         run: .\tasks.ps1 frontend-test
       - name: Research cycle smoke
         run: .\tasks.ps1 research-cycle
-      - name: Verify failure propagation (deliberate failure)
-        run: |
-          .\tasks.ps1 docs-check
-          if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: docs-check did not propagate failure" -ForegroundColor Red; exit 1 }
