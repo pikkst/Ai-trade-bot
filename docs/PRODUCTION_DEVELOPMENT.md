@@ -1,384 +1,420 @@
 # Production Development After the MVP
 
-Last reviewed: 2026-07-31
-Status: Authoritative post-demo development plan; does not authorize live trading
+Last reviewed: 2026-08-01  
+Status: Authoritative staging and production-research plan mapped to `M030–M036`; live trading not authorized
 
 ## 1. Purpose
 
-Define how the project evolves after the local prototype, public cloud demo, and controlled 30-day paper experiment into a reliable production-grade research product.
+Define how The Daily Roast AI evolves after the deterministic local product, free-cloud demo, and controlled paper experiment into a reliable production-grade research service.
 
-Production development means production-quality software engineering and operations. It does not automatically mean real-money trading, private Binance API access, or public SaaS availability.
+Production development means production-quality software engineering, operations, security, privacy, support, and governance. It does not mean real-money trading, private Binance access, public billing, or automatic SaaS launch.
 
-## 2. Promotion Sequence
+## 2. Canonical Master-Task Path
 
 ```text
-Local development
-  -> automated CI
-  -> cloud demo
-  -> controlled paper experiment
-  -> staging
-  -> production research service
-  -> separately approved Binance sandbox
-  -> separately approved live-trading assessment
+M029       Complete and close the controlled paper experiment
+M030       Measure performance, resilience, SLO, quota, cost, and capacity
+M031       Govern datasets, lineage, retention, archive, and reproducibility
+M032       Complete research review and strategy lifecycle decisions
+M033       Operationalize incident response, postmortems, and corrective actions
+M034       Govern material behavior changes and staged paper rollout
+M035       Make post-experiment decision and validate isolated staging
+M036       Launch and operate production research
+Future     Separate Binance test/private and real-capital assessments
 ```
 
-No stage may be skipped solely because the previous stage appeared profitable.
+No phase may be skipped because paper or backtest performance appears favorable.
 
-## 3. Production Product Profiles
+## 3. Product Profiles
 
-### 3.1 Production Research Service
+### 3.1 Production Research Service — M036
 
-A customer- or owner-facing system that provides:
+An authenticated system providing:
 
-- authenticated market research;
-- Gemini-assisted reports;
-- deterministic strategy comparisons;
-- paper portfolios;
-- reproducible backtests;
-- exports and audit history.
+- market evidence and immutable snapshots;
+- validated Gemini-assisted advisory reports;
+- deterministic strategy and risk comparisons;
+- paper portfolios and append-only accounting;
+- reproducible backtests and benchmarks;
+- experiments, incidents, audit history, exports, and research reviews;
+- governance, Trust Center, support, and operational status.
 
-This profile still uses public Binance data and simulated trading.
+It uses public market data and simulated execution.
 
-### 3.2 Binance Sandbox Profile
+### 3.2 Binance Test Environment — Future Assessment
 
-A later isolated profile using private test-environment credentials for order lifecycle and reconciliation. It requires a separate architecture and security gate.
+A later isolated profile using private test credentials for exchange order lifecycle and reconciliation. It is outside M001–M036 and requires a separate specification, threat model, tasks, accounting review, staged verification, and owner approval.
 
-### 3.3 Live Trading Profile
+### 3.3 Live-Capital Profile — Not Approved
 
-Not approved by this document. Requires a separate owner decision, legal review, financial-risk specification, independent review, and implementation milestone.
+Requires a separate legal, exchange-eligibility, tax, financial-risk, credential, accounting, operational, emergency-control, independent-review, and owner-decision milestone. No current document authorizes it.
 
-## 4. Environment Separation
+## 4. M030–M034 Evidence Hardening
 
-Production development requires at least:
+Before staging is considered, the project must produce:
 
-- local;
-- CI;
-- demo;
-- staging;
-- production.
+### Performance and FinOps — M030
 
-Each environment must use separate:
+- versioned SLIs/SLOs and error budgets;
+- API/frontend/cycle/database/backtest/provider measurements;
+- free-tier and provider quota snapshots;
+- billed/estimated/free-allowance cost classification;
+- capacity forecasts and architecture triggers;
+- resilience and recovery evidence.
 
-- Supabase or PostgreSQL projects;
-- Auth users and signing material;
-- Gemini projects and API keys;
-- domains;
+### Data Governance — M031
+
+- dataset/version registry and manifests;
+- source-to-derived lineage;
+- quality gates, quarantine, and correction propagation;
+- retention, legal/operational holds, archive, restore, deletion/anonymization boundaries;
+- reproducibility after archive/restore.
+
+### Research Review — M032
+
+- hypothesis and test-plan evidence;
+- train/validation/untouched-test integrity;
+- variants, benchmarks, robustness, walk-forward, reproducibility, costs, risk, and paper observation;
+- reviewer conflicts and owner decision;
+- strategy promotion only to future paper configurations.
+
+### Incident Learning — M033
+
+- alert routing and deduplication;
+- containment, restoration, financial-integrity verification, and resolution as distinct states;
+- evidence preservation and communication;
+- postmortems, corrective actions, and effectiveness review.
+
+### Change Management — M034
+
+- immutable change proposals and behavior-set hashes;
+- impact, compatibility, security/privacy, migration, cost/capacity, accessibility, and evidence review;
+- immutable approval snapshots;
+- staged paper canaries and stop conditions;
+- rollback/forward fix, emergency expiry, deprecation, and removal gates.
+
+## 5. M035 Post-Experiment Decision
+
+The owner records one explicit outcome:
+
+- stop the project or a workstream;
+- repeat the experiment with an approved new hypothesis/configuration;
+- improve identified reliability, data, UX, AI, strategy, risk, or operational gaps;
+- advance a specific release candidate to isolated staging.
+
+The decision includes:
+
+- experiment and evidence snapshot references;
+- reliability, data, AI, strategy, risk, accounting, incident, security/privacy, cost, and user-comprehension findings;
+- limitations and unfavorable results;
+- reviewer conflicts;
+- rationale and follow-up task IDs;
+- owner approval.
+
+Advancement is not automatic.
+
+## 6. Staging Requirements — M035
+
+Staging is production-like but fully isolated.
+
+It uses separate:
+
+- PostgreSQL/Supabase project;
+- Auth identities and signing material;
+- Gemini project and API key;
+- domains and certificates;
 - storage buckets;
 - deployment credentials;
-- monitoring destinations;
-- experiment and risk configurations.
+- monitoring and incident destinations;
+- configurations, budgets, and paper portfolios.
 
-Data may move from production to lower environments only through approved anonymized or synthetic exports.
+Production data may enter staging only through an approved anonymized export. Synthetic data is preferred.
 
-## 5. Production Architecture Review
+## 7. Production Architecture Review
 
-The free-cloud stack is not automatically the final production stack. Before production promotion, review:
+The free-cloud stack is not assumed to be the permanent production stack. Before staging approval, review measured evidence for:
 
-- managed PostgreSQL capacity and backup guarantees;
-- connection pooling;
-- API hosting availability;
-- background-job reliability;
-- scheduler guarantees;
-- long-running worker requirements;
-- WebSocket necessity;
-- observability retention;
-- incident response needs;
-- cost and vendor limits.
+- PostgreSQL capacity, pooling, backups, and recovery;
+- API hosting availability and cold starts;
+- scheduler guarantees and delayed/missed cycle behavior;
+- long-running job/backtest requirements;
+- persistent worker or queue need;
+- WebSocket ingestion need;
+- object storage and retention;
+- observability retention and incident routing;
+- support requirements;
+- provider quota, cost, and regional/terms constraints.
 
-Possible production changes include:
+Possible changes such as paid hosting, upgraded Supabase/PostgreSQL, Redis/ARQ, persistent workers, WebSocket ingestion, managed metrics, or object storage must pass M034. No component is adopted from speculation alone.
 
-- managed paid PostgreSQL or upgraded Supabase;
-- a persistent worker platform;
-- Redis/ARQ or another durable job system;
-- Binance WebSocket ingestion with REST gap repair;
-- managed metrics and alerting;
-- object storage for reports and backups.
-
-Every change requires an ADR and migration plan.
-
-## 6. Production Backend Requirements
+## 8. Production Backend Requirements
 
 - immutable deploy artifacts;
-- explicit application version and commit SHA;
-- database connection pooling suitable for the selected platform;
-- graceful startup and shutdown;
-- health and readiness checks;
-- bounded concurrency;
-- stable error taxonomy;
-- idempotent commands and jobs;
-- transactional outbox where post-commit delivery matters;
-- no network calls inside financial transactions;
-- safe retry and dead-letter behavior;
-- complete audit and correlation identifiers.
+- application version and commit SHA;
+- one migration head and controlled migration execution;
+- connection management appropriate to measured load;
+- graceful startup/shutdown;
+- liveness and readiness;
+- bounded concurrency and resource limits;
+- stable error/reason taxonomy;
+- idempotent commands and cycles;
+- outbox where reliable post-commit delivery matters;
+- no network call inside financial transactions;
+- safe retry/dead-letter behavior where applicable;
+- complete audit/correlation identities;
+- append-only ledger and mandatory reconciliation;
+- paper-only execution flags enforced at startup and runtime.
 
-## 7. Production Frontend Requirements
+## 9. Production Frontend Requirements
 
 - custom domain and TLS;
-- strict environment configuration;
-- no server secrets in build artifacts;
-- content security policy;
-- secure authentication flow;
-- error and loading states;
-- accessibility for primary workflows;
-- explicit environment and simulation labels;
-- responsive portfolio and decision-lineage views;
-- privacy-preserving analytics only after approval;
-- frontend performance budgets.
+- strict environment allowlist;
+- no server secret in client artifacts;
+- CSP, secure Auth, session expiry, and recovery behavior;
+- accessible loading/error/stale/halt/reconciliation states;
+- keyboard, screen reader, zoom/reflow, contrast, and reduced motion;
+- persistent environment, simulation, freshness, risk, incident, and blocker state;
+- responsive evidence/portfolio/decision views;
+- English/Estonian semantic parity;
+- privacy-reviewed analytics only when approved;
+- measured performance budgets.
 
-## 8. Data and Migration Management
+## 10. Data and Migration Management
 
 ### Schema Changes
 
-- all changes use committed migrations;
-- migrations are tested from empty and current staging state;
-- destructive changes require expand-migrate-contract sequencing;
-- production migrations run once through a controlled job;
-- application rollback compatibility is documented;
+- all changes use committed additive migrations;
+- applied migrations are immutable;
+- clean and supported-upgrade paths are tested;
+- destructive changes use expand-migrate-contract;
+- staging rehearses the exact migration set;
+- production migrations run once through a protected step;
+- rollback compatibility or forward-fix strategy is documented;
 - migration drift blocks deployment.
 
 ### Data Retention
 
-Production policy must define retention for:
+Production policy defines retention and hold behavior for:
 
-- market candles;
-- raw and validated Gemini responses;
-- audit events;
-- paper ledger and fills;
-- backtest events;
-- application logs;
-- exports and backups;
-- deleted user data.
+- market candles and corrections;
+- snapshots and features;
+- raw/provider metadata and validated Gemini reports;
+- audit, incidents, approvals, and release evidence;
+- paper orders, fills, ledger, and portfolio states;
+- backtest events and artifacts;
+- application/operational logs;
+- exports, archives, and backups;
+- personal data and deleted accounts.
 
-### Data Privacy
+### Privacy
 
-Before serving external users:
+Before external users:
 
-- define controller and processor roles;
-- document personal-data categories;
-- define lawful basis and retention;
-- support access, deletion, and export where required;
-- avoid sending personal data to Gemini unless explicitly designed and approved.
+- controller/processor roles are documented;
+- personal-data categories and purposes are defined;
+- lawful basis and retention are reviewed;
+- access/export/correction/deletion workflows are implemented where required;
+- provider transfers and regional terms are reviewed;
+- personal data is not sent to Gemini unless separately designed and approved.
 
-## 9. Authentication and Authorization
+## 11. Authentication and Authorization
 
-Production must use:
+Production research requires:
 
-- verified email or approved identity provider;
-- short-lived sessions or tokens;
-- secure refresh/session rotation;
-- server-side role enforcement;
-- owner, operator, and viewer permissions;
-- privileged-action audit;
+- verified identity or approved provider;
+- short-lived sessions/tokens;
+- secure rotation/revocation/recovery design;
+- optional/required MFA for sensitive owner commands according to policy;
+- handler-level authorization plus RLS;
+- owner/operator/viewer permissions and service-role separation;
+- recent authentication for high-risk commands;
+- privileged-action and denied-attempt audit;
 - rate limiting and abuse protection;
-- account recovery and revocation procedures;
-- optional MFA before high-risk administrative actions.
+- periodic access reviews.
 
-## 10. Secret Management
+## 12. Secrets
 
-- no plaintext secrets in repositories, images, browser builds, logs, or reports;
-- separate secrets per environment;
-- least-privilege service accounts;
-- scheduled rotation;
-- emergency revocation;
+- no plaintext secrets in repository, images, browser builds, logs, prompts, reports, telemetry, screenshots, or fixtures;
+- separate secrets by environment;
+- least-privilege service identities;
+- scheduled and incident-driven rotation;
+- emergency revocation and verification;
 - secret-access audit where supported;
-- service-role credentials restricted to backend and controlled jobs;
-- private Binance credentials prohibited until a later approved milestone.
+- service-role/database/Gemini credentials remain backend/workflow-only;
+- private Binance credentials remain prohibited.
 
-## 11. CI/CD and Release Management
+## 13. CI/CD and Release Management
 
-Production pipelines must use protected environments.
+Required sequence:
 
-Required stages:
+1. validate Master Task and detailed-card evidence;
+2. format, lint, type, unit/property/integration/contract/E2E/accessibility tests;
+3. validate migrations, RLS, Auth, and restore;
+4. run security/privacy/dependency/secret/artifact scans;
+5. build immutable frontend/backend artifacts;
+6. verify OpenAPI, types, schemas, docs, SBOM, and generated hashes;
+7. deploy unchanged artifacts to staging;
+8. run staging smoke, E2E, load, failure, security/privacy, accessibility, restore, and rollback checks;
+9. create immutable release approval snapshot;
+10. obtain manual production approval;
+11. run controlled production migration;
+12. deploy immutable artifacts;
+13. run health, Auth, RLS, smoke, and reconciliation checks;
+14. verify alerts, support, status, cost, and release metadata;
+15. roll back or halt on critical failure.
 
-1. source and task validation;
-2. formatting, linting, typing, and tests;
-3. migration validation;
-4. security and dependency scans;
-5. frontend and backend builds;
-6. generated artifact verification;
-7. staging deployment;
-8. staging smoke and E2E tests;
-9. manual production approval;
-10. migration deployment;
-11. application deployment;
-12. post-deploy smoke and reconciliation checks;
-13. release record and rollback readiness.
+Direct unreviewed deployment from a workstation is prohibited.
 
-Direct unreviewed deployment from a developer workstation is prohibited.
-
-## 12. Branching and Release Strategy
-
-Recommended:
+## 14. Branching and Release Strategy
 
 - `main` remains releasable;
-- short-lived feature branches;
-- pull requests with required checks;
-- semantic version tags;
-- protected staging and production environments;
-- release notes generated from task and changelog data;
-- emergency fixes use the same review and audit standards with expedited approval.
+- short-lived Master-Task branches;
+- pull requests with required checks and evidence;
+- semantic version tags where adopted;
+- protected staging/production-research environments;
+- release notes generated from task/changelog evidence;
+- emergency changes use M034 expiry and retrospective review;
+- a long-lived `develop` branch is introduced only for measured workflow need.
 
-A separate long-lived `develop` branch is optional and should be introduced only if it solves a demonstrated workflow problem.
+## 15. Observability, SLOs, and Error Budgets
 
-## 13. Observability and SLOs
+Production research defines measured objectives for:
 
-Production development must define measured SLOs for:
-
-- API availability;
-- API latency;
-- scheduled-cycle success;
+- authenticated API availability and latency;
+- scheduled-cycle completion and delay;
 - market-data freshness;
-- Gemini valid-report rate;
-- experiment and portfolio integrity;
-- backup completion;
-- restore time;
+- Gemini valid-report rate and fallback availability;
+- portfolio reconciliation success;
+- zero duplicate financial side effects;
 - zero unresolved ledger mismatch;
-- zero duplicate financial side effect.
+- backup/export completion;
+- restore and reconciliation success;
+- documentation/release evidence availability.
 
-Profit is not an SLO.
+Profit is not an SLI or SLO.
 
-Required production signals:
+Signals include structured logs, errors, metrics, uptime checks, database/provider health, quota/cost alerts, security/Auth alerts, audit events, and status communication.
 
-- structured centralized logs;
-- error aggregation;
-- metrics and dashboards;
-- alert routing;
-- uptime checks;
-- database health and slow-query monitoring;
-- provider quota and cost alerts;
-- security and authentication alerts;
-- audit events.
-
-## 14. Backup and Disaster Recovery
+## 16. Backup and Disaster Recovery
 
 Production requires:
 
-- automated encrypted backups;
+- automated encrypted backups where selected;
 - documented retention;
 - point-in-time recovery where justified;
-- off-provider or independent export where required;
-- regular restore tests;
-- ledger reconstruction checks after restore;
-- documented RPO and RTO;
-- incident command and communication process.
+- independent exports where required;
+- regular isolated restore tests;
+- migration verification and ledger reconstruction after restore;
+- measured RPO/RTO;
+- incident command and communication;
+- backup-failure alerts and blockers.
 
-A backup is not accepted until a restore has been tested.
+A backup is not accepted until restore succeeds and reconciles.
 
-## 15. Security Review Gates
+## 17. Security and Privacy Gates
 
-Before production research launch:
+Before M036:
 
 - threat model updated;
-- authentication and RLS independently reviewed;
-- dependency and container scans clean according to policy;
+- Auth/RLS independently reviewed;
 - secrets and environment boundaries reviewed;
-- penetration test or focused security assessment completed as appropriate;
-- incident response runbook tested;
+- dependency/container/filesystem scans satisfy policy;
+- focused security assessment completed as appropriate;
+- incident and credential-rotation runbooks tested;
 - data-handling and privacy review completed;
-- no critical or high unresolved finding without explicit documented exception.
+- no critical/high unresolved finding without a permitted time-limited exception;
+- no client secret or private exchange path;
+- live-trading-disabled state verified.
 
-Before private Binance API work, perform an additional credential and financial-side-effect threat model.
+## 18. Cost and Capacity
 
-## 16. Cost and Capacity Management
-
-Production development must include:
+Production development includes:
 
 - service budgets and alerts;
-- Gemini request, token, and cost budgets;
-- database storage growth estimates;
-- egress and build-minute estimates;
-- backtest concurrency limits;
-- report retention policies;
-- cost per active user or experiment;
-- documented degradation behavior when a budget is exhausted.
+- Gemini request/token/cost controls;
+- database/storage/egress/build-minute forecasts;
+- backtest concurrency and retention limits;
+- cost per experiment/workspace/user where evidence exists;
+- billed versus estimated classification;
+- degradation behavior at budget/quota exhaustion;
+- no automatic purchase, scale, or budget increase.
 
-Provider free tiers must not be represented as permanent production capacity.
+Free tiers are not permanent production capacity claims.
 
-## 17. Operational Runbooks
-
-Required before production research launch:
+## 19. Required Operational Runbooks
 
 - failed deployment;
 - failed migration;
 - database unavailable;
-- authentication provider failure;
-- Gemini outage or quota exhaustion;
-- Binance data stale;
+- Auth provider failure/account compromise;
+- Gemini outage/quota/safety/schema failure;
+- Binance data stale/provider unavailable;
 - duplicate-cycle suspicion;
-- ledger mismatch;
-- backup failure;
+- ledger/reconciliation mismatch;
+- export/backup failure;
 - restore operation;
-- suspected secret leak;
-- account compromise;
-- production halt and read-only mode.
+- suspected secret leak and rotation;
+- production halt/read-only mode;
+- SLO fast burn or capacity exhaustion;
+- incident communication and postmortem.
 
-## 18. Staging Requirements
+Runbooks require dry-run/drill evidence, owner, review date, prerequisites, validation, and recovery steps.
 
-Staging must be production-like but isolated.
+## 20. Staging Acceptance Gate — M035
 
-It must support:
+Staging is accepted when:
 
-- production build artifacts;
-- separate database and Auth;
-- safe synthetic fixtures;
-- migration rehearsal;
-- protected Gemini smoke calls;
-- full E2E tests;
-- load and failure testing;
-- release-candidate approval;
-- reset without production impact.
-
-## 19. Production Research Launch Gate
-
-The production research service may launch when:
-
-- local, CI, demo, and staging flows are stable;
-- paper experiment findings are reviewed;
-- production architecture and ADRs are approved;
-- migrations and rollback compatibility are verified;
-- Auth, RLS, and secret handling pass review;
-- backup and restore pass;
-- operational alerts and runbooks are active;
-- costs and quotas are budgeted;
-- user-facing disclaimers and data policies are present;
+- the post-experiment decision explicitly approves a release candidate;
+- M030–M034 evidence is complete enough for the candidate;
+- environment isolation is proven;
+- production artifacts run unchanged;
+- migration rehearsal and compatibility pass;
+- E2E/load/failure/accessibility/security/privacy/restore/rollback tests pass;
+- provider budgets/quotas and operational ownership are ready;
+- all release blockers are resolved or permitted by policy;
 - live trading remains disabled.
 
-## 20. Post-Launch Development
+## 21. Production Research Launch Gate — M036
 
-After production research launch:
+Launch occurs when:
 
-- measure actual usage and reliability;
-- prioritize from evidence rather than speculative scale;
-- perform blameless incident reviews;
-- maintain dependency and model upgrades through evaluation gates;
-- compare Gemini versions using frozen datasets;
-- maintain backward-compatible APIs;
-- archive or migrate old strategy, prompt, and schema versions safely;
-- review costs monthly;
-- review security and recovery readiness regularly.
+- M035 is verified;
+- protected CI/CD and manual approval are active;
+- backup/restore and rollback are current;
+- Auth/RLS/secrets/privacy/security reviews pass;
+- SLO/capacity/cost and incident routing are active;
+- support, status, disclaimers, and data policies are published;
+- controlled migration/deploy/smoke/reconciliation succeeds;
+- release evidence maps to one commit, migration head, dependency set, configuration set, and behavior set;
+- live trading remains disabled.
 
-## 21. Live Trading Separation
+## 22. Continuous Production Operation
 
-A production research product may exist indefinitely without live trading.
+After launch:
 
-Live trading requires a separate specification covering:
+- measure usage, reliability, cost, and comprehension;
+- review access, security, privacy, recovery, and provider terms;
+- maintain dependencies and model/prompt upgrades through M034;
+- maintain API compatibility and version migrations;
+- run incident reviews and corrective-action effectiveness checks;
+- review strategies through M032;
+- review costs/capacity monthly or at approved cadence;
+- keep documentation/generated evidence current;
+- preserve paper-only operation.
 
-- jurisdiction and exchange eligibility;
-- private API authentication;
-- credential protection;
-- exchange reconciliation;
-- real-money risk policy;
-- manual approvals;
-- capital limits;
-- market and operational failure handling;
-- independent code and accounting review;
-- legal and tax considerations;
-- emergency disablement.
+## 23. Future Execution Separation
 
-No production research task may silently introduce a live order path.
+A production research product may operate indefinitely without live trading.
 
-## 22. Related Documents
+Binance test/private and live-capital work requires a separate specification covering jurisdiction, exchange eligibility, credentials, exchange reconciliation, real-loss limits, approvals, market/operational failures, independent code/accounting review, legal/tax obligations, and emergency disablement.
 
+No M036 or production maintenance task may silently introduce a live order path.
+
+## 24. Related Documents
+
+- `/TASKS.md`
+- `IMPLEMENTATION_EXECUTION_PLAN.md`
+- `TASK_CATALOG_INDEX.md`
 - `LOCAL_DEVELOPMENT.md`
 - `TEST_ENVIRONMENTS.md`
 - `DEPLOYMENT.md`
