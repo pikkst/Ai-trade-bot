@@ -1,29 +1,58 @@
 # API Specification
 
-Last reviewed: 2026-07-31
-Status: Authoritative design contract; generated OpenAPI becomes executable source of truth after implementation
+Last reviewed: 2026-08-01  
+Status: Authoritative design contract mapped to `M014–M036`; generated OpenAPI becomes executable source of truth after implementation
 
 ## 1. General Conventions
 
 - Base path: `/api/v1`
 - Content type: `application/json`
-- Authentication: Bearer access token for protected endpoints
-- Timestamps: RFC 3339, timezone-aware UTC
-- Monetary and quantity values: decimal strings, never JSON floating-point values
+- Authentication: Supabase Auth bearer evidence for protected resources
+- Authorization: handler-level application permissions plus RLS where applicable
+- Timestamps: RFC 3339 timezone-aware UTC
+- Money, prices, quantities, rates, costs, and percentages: decimal strings with explicit units
 - Request correlation: accept or generate `X-Correlation-ID`
-- Idempotent commands: require `Idempotency-Key`
-- List responses: paginated with deterministic ordering
-- Breaking public changes: new API version or explicit migration plan
+- Repeatable side-effect commands: require `Idempotency-Key`
+- Mutable aggregate commands: require an expected version through `If-Match` or an explicit version field
+- Sensitive owner commands: require recent authentication according to policy
+- Lists: cursor-paginated with bounded server-approved filters and deterministic ordering
+- Errors: stable safe code, message, correlation ID, and bounded details
+- Breaking public changes: explicit API/schema version and migration plan
+- Generated OpenAPI: deterministic and verified in CI
 
-## 2. Roles
+The browser must not calculate authoritative permission, risk, accounting, reconciliation, experiment validity, SLO, cost, compatibility, approval, or release outcomes.
 
-- `owner`: full workspace configuration, experiment start/halt, policy administration
-- `operator`: run ingestion, analysis, backtests, and paper operations within approved policy
-- `viewer`: read-only access
+## 2. Master-Task Ownership
 
-Authorization is enforced in application handlers, not only in route dependencies or the frontend.
+| API area | Master Tasks |
+|---|---|
+| identity, workspace, configuration, market, AI, strategy, risk, execution, portfolio, backtest | M003, M007–M014 |
+| product workspaces and shell aggregates | M015–M025 |
+| integrated verification and recovery | M026–M027 |
+| cloud/experiment operation | M028–M029 |
+| performance, data, research, incident, and change governance | M030–M034 |
+| staging, release, and production research | M035–M036 |
 
-## 3. Standard Error Envelope
+An endpoint is not complete because it appears here. It requires implementation, authorization, schema, tests, observability, and generated OpenAPI evidence in its mapped Master Task.
+
+## 3. Roles and Identity Classes
+
+Human roles:
+
+- `owner`
+- `operator`
+- `viewer`
+
+System identities may include:
+
+- application runtime
+- scheduled workflow/service
+- approved read-only operations identity
+- migration identity
+
+Every protected operation resolves server-authoritative effective permissions. A role label alone is not sufficient authorization evidence.
+
+## 4. Standard Error Envelope
 
 ```json
 {
@@ -38,11 +67,28 @@ Authorization is enforced in application handlers, not only in route dependencie
 }
 ```
 
-Safe details may be included. Stack traces, SQL, credentials, secrets, raw authorization data, and unrestricted provider payloads must never be returned.
+Never return stack traces, raw SQL, credentials, tokens, cookies, unrestricted prompts/provider responses, secret-bearing configuration, private cross-workspace identifiers, or filesystem paths.
 
-## 4. Pagination
+## 5. Common Command Contract
 
-Cursor response:
+Every material command requires as applicable:
+
+- authenticated actor and eligible permission;
+- workspace/resource ownership and scope;
+- valid current state;
+- `Idempotency-Key`;
+- expected aggregate version;
+- canonical reason code;
+- explicit confirmation context for destructive, privilege-increasing, lifecycle, or release actions;
+- recent-authentication evidence;
+- immutable audit result;
+- safe response containing resulting state/version and evidence links.
+
+Duplicate requests return the canonical prior result or a deterministic `409` conflict. The browser never writes critical tables directly.
+
+## 6. Pagination and Filtering
+
+Response shape:
 
 ```json
 {
@@ -54,416 +100,648 @@ Cursor response:
 }
 ```
 
-Default and maximum page sizes must be configured and documented in generated OpenAPI.
+Requirements:
 
-## 5. Health
+- bounded default and maximum page sizes;
+- server-approved sort/filter fields;
+- deterministic tie-breaking;
+- no raw SQL/search expression passthrough;
+- no unauthorized existence leak through counts, timing, or suggestions;
+- exact identifier lookup remains deterministic.
+
+## 7. Health and Runtime Identity
 
 ### `GET /health/live`
 
-Purpose: process liveness only.
+Unauthenticated process-liveness check only.
 
-Authentication: none.
-
-Success: `200` when the process event loop can respond.
+It does not imply database readiness, schedule health, provider health, financial integrity, or completed cycles.
 
 ### `GET /health/ready`
 
-Purpose: readiness for traffic and background work.
+Dependency-aware readiness for the current process. Checks typed configuration, PostgreSQL, expected migration head, required Auth verification configuration, and unrecoverable startup state.
 
-Checks:
+### `GET /runtime/revision`
 
-- configuration validated;
-- PostgreSQL reachable;
-- required migration revision present;
-- Redis reachable when mandatory for this process;
-- service not in unrecoverable startup state.
+Role: viewer or higher; a minimized public variant may exist.
 
-Returns `503` with safe component statuses when not ready.
+Returns application version, commit SHA, build ID, migration head, API hash, client/backend artifact versions, environment, publication time, and paper/live-disabled status.
 
-## 6. Authentication
-
-### `POST /auth/login`
-
-Accepts validated credentials and returns a short-lived access token. Exact refresh-token design must be implemented only after a dedicated security decision.
+## 8. Authentication and Account
 
 ### `GET /auth/me`
 
-Returns authenticated user identity and effective roles.
+Returns authenticated identity, provider, session issue/expiry, recent-auth state, account state, workspace memberships, effective role summaries, allowed session commands, and safe security-event summary.
 
-## 7. Workspaces
+No token, cookie, signature, password, recovery secret, or provider credential is returned.
+
+### `POST /auth/sign-out`
+
+Idempotent session/provider revocation command where supported.
+
+### `POST /auth/revoke-sessions`
+
+Role: authenticated account owner; recent authentication required.
+
+Revokes eligible sessions and records audit evidence.
+
+Authentication itself uses the approved Supabase Auth flow rather than an unrelated application password/JWT subsystem.
+
+## 9. Product Shell, Preferences, and Search
+
+### `GET /shell`
+
+Returns product identity, account/workspace/environment context, global safety state, navigation, recent items, saved views, notification summary, preferences, help/trust context, permissions, diagnostics, and links.
+
+### `GET /search`
+
+Searches only authorized indexed metadata and approved content. Supports bounded query, resource type, workspace, status, date, and cursor filters.
+
+### `GET /notifications`
+
+Returns authorized in-app notifications/notices with severity, category, source, status, timestamps, evidence links, and required awareness/review classification.
+
+### `POST /notifications/{notification_id}/read`
+
+Personal idempotent state command. It does not alter source incidents, audit events, or financial evidence.
+
+### `GET|PATCH /preferences`
+
+Reads or updates non-authoritative user preferences such as locale, timezone, display density, and safe presentation options.
+
+### Saved-view commands
+
+```http
+POST   /saved-views
+PATCH  /saved-views/{saved_view_id}
+DELETE /saved-views/{saved_view_id}
+```
+
+Saved views contain only approved route/filter/display state and never secrets, raw prompts, unrestricted queries, or authoritative calculations.
+
+## 10. Workspaces and Memberships
 
 ### `POST /workspaces`
 
-Role: owner.
+Role: owner. Idempotency and reason required.
 
-Idempotency: required.
+Creates an isolated research workspace with base currency, initial safe metadata, and all live/private execution flags disabled.
 
-Creates a research workspace with name, base currency, allowed symbols, default interval, and safe disabled feature flags.
+### `GET /workspaces`
+
+Lists only authorized workspaces.
 
 ### `GET /workspaces/{workspace_id}`
 
-Role: viewer or higher.
-
-Returns workspace metadata and active configuration-version references. Secret values are never returned.
+Returns workspace identity, status, owners, active configuration, experiment/portfolio summaries, membership counts, retention profile, and blockers.
 
 ### `PATCH /workspaces/{workspace_id}`
 
-Role: owner.
+Owner-only mutable metadata command. Versioned behavioral changes use configuration resources rather than silent in-place mutation.
 
-Updates mutable metadata only. Versioned strategy, risk, Gemini, or experiment configuration changes use dedicated version resources rather than silent in-place mutation.
+### Membership and invitation commands
 
-## 8. Configuration Versions
+```http
+GET    /workspaces/{workspace_id}/members
+POST   /workspaces/{workspace_id}/invitations
+POST   /workspaces/{workspace_id}/members/{membership_id}/role-changes
+POST   /workspaces/{workspace_id}/members/{membership_id}/revoke
+GET    /workspaces/{workspace_id}/access-reviews
+POST   /workspaces/{workspace_id}/access-reviews
+```
+
+Privilege increase or owner removal requires recent authentication, confirmation, expected version, reason, and owner-count invariant checks. Invitation tokens are never returned after issuance.
+
+## 11. Configuration and Behavior Sets
 
 ### `POST /workspaces/{workspace_id}/configurations`
 
-Role: owner.
+Creates a draft immutable configuration version from validated project-owned fields. It never accepts secret values.
 
-Idempotency: required.
+### `GET /workspaces/{workspace_id}/configurations`
 
-Creates an immutable configuration version containing references to:
+### `GET /workspaces/{workspace_id}/configurations/{configuration_id}`
 
-- allowed symbols and intervals;
-- feature-set version;
-- Gemini provider configuration without secret value;
-- prompt and report-schema versions;
-- strategy version;
-- risk-policy version;
-- paper execution model;
-- AI budgets.
+Returns canonical JSON, hash, lifecycle, domain references, dependencies, approvals, usage, and limitations.
 
-### `GET /workspaces/{workspace_id}/configurations/{version_id}`
+### Configuration lifecycle commands
 
-Returns the immutable configuration and hash.
+```http
+POST /workspaces/{workspace_id}/configurations/{configuration_id}/validate
+POST /workspaces/{workspace_id}/configurations/{configuration_id}/approve
+POST /workspaces/{workspace_id}/configurations/{configuration_id}/activate
+POST /workspaces/{workspace_id}/configurations/{configuration_id}/archive
+```
 
-## 9. Market Data
+Used configurations are immutable. Activation applies only to future eligible resources and never mutates a running experiment.
+
+### `GET /behavior-sets/{behavior_set_id}`
+
+Returns immutable provider/model/prompt/schema/feature/strategy/risk/execution/accounting/schedule/budget/retention/code/dependency/migration references and aggregate hash.
+
+## 12. Market Data and Data Quality
 
 ### `GET /market/symbols`
 
-Role: viewer or higher.
-
-Filters: exchange, base asset, quote asset, active status.
-
-Returns normalized and exchange-native symbol information, precision, lot-size, price, and minimum-notional filters.
+Filters: exchange, base asset, quote asset, active status, metadata version.
 
 ### `GET /market/candles`
 
-Role: viewer or higher.
-
-Required query fields: exchange, symbol, interval, start, end.
-
-Optional: page size and cursor.
-
-Returns only validated persisted candles unless an explicit diagnostic flag is authorized.
+Required: exchange, symbol, interval, start, end. Returns validated persisted finalized candles unless an authorized diagnostic mode is explicitly used.
 
 ### `POST /market/backfills`
 
-Role: operator or owner.
-
-Idempotency: required.
-
-Creates an asynchronous bounded backfill job. Returns `202` with job resource location.
+Operator/owner, idempotent asynchronous bounded REST backfill.
 
 ### `GET /market/backfills/{job_id}`
 
-Returns progress, checkpoint, inserted count, duplicate count, quality failures, retry count, and terminal status.
+Returns checkpoint, inserted, duplicate, invalid, gap, retry, provider, duration, and terminal status evidence.
 
 ### `POST /market/snapshots`
 
-Role: operator or owner.
-
-Idempotency: required.
-
-Creates an immutable snapshot from finalized, quality-approved candles.
+Creates an immutable quality-approved snapshot from exact finalized candle identities.
 
 ### `GET /market/snapshots/{snapshot_id}`
 
-Returns snapshot metadata, candle references, quality state, freshness, and hash.
+Returns ordered candle references, data-quality/freshness state, hash, lineage, and limitations.
 
-## 10. Feature Sets
+### Data-quality resources
+
+```http
+GET  /data-quality/events
+GET  /data-quality/events/{event_id}
+POST /data-quality/events/{event_id}/review
+```
+
+Corrections create replacement/invalidation lineage rather than silent mutation.
+
+## 13. Dataset Governance
+
+### `GET /datasets`
+
+Filters: class, market, interval, quality, lifecycle, retention, hold, source, environment.
+
+### `GET /datasets/{dataset_id}`
+
+Returns immutable manifest, schema, source range, hashes, lineage, quality gates, correction state, retention/hold, archive, restore, and dependent resources.
+
+### Dataset lifecycle commands
+
+```http
+POST /datasets/{dataset_id}/validate
+POST /datasets/{dataset_id}/quarantine
+POST /datasets/{dataset_id}/approve
+POST /datasets/{dataset_id}/archive
+POST /datasets/{dataset_id}/restore
+POST /datasets/{dataset_id}/holds
+POST /datasets/{dataset_id}/deletion-reviews
+```
+
+Destructive or anonymizing action requires dependency analysis, hold checks, approval, expected version, reason, and audit. It must not break financial, incident, audit, legal-hold, or reproducibility evidence.
+
+### `GET /lineage/{resource_type}/{resource_id}`
+
+Returns authorization-filtered typed relationships across source and derived resources.
+
+## 14. Feature Calculations
 
 ### `POST /feature-calculations`
 
-Role: operator or owner.
-
-Idempotency: required.
-
-Input references an immutable snapshot and feature-set version.
+References an immutable snapshot and feature-set version. Idempotent.
 
 ### `GET /feature-calculations/{calculation_id}`
 
-Returns typed values, input/output hashes, version, status, and warnings.
+Returns typed values, units, input/output hashes, warm-up, status, warnings, version, and source lineage.
 
-## 11. Google Gemini Analysis
+## 15. Gemini Analysis
 
 ### `POST /analyses`
 
-Role: operator or owner.
+Operator/owner, idempotent. Input references immutable snapshot, feature calculation, prompt, schema, provider configuration, validation, and budget policy versions. The API never accepts an API key or arbitrary system prompt.
 
-Idempotency: required.
-
-Example request:
-
-```json
-{
-  "workspace_id": "uuid",
-  "market_snapshot_id": "uuid",
-  "feature_calculation_id": "uuid",
-  "prompt_version_id": "uuid",
-  "report_schema_version": "1.0",
-  "provider_configuration_version_id": "uuid"
-}
-```
-
-The API does not accept a Gemini API key or arbitrary system prompt.
-
-Returns `202` for asynchronous execution or the existing analysis for a duplicate idempotency key.
+### `GET /analyses`
 
 ### `GET /analyses/{analysis_id}`
 
-Returns:
+Returns provider/configuration identity, attempts, source evidence, parsing/validation, accepted report if any, grounding, safety, fallback, downstream lineage, usage, cost estimate, budget, diagnostics, and limitations.
 
-- status;
-- market and feature references;
-- provider and configured model identifier;
-- prompt and schema versions;
-- validated report when available;
-- validation result;
-- safety/refusal status;
-- request count, latency, usage, and cost estimate;
-- no secret or unrestricted raw prompt.
+### Analysis evidence subresources
+
+```http
+GET /analyses/{analysis_id}/request
+GET /analyses/{analysis_id}/report
+GET /analyses/{analysis_id}/validation
+GET /analyses/{analysis_id}/evidence
+GET /analyses/{analysis_id}/usage
+GET /analyses/{analysis_id}/compare
+```
+
+Raw prompts and unrestricted provider responses are not returned by default.
 
 ### `POST /analyses/{analysis_id}/revalidate`
 
-Role: operator or owner.
+Creates a new immutable validation record against an approved compatible policy without silently modifying the original report or making an unnecessary provider request.
 
-Revalidates stored raw output against a selected compatible schema/policy without making a new paid provider request. It must create a new immutable validation record.
+### AI governance reads
 
-## 12. Strategy Evaluations
+```http
+GET /ai/prompts/{prompt_version_id}
+GET /ai/schemas/{schema_version_id}
+GET /ai/evaluations
+GET /ai/evaluations/{evaluation_id}
+GET /ai/budgets
+```
+
+All are read-only in normal product flows unless governed configuration/change commands explicitly apply.
+
+## 16. Strategy and Risk
 
 ### `POST /strategy-evaluations`
 
-Role: operator or owner.
-
-Idempotency: required.
-
-Input references immutable market snapshot, feature calculation, optional validated AI report, strategy version, and portfolio-state version.
+Idempotently evaluates immutable market/features, optional accepted AI report, strategy version, and portfolio-state version.
 
 ### `GET /strategy-evaluations/{evaluation_id}`
 
-Returns HOLD, ENTER, EXIT, or REDUCE intent, evidence references, configuration hash, and deterministic reason codes.
+Returns HOLD/ENTER/EXIT/REDUCE intent, requested boundary, evidence, contradictions/blockers, versions, hashes, and reason codes.
 
-## 13. Risk Policies and Evaluations
+### `GET|POST /risk/policies`
 
-### `GET /risk/policies`
-
-Role: viewer or higher.
-
-Lists immutable policy versions and status.
-
-### `POST /risk/policies`
-
-Role: owner.
-
-Creates a new immutable policy version. Existing active experiments continue using their frozen version.
+Create/list immutable risk-policy versions. Owner approval is required for activation; running experiments retain their frozen version.
 
 ### `POST /risk-evaluations`
 
-Role: operator or owner.
-
-Idempotency: required.
-
-Input references strategy intent, portfolio-state version, market snapshot, and risk-policy version.
+Idempotently evaluates a strategy intent against exact market, portfolio-state, and policy versions.
 
 ### `GET /risk-evaluations/{evaluation_id}`
 
-Returns approve, approve-with-reduced-size, reject, halt-portfolio, or halt-workspace, with safe reason codes and approved notional where applicable.
+Returns approve, reduce, reject, halt-portfolio, or halt-workspace with rule results, approved boundary, reason codes, and lineage.
 
-## 14. Paper Portfolios
+### Halt resources
+
+```http
+GET  /halts
+GET  /halts/{halt_id}
+POST /paper-portfolios/{portfolio_id}/halt
+POST /experiments/{experiment_id}/halt
+```
+
+There is no generic clear-halt endpoint. Review/resume requires domain-specific eligibility and unresolved blocker checks.
+
+## 17. Paper Portfolios, Orders, Fills, and Ledger
 
 ### `POST /paper-portfolios`
 
-Role: owner.
-
-Idempotency: required.
-
-Creates a portfolio with base currency, starting virtual cash, execution-model version, and risk-policy reference.
+Owner-only, idempotent. Creates a virtual portfolio with base currency, starting virtual cash, execution/accounting/risk references, and paper/live-disabled state.
 
 ### `GET /paper-portfolios/{portfolio_id}`
 
-Role: viewer or higher.
+Returns reconciled balances, positions, realized/unrealized P&L, fees, exposure, drawdown, state version/hash, valuation, halt, and reconciliation.
 
-Returns reconciled cash, reserved cash, positions, realized and unrealized P&L, equity, fees, exposure, drawdown, halt status, and state version.
+### Portfolio reads
 
-### `GET /paper-portfolios/{portfolio_id}/ledger`
-
-Returns paginated immutable ledger entries. Viewer or higher.
-
-### `POST /paper-portfolios/{portfolio_id}/halt`
-
-Role: owner; automated system halt may use internal application command.
-
-Idempotency: required.
-
-Requires reason and optional incident reference. Halting blocks new entries immediately.
-
-### `POST /paper-portfolios/{portfolio_id}/reconcile`
-
-Role: operator or owner.
-
-Runs explicit reconciliation. A mismatch creates a critical event and halt.
-
-## 15. Paper Orders
+```http
+GET /paper-portfolios/{portfolio_id}/history
+GET /paper-portfolios/{portfolio_id}/orders
+GET /paper-portfolios/{portfolio_id}/fills
+GET /paper-portfolios/{portfolio_id}/ledger
+GET /paper-portfolios/{portfolio_id}/reconciliations
+```
 
 ### `POST /paper-orders`
 
-Role: operator or owner.
-
-Idempotency: required.
-
-The request must reference an approved risk evaluation. Clients may not submit arbitrary unvalidated order notional.
+Internal/approved operator command only. Must reference an approved risk evaluation and exact portfolio-state version. Arbitrary client notional is prohibited.
 
 ### `GET /paper-orders/{order_id}`
 
-Returns order state, requested and approved values, fills, fees, and lineage references.
+Returns requested, approved, rounded, reserved, filled, remaining, lifecycle, model, cost, ledger, reconciliation, and decision lineage.
 
 ### `POST /paper-orders/{order_id}/cancel`
 
-Role: operator or owner.
+Idempotent only for eligible states. Completed fills are not reversed by cancellation.
 
-Idempotency: required.
+### `GET /paper-fills/{fill_id}`
 
-Cancellation is valid only for cancellable states and returns the resulting order state.
+Returns deterministic fill sequence, prices, notional, spread, slippage, fee, eligible market event, model, ledger, state, and reconciliation references.
 
-## 16. Backtests
+### `GET /ledger/transactions/{transaction_id}`
 
-### `POST /backtests`
+Returns ordered append-only entries, balance check, business/correction lineage, projection impact, and reconciliation references.
 
-Role: operator or owner.
+### `POST /paper-portfolios/{portfolio_id}/reconcile`
 
-Idempotency: required.
+Explicit idempotent reconciliation command. Mismatch creates critical evidence and halt.
 
-Request fields include data range, symbol, interval, initial capital, strategy version, risk version, execution model, benchmark set, and reproducibility metadata.
+No API updates or deletes ledger entries, fills, completed orders, or used portfolio-state evidence.
 
-Returns `202` with backtest ID.
+## 18. Research Cycles and Jobs
 
-### `GET /backtests/{backtest_id}`
+### `GET /research-cycles`
 
-Returns status, progress, warnings, failure code, and configuration summary.
+Filters: experiment, intended/actual time, status, delay, lock, duplicate, data, AI, risk, order/fill, reconciliation, incident, workflow, error, validity.
 
-### `GET /backtests/{backtest_id}/report`
+### `GET /research-cycles/{cycle_id}`
 
-Returns performance metrics, equity curve references, trade summary, fees, benchmarks, reproducibility metadata, and warnings.
-
-### `GET /backtests/{backtest_id}/trades`
-
-Returns paginated simulated trades and lineage.
-
-## 17. Experiments
-
-### `POST /experiments`
-
-Role: owner.
-
-Creates a draft experiment referencing a frozen workspace configuration and virtual starting balance.
-
-### `POST /experiments/{experiment_id}/preflight`
-
-Role: owner or operator.
-
-Checks market data, migrations, services, budgets, strategy, risk, execution model, observability, and halt controls.
-
-### `POST /experiments/{experiment_id}/start`
-
-Role: owner.
-
-Idempotency: required. Allowed only from Ready state.
-
-### `POST /experiments/{experiment_id}/pause`
-
-Role: owner.
-
-### `POST /experiments/{experiment_id}/halt`
-
-Role: owner; also available to internal safety controls.
-
-### `GET /experiments/{experiment_id}`
-
-Returns state, frozen configuration hash, timing, portfolio, safety events, and report status.
-
-### `GET /experiments/{experiment_id}/report`
-
-Returns final or current report with cash and buy-and-hold comparison.
-
-## 18. Audit
-
-### `GET /audit/events`
-
-Role: viewer or higher; secret-bearing details remain restricted.
-
-Filters:
-
-- workspace;
-- actor;
-- entity type and ID;
-- event type;
-- outcome;
-- error code;
-- start and end time.
-
-Audit records are immutable and paginated.
-
-## 19. Jobs
+Returns identity, schedule, lock/lease, idempotency, stages, market, AI/fallback, strategy, risk, execution, accounting, reconciliation, workflow, audit, incidents, completeness, validity, and limitations.
 
 ### `GET /jobs/{job_id}`
 
-Returns asynchronous job type, status, attempts, timestamps, progress, safe error code, and result-resource reference.
+Returns asynchronous job type, status, attempts, timing, progress based on persisted work units, safe error, and result resource. A job process success does not replace domain completeness checks.
 
-## 20. HTTP Status Guidance
+Ordinary clients cannot arbitrarily dispatch production workflows.
 
-- `200`: successful read or synchronous command
-- `201`: resource created synchronously
-- `202`: asynchronous command accepted
-- `204`: successful command without body
-- `400`: malformed request
-- `401`: unauthenticated
-- `403`: unauthorized
-- `404`: resource absent or not visible
-- `409`: state or idempotency conflict
-- `422`: semantic validation failure
-- `429`: application rate limit
-- `503`: dependency unavailable or service not ready
+## 19. Backtests and Comparisons
 
-Domain rejection such as risk rejection may return `409` or `422` according to the generated endpoint contract, but must always include a stable domain code.
+### `POST /backtests`
 
-## 21. OpenAPI and Contract Verification
+Operator/owner, idempotent, bounded. References immutable dataset, strategy, risk, execution, accounting, benchmark, Gemini mode, seed, code, dependency, and configuration versions.
+
+### Backtest reads
+
+```http
+GET /backtests
+GET /backtests/{backtest_id}
+GET /backtests/{backtest_id}/report
+GET /backtests/{backtest_id}/trades
+GET /backtests/{backtest_id}/events
+GET /backtests/{backtest_id}/ledger
+GET /backtests/{backtest_id}/reproducibility
+GET /backtests/{backtest_id}/compare
+```
+
+Incomplete, failed, timed-out, cancelled, unreconciled, or non-reproducible results remain explicit.
+
+### `POST /backtests/{backtest_id}/cancel`
+
+Idempotent cancellation for eligible running/queued state.
+
+Backtests cannot automatically promote a strategy or enable execution.
+
+## 20. Experiments and Preflight
+
+### `POST /experiments`
+
+Owner-only draft creation referencing a frozen workspace configuration, behavior set, paper portfolio, virtual funding, schedule, and planned period.
+
+### Experiment reads
+
+```http
+GET /experiments
+GET /experiments/{experiment_id}
+GET /experiments/{experiment_id}/configuration
+GET /experiments/{experiment_id}/preflight
+GET /experiments/{experiment_id}/cycles
+GET /experiments/{experiment_id}/incidents
+GET /experiments/{experiment_id}/audit
+GET /experiments/{experiment_id}/exports
+GET /experiments/{experiment_id}/report
+```
+
+### Experiment commands
+
+```http
+POST /experiments/{experiment_id}/preflight
+POST /experiments/{experiment_id}/start
+POST /experiments/{experiment_id}/pause
+POST /experiments/{experiment_id}/resume
+POST /experiments/{experiment_id}/halt
+POST /experiments/{experiment_id}/complete
+```
+
+`resume` is available only when implemented and eligible. It never clears unresolved risk, reconciliation, integrity, security, RLS, data, or incident blockers.
+
+Start requires Ready state, unexpired exact-hash preflight, owner approval, reconciled initial portfolio, current export/restore evidence, valid schedule/period, no active critical incident/halt, and all private/live execution flags disabled.
+
+## 21. Incidents and Corrective Actions
+
+### Incident reads
+
+```http
+GET /incidents
+GET /incidents/{incident_id}
+GET /incidents/{incident_id}/timeline
+GET /incidents/{incident_id}/communications
+GET /incidents/{incident_id}/evidence
+GET /incidents/{incident_id}/postmortem
+GET /incidents/{incident_id}/corrective-actions
+```
+
+### Incident commands
+
+```http
+POST /incidents
+POST /incidents/{incident_id}/acknowledge
+POST /incidents/{incident_id}/assign
+POST /incidents/{incident_id}/contain
+POST /incidents/{incident_id}/restore-service
+POST /incidents/{incident_id}/verify-integrity
+POST /incidents/{incident_id}/resolve
+POST /incidents/{incident_id}/postmortems
+POST /incidents/{incident_id}/corrective-actions
+POST /corrective-actions/{action_id}/verify
+```
+
+Acknowledgement, containment, restoration, integrity verification, and resolution are distinct immutable transitions. Restoration alone does not clear financial/security halts.
+
+## 22. Research Reviews and Strategy Lifecycle
+
+### Research resources
+
+```http
+GET  /research/reviews
+POST /research/reviews
+GET  /research/reviews/{review_id}
+GET  /research/reviews/{review_id}/evidence
+GET  /research/reviews/{review_id}/variants
+GET  /research/reviews/{review_id}/robustness
+GET  /research/reviews/{review_id}/paper-observation
+GET  /research/reviews/{review_id}/approvals
+POST /research/reviews/{review_id}/decisions
+```
+
+Decisions may reject, request changes, retain observation, approve future paper candidacy, roll back, retire, or archive. No live-trading approval outcome exists.
+
+Every approval references an immutable evidence snapshot and becomes invalid after material evidence changes.
+
+## 23. Performance, SLO, Quota, and Cost
+
+Read resources:
+
+```http
+GET /operations/performance
+GET /operations/reliability
+GET /operations/slis
+GET /operations/slos
+GET /operations/error-budgets
+GET /operations/capacity
+GET /operations/quotas
+GET /operations/costs
+GET /operations/forecasts
+GET /operations/resilience-tests
+GET /operations/resilience-tests/{test_run_id}
+```
+
+Returns source quality, environment/revision/window, definitions, sample adequacy, results, limitations, incidents, and evidence links.
+
+Cost/quota/forecast endpoints never expose credentials and cannot purchase, upgrade, scale, or increase budgets automatically.
+
+Profit is not an SLI/SLO.
+
+## 24. Governance, Security, Privacy, and Release
+
+Read resources:
+
+```http
+GET /governance/authorization
+GET /governance/rls
+GET /governance/secrets
+GET /governance/migrations
+GET /governance/security
+GET /governance/privacy
+GET /governance/backups
+GET /releases
+GET /releases/{release_id}
+GET /releases/{release_id}/gates
+GET /releases/{release_id}/deployment
+GET /releases/{release_id}/rollback
+GET /releases/{release_id}/audit
+```
+
+Approved commands include versioned configuration lifecycle, finding/exception review, secret-rotation evidence, migration/release approval, deployment state recording, and rollback according to M023/M035/M036 contracts.
+
+No API returns secret values, usable secret hashes, direct database credentials, or arbitrary deployment controls.
+
+## 25. Change Management and Staged Rollout
+
+Read resources:
+
+```http
+GET /changes
+GET /changes/proposals
+GET /changes/proposals/{change_id}
+GET /changes/proposals/{change_id}/impact
+GET /changes/proposals/{change_id}/evidence
+GET /changes/proposals/{change_id}/approvals
+GET /changes/proposals/{change_id}/rollout
+GET /changes/proposals/{change_id}/rollback
+GET /changes/proposals/{change_id}/audit
+GET /changes/calendar
+GET /changes/freezes
+GET /changes/emergency
+GET /changes/deprecations
+```
+
+Commands support proposal lifecycle, evidence-plan approval, immutable approval decisions, stage start/complete/pause/halt, rollback, emergency containment with expiry, deprecation, and archive.
+
+Every approval references the exact immutable snapshot hash. Material changes invalidate prior approval. Activation applies only to future paper configurations. Tests, AI, metrics, scores, CI, or browser state cannot auto-approve or activate behavior.
+
+## 26. Developer Portal and Evidence
+
+Read resources:
+
+```http
+GET /developers
+GET /developers/revision
+GET /developers/docs
+GET /developers/adrs
+GET /developers/api
+GET /developers/schemas
+GET /developers/errors
+GET /developers/events
+GET /developers/permissions
+GET /developers/metrics
+GET /developers/tasks
+GET /developers/requirements
+GET /developers/traceability
+GET /developers/tests
+GET /developers/invariants
+GET /developers/runbooks
+GET /developers/docs-health
+GET /developers/releases/{release_id}/evidence
+```
+
+Interactive API examples default to static/fake or isolated environments. Arbitrary hosts, secret headers, production-research mutations, raw SQL, and browser code execution are prohibited.
+
+## 27. Audit and Exports
+
+### `GET /audit/events`
+
+Filters: workspace, actor, source, entity, event type, outcome, severity, error/reason code, correlation/cycle/experiment, and bounded date range.
+
+Audit records are immutable and authorization-filtered.
+
+### Export commands
+
+```http
+POST /exports
+GET  /exports
+GET  /exports/{export_id}
+POST /exports/{export_id}/verify
+POST /restores
+GET  /restores/{restore_id}
+```
+
+Exports/restores record scope, environment, revision, migration head, hashes, protected storage classification, outcome, rebuild/reconciliation, limitations, and audit.
+
+A successful backup/export request is not restore proof.
+
+## 28. HTTP Status Guidance
+
+- `200` successful read or synchronous command
+- `201` resource created synchronously
+- `202` asynchronous command accepted
+- `204` successful command without response body
+- `400` malformed request
+- `401` unauthenticated or invalid session
+- `403` unauthorized/recent-auth/permission failure as defined by endpoint policy
+- `404` resource absent or not visible
+- `409` state, idempotency, expected-version, freeze, or compatibility conflict
+- `410` explicitly expired/removed resource when exposure is safe
+- `422` semantic/domain validation failure
+- `423` locked/frozen resource when used by the generated contract
+- `429` rate limit or approved budget/quota gate
+- `503` dependency unavailable or process not ready
+
+Domain rejection must include stable machine-readable codes. Missing evidence never returns a misleading empty success.
+
+## 29. OpenAPI and Contract Verification
 
 Implementation requirements:
 
-- generated OpenAPI must be deterministic;
-- CI must detect uncommitted OpenAPI changes;
-- examples must validate against schemas;
-- frontend types should be generated from OpenAPI where practical;
-- endpoint inventory must identify method, path, permission, idempotency, handler, and automated tests;
-- undocumented endpoints fail CI;
-- breaking schema differences require explicit approval.
+- generated OpenAPI is deterministic and revision/hash identified;
+- CI detects uncommitted OpenAPI or generated-type changes;
+- every public operation has a stable operation ID, permission, schemas, error codes, idempotency/concurrency rules, environment availability, source handler, and automated tests;
+- examples validate against schemas and use synthetic values;
+- endpoint inventory detects undocumented operations;
+- public project schemas never leak provider SDK types;
+- Decimal, timestamp, enum, nullability, unit, redaction, and compatibility rules are explicit;
+- breaking differences require M034 review and an API migration/version plan.
 
-## 22. Security Requirements
+## 30. Prohibited APIs
 
-- never expose Gemini or future exchange credentials;
-- arbitrary prompt submission is prohibited in MVP;
-- validate UUID ownership and workspace scope;
-- apply rate limits to authentication, analysis, backfill, and backtest creation;
-- do not expose internal stack traces;
-- log privileged commands and denied authorization attempts;
-- use explicit confirmation for destructive or mode-changing actions in the UI.
+M001–M036 must not expose:
 
-## 23. Related Documents
+- private Binance credentials, orders, withdrawals, custody, leverage, margin, derivatives, options, shorting, or live execution;
+- arbitrary prompt/system-instruction submission;
+- Gemini tool invocation or side-effect control;
+- arbitrary SQL or database console;
+- raw environment-variable/secret editing;
+- arbitrary workflow dispatch or deployment shell;
+- direct ledger/fill/audit/approval mutation or deletion;
+- generic risk/halt/reconciliation bypass;
+- automatic plan purchase, scaling, budget increase, strategy promotion, release approval, or behavior activation.
 
+## 31. Related Documents
+
+- `/TASKS.md`
+- `IMPLEMENTATION_EXECUTION_PLAN.md`
+- `TASK_CATALOG_INDEX.md`
 - `PRODUCT_REQUIREMENTS.md`
 - `ARCHITECTURE.md`
 - `BACKEND.md`
 - `DATABASE_SCHEMA.md`
-- `GEMINI_INTEGRATION.md`
-- `RISK_ENGINE.md`
-- `PAPER_TRADING.md`
 - `SECURITY.md`
+- `OBSERVABILITY.md`
+- `TESTING.md`
+- `AUTH_CONFIGURATION_SECURITY_RELEASE_WORKSPACE_IMPLEMENTATION.md`
+- `EXPERIMENT_OPERATIONS_AUDIT_WORKSPACE_IMPLEMENTATION.md`
+- `CHANGE_MANAGEMENT_ROLLOUT_GOVERNANCE_WORKSPACE_IMPLEMENTATION.md`
