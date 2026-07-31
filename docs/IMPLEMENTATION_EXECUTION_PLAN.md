@@ -7,13 +7,13 @@ Status: Authoritative implementation-order and task-governance specification
 
 This document defines the single executable path for building The Daily Roast AI from an empty implementation repository to a verified production-grade research service.
 
-The repository contains detailed domain specifications, UX workstreams, cloud tasks, local/production tasks, and Sprint 3–21 task catalogs. Those files remain authoritative for detailed acceptance criteria, but they do not independently define execution order. `TASKS.md` is the only canonical implementation sequence.
+The repository contains detailed domain specifications, UX workstreams, cloud tasks, local/production tasks, and repository files matching `SPRINT_*_TASKS.md`. Those files remain authoritative for detailed acceptance criteria, but they do not independently define execution order. `TASKS.md` is the only canonical implementation sequence.
 
 `docs/TASK_CATALOG_INDEX.md` maps detailed IDs and catalogs to Master Tasks and classifies work as mandatory, conditional, deferred, superseded, future assessment, or documentation complete.
 
-## 2. Problems Corrected by Sprints 20 and 21
+## 2. Problems Corrected by Sprints 20–22
 
-The previous task system contained valid detailed work but exposed conflicting implementation assumptions:
+The previous task and runtime documentation contained valid detailed work but exposed conflicting implementation assumptions:
 
 - the former `TASKS.md` treated Redis, ARQ, persistent workers, WebSocket ingestion, Prometheus, and Grafana as MVP P0 requirements;
 - the active architecture deliberately defers those systems until measured need and approved change governance;
@@ -21,9 +21,10 @@ The previous task system contained valid detailed work but exposed conflicting i
 - some supplemental dependencies were cyclic or environment-specific;
 - Sprint 3–19 workspace tasks were not integrated into the root implementation sequence;
 - the previous documentation audit claimed consistency while the root backlog still contained superseded architecture;
-- testing, deployment, free-cloud, staging, and production documents described compatible concepts but did not consistently map them to one stable task lifecycle.
+- testing, deployment, free-cloud, staging, and production documents did not consistently map to one stable task lifecycle;
+- architecture, backend, technology, environment variables, and observability did not all expose the same complete M001–M036 runtime, governance, and safety boundaries.
 
-Sprint 20 established M001–M036 and synchronized primary entry points. Sprint 21 added the task catalog index and aligned testing, deployment, free-cloud, staging, and production-research gates.
+Sprint 20 established M001–M036 and synchronized primary entry points. Sprint 21 added the task catalog index and aligned testing/deployment lifecycles. Sprint 22 synchronized the active runtime, configuration, and observability contracts.
 
 ## 3. Canonical Authority
 
@@ -50,7 +51,7 @@ When a supplemental task file conflicts with `TASKS.md`:
 The active implementation profile is:
 
 - Python 3.12 modular monolith;
-- FastAPI read/command API;
+- stateless FastAPI read/command API;
 - one-shot research-cycle CLI;
 - React, TypeScript, and Vite frontend;
 - Supabase PostgreSQL and Auth;
@@ -60,6 +61,7 @@ The active implementation profile is:
 - Cloudflare Pages frontend and Render Free API for the first demo;
 - PostgreSQL locks or durable leases and deterministic idempotency;
 - append-only double-entry ledger and mandatory reconciliation;
+- durable cycle, audit, incident, export/restore, and release evidence;
 - paper trading only.
 
 The following are deferred and must not be introduced as mandatory M001–M036 dependencies:
@@ -68,7 +70,7 @@ The following are deferred and must not be introduced as mandatory M001–M036 d
 - ARQ or another persistent queue;
 - persistent worker processes;
 - Binance WebSocket ingestion;
-- hosted Prometheus or Grafana;
+- hosted Prometheus, Grafana, or OpenTelemetry backend;
 - Kubernetes;
 - automatic paid infrastructure or scaling;
 - private Binance credentials;
@@ -112,25 +114,7 @@ Only `VERIFIED` is complete.
 
 ### Workspace and governance catalogs
 
-- `SPRINT_3_TASKS.md` — frontend application shell;
-- `SPRINT_4_TASKS.md` — accessible component library;
-- `SPRINT_5_TASKS.md` — Today’s Roast dashboard;
-- `SPRINT_6_TASKS.md` — Market Evidence;
-- `SPRINT_7_TASKS.md` — Strategy and Risk;
-- `SPRINT_8_TASKS.md` — Portfolio, Execution, Ledger, and Reconciliation;
-- `SPRINT_9_TASKS.md` — Backtests, Benchmarks, Reproducibility, and Comparison;
-- `SPRINT_10_TASKS.md` — Experiment Operations and Audit;
-- `SPRINT_11_TASKS.md` — Gemini Analysis and Validation;
-- `SPRINT_12_TASKS.md` — Auth, Governance, Security, Privacy, and Release;
-- `SPRINT_13_TASKS.md` — Product Shell, Onboarding, Search, Notifications, Trust Center, and i18n;
-- `SPRINT_14_TASKS.md` — Developer Portal, Documentation Health, and Traceability;
-- `SPRINT_15_TASKS.md` — Performance, Resilience, Capacity, SLOs, Quotas, and FinOps;
-- `SPRINT_16_TASKS.md` — Data Lifecycle and Dataset Governance;
-- `SPRINT_17_TASKS.md` — Research Review and Strategy Lifecycle;
-- `SPRINT_18_TASKS.md` — Incident Response, Postmortems, and Learning;
-- `SPRINT_19_TASKS.md` — Governed Behavior Changes and Staged Rollout;
-- `SPRINT_20_TASKS.md` — Canonical Implementation Backlog Synchronization;
-- `SPRINT_21_TASKS.md` — Task Catalog and Lifecycle Cross-Reference Synchronization.
+Repository files matching `SPRINT_*_TASKS.md` contain detailed workspace, governance, or documentation-synchronization acceptance criteria. Their current mapping and implementation status are recorded in `docs/TASK_CATALOG_INDEX.md`.
 
 Sprint numbers identify documentation workstreams. They do not grant permission to implement a workstream before its Master Task dependencies.
 
@@ -189,6 +173,7 @@ Make an explicit post-experiment decision, validate immutable artifacts in isola
 - domain contracts precede consuming APIs and UI workspaces;
 - ledger and reconciliation precede final portfolio and experiment status;
 - the one-shot CLI precedes scheduled cloud execution;
+- a successful process exit is insufficient without required cycle stages and reconciliation;
 - M026 and M027 precede M028;
 - M028 precedes M029;
 - current export/restore evidence precedes experiment start and production promotion;
@@ -196,6 +181,7 @@ Make an explicit post-experiment decision, validate immutable artifacts in isola
 - M030–M034 precede staging approval;
 - strategy promotion requires untouched-test, robustness, reproducibility, paper observation, and owner review;
 - behavior activation applies only to future configurations and never mutates a running experiment;
+- environment variables provide wiring/bootstrap defaults and cannot mutate a running experiment;
 - production research still uses simulated execution.
 
 ## 9. Parallel Work
@@ -207,7 +193,7 @@ Tasks may run in parallel only when:
 - migrations do not conflict;
 - each workstream has isolated ownership;
 - integration order is documented;
-- no workstream weakens Auth, RLS, risk, ledger, reconciliation, privacy, or recovery controls.
+- no workstream weakens Auth, RLS, risk, ledger, reconciliation, privacy, recovery, or observability controls.
 
 The Master Task remains incomplete until parallel work is integrated and verified together.
 
@@ -229,7 +215,7 @@ Completion evidence includes as applicable:
 - source, migration, generated, and documentation changes;
 - commands executed and results;
 - coverage and invariant evidence;
-- security, privacy, accessibility, and recovery evidence;
+- security, privacy, accessibility, recovery, and observability evidence;
 - environment and compatibility impact;
 - artifact, schema, OpenAPI, dependency, configuration, and behavior-set hashes;
 - unresolved risks, exceptions, limitations, and follow-up IDs;
@@ -255,9 +241,10 @@ Every implementation change updates all affected contracts in the same pull requ
 - `TASKS.md` status and evidence;
 - `docs/TASK_CATALOG_INDEX.md` when mappings/classification change;
 - relevant domain or workspace specification;
+- architecture/backend/technology/configuration/observability contracts when runtime behavior changes;
 - OpenAPI/schema/error/event/permission catalogs after implementation;
 - database schema and migration manifest;
-- tests, runbooks, observability, security, privacy, and operations documentation when affected;
+- tests, runbooks, security, privacy, and operations documentation when affected;
 - README or ROADMAP when entry points or phase gates change;
 - changelog for material behavior.
 
@@ -265,14 +252,14 @@ Every implementation change updates all affected contracts in the same pull requ
 
 - `TASKS.md`
 - `TASK_CATALOG_INDEX.md`
-- `SPRINT_20_TASKS.md`
-- `SPRINT_21_TASKS.md`
 - `AGENTS.md`
 - `CONTRIBUTING.md`
 - `README.md`
 - `ROADMAP.md`
 - `ARCHITECTURE.md`
 - `BACKEND.md`
+- `TECH_STACK.md`
+- `OBSERVABILITY.md`
 - `PRODUCT_REQUIREMENTS.md`
 - `TESTING.md`
 - `TEST_ENVIRONMENTS.md`
