@@ -2,21 +2,51 @@
 
 ## Purpose
 
-This is the authoritative implementation guide for AI coding agents and human contributors.
+This is the authoritative implementation guide for AI coding agents and human contributors working on **The Daily Roast AI**.
 
-The project is a cloud-hosted cryptocurrency research, backtesting, paper-trading, and Gemini-assisted decision-support platform. The MVP and production research service never execute live trades.
+The Daily Roast AI is an evidence-driven market-intelligence, backtesting, paper-trading, and Gemini-assisted decision-support platform. The MVP and production research service never execute live trades.
 
 ## Instruction Precedence
 
 1. Security, financial integrity, privacy, and fail-closed requirements
 2. This file
 3. `docs/PRODUCT_REQUIREMENTS.md`
-4. `docs/ARCHITECTURE.md`, environment architecture documents, and accepted ADRs
-5. Domain specifications
-6. The selected detailed task file
-7. Existing implementation conventions
+4. `docs/PRODUCT_VISION.md`
+5. `docs/ARCHITECTURE.md`, environment architecture documents, and accepted ADRs
+6. `docs/BRAND_GUIDELINES.md`, `docs/MISSION_AND_VALUES.md`, `docs/DESIGN_PRINCIPLES.md`, and `docs/NAMING_CONVENTIONS.md`
+7. Domain specifications
+8. The selected detailed task file
+9. Existing implementation conventions
 
 Material conflicts must be corrected in documentation before implementation.
+
+## Official Product Identity
+
+- Official product name: **The Daily Roast AI**
+- Official tagline: **Evidence-Driven Market Intelligence**
+- Primary domain: `thedailyroast.online`
+- Application domain: `app.thedailyroast.online`
+- API domain: `api.thedailyroast.online`
+- Documentation domain: `docs.thedailyroast.online`
+
+`Ai-trade-bot` is a technical repository identifier. User-facing copy, interface headings, reports, emails, notifications, metadata, and new documentation titles MUST use **The Daily Roast AI**.
+
+Do not introduce user-facing names such as `AI Trade Bot`, `Crypto Bot`, `Trading Bot`, or `Daily Roast Bot`. Historical technical references may remain only where changing them would break repository URLs, migration history, or external identifiers.
+
+## Brand and Communication Rules
+
+All product-facing output MUST follow the brand foundation:
+
+- evidence over hype;
+- research before execution;
+- uncertainty must be explicit;
+- AI confidence must never be presented as probability of profit;
+- simulated results must be labeled as simulated;
+- no guaranteed-return, urgency, fear-of-missing-out, or get-rich-quick language;
+- no rocket, moon, lambo, or casino framing;
+- user control, risk, provenance, and data freshness must remain visible.
+
+Use calm, professional, concise American English. Prefer precise terms defined in `docs/NAMING_CONVENTIONS.md`.
 
 ## Task Sources
 
@@ -40,6 +70,7 @@ Select one focused task from the correct task source and read all references bef
 10. Do not claim profitability, production availability, or recovery capability without measured evidence.
 11. Do not treat a free-tier service as a guaranteed production dependency.
 12. Do not copy production data into local or test environments without an approved anonymization process.
+13. Do not introduce a new user-facing product name, tagline, sub-brand, color token, or terminology without updating the brand foundation and audit.
 
 ## Environment Rules
 
@@ -56,7 +87,7 @@ Select one focused task from the correct task source and read all references bef
 - Use ephemeral or resettable test infrastructure.
 - Never access production Supabase, paid Gemini, or private Binance credentials in ordinary pull requests.
 - Reuse repository commands rather than duplicating hidden CI-only behavior.
-- Verify migrations, RLS, Auth, financial invariants, frontend bundle safety, and documentation consistency.
+- Verify migrations, RLS, Auth, financial invariants, frontend bundle safety, documentation links, naming consistency, and generated artifacts.
 
 ### Free Cloud Demo and Paper Experiment
 
@@ -65,6 +96,7 @@ Select one focused task from the correct task source and read all references bef
 - Redis, ARQ, persistent WebSocket, hosted Prometheus/Grafana, and private Binance APIs are deferred.
 - Render cold start must not stop the scheduled research cycle.
 - GitHub Actions schedule delay is expected and must never cause fabricated trades.
+- Cloudflare custom domains must follow the domain strategy in `docs/BRAND_GUIDELINES.md`.
 
 ### Staging and Production Research
 
@@ -72,7 +104,7 @@ Select one focused task from the correct task source and read all references bef
 - Production artifacts must be validated in staging.
 - Production deployment requires protected environments and manual approval.
 - Migrations run once through a controlled step.
-- Backup and restore evidence, measured SLOs, incident routing, security review, and privacy review are required.
+- Backup and restore evidence, measured SLOs, incident routing, security review, privacy review, and brand-content review are required.
 - A production research service still uses simulated trading only.
 
 ## Repository Boundaries
@@ -84,7 +116,7 @@ ai/              prompts, schemas, evaluations, fixtures
 supabase/        config, migrations, RLS, database functions, seed data
 infrastructure/  CI, deployment, local tooling, environment definitions
 tests/           unit, property, integration, contract, E2E, recovery tests
-docs/            specifications and runbooks
+docs/            product, brand, engineering, design, and operations specifications
 ```
 
 ## Backend Rules
@@ -113,7 +145,7 @@ docs/            specifications and runbooks
 
 ## Research-Cycle Rules
 
-The one-shot cycle must acquire a database lock/lease, fetch and validate finalized Binance REST data, repair gaps, create immutable snapshot/features, invoke Gemini within budget, validate output, evaluate strategy/risk, simulate approved paper actions, atomically post ledger state, reconcile, persist results, and release the lease.
+The one-shot cycle must acquire a database lock or lease, fetch and validate finalized Binance REST data, repair gaps, create immutable snapshot and features, invoke Gemini within budget, validate output, evaluate strategy and risk, simulate approved paper actions, atomically post ledger state, reconcile, persist results, and release the lease.
 
 Retries must never duplicate financial side effects. Decisions use actual finalized market data, not the intended cron timestamp.
 
@@ -126,6 +158,7 @@ Retries must never duplicate financial side effects. Decisions use actual finali
 - No function calling, search grounding, code execution, database mutation, or order tools.
 - Gemini quota exhaustion degrades to deterministic fallback or HOLD.
 - Production model, prompt, schema, safety settings, usage, and costs are versioned and monitored.
+- Gemini-generated user copy must follow the brand voice and must not make unsupported financial claims.
 
 ## Strategy, Risk, and Accounting Rules
 
@@ -136,12 +169,14 @@ Retries must never duplicate financial side effects. Decisions use actual finali
 - Reconciliation mismatch halts the experiment or production research workspace.
 - Paper execution includes fees, spread, slippage, precision, minimum notional, partial fills, and conservative ambiguity handling.
 
-## Frontend Rules
+## Frontend and Design Rules
 
 - TypeScript strict mode.
 - Server state uses TanStack Query.
+- Follow `docs/DESIGN_PRINCIPLES.md` and future design-system tokens.
 - Local, demo, paper, staging, production research, stale, cold-start, paused, and halted states must be unmistakable.
 - Never present AI confidence as probability of profit.
+- Risk, uncertainty, provenance, simulation mode, and freshness must not be hidden for visual simplicity.
 - Built assets must contain no server secret.
 - React Router fallback, CSP, CORS, HTTPS, accessibility, and environment-variable allowlists are tested.
 
@@ -149,8 +184,8 @@ Retries must never duplicate financial side effects. Decisions use actual finali
 
 - unit and property tests for calculations, state machines, ledger, precision, risk, and idempotency;
 - local Supabase migration, constraint, Auth, and RLS tests;
-- Binance/Gemini contract tests using fakes or controlled fixtures;
-- frontend component, accessibility, build, and E2E tests;
+- Binance and Gemini contract tests using fakes or controlled fixtures;
+- frontend component, accessibility, build, brand-copy, and E2E tests;
 - one-shot cycle, paper execution, halt, reconciliation, export, and restore drills;
 - duplicate workflow, scheduling delay, cold-start, quota, stale-data, database outage, and recovery tests;
 - staging validation before production research promotion.
@@ -164,15 +199,15 @@ Before coding:
 1. select one task;
 2. verify dependencies;
 3. read all references;
-4. inspect existing code, migrations, tests, and generated artifacts;
+4. inspect existing code, migrations, tests, generated artifacts, and relevant brand documents;
 5. define failure cases and evidence.
 
 Before completion:
 
 1. run format, lint, type, tests, migrations, builds, security scans, and applicable recovery checks;
 2. verify no secret or production data in source, logs, artifacts, fixtures, or frontend bundle;
-3. verify idempotency, monetary precision, RLS, risk, reconciliation, and environment separation;
-4. update docs and changelog;
+3. verify idempotency, monetary precision, RLS, risk, reconciliation, environment separation, naming, and user-facing copy;
+4. update documentation and changelog;
 5. satisfy every acceptance criterion and Definition of Done item.
 
 ## Prohibited Without Explicit Owner Approval
@@ -181,10 +216,12 @@ Before completion:
 - weakening RLS, risk limits, halts, ledger, backup, or recovery design;
 - reusing the Eventnexus database;
 - enabling paid usage automatically;
-- introducing Redis/ARQ/WebSocket as mandatory MVP infrastructure;
+- introducing Redis, ARQ, or WebSocket as mandatory MVP infrastructure;
 - exposing service-role or provider secrets;
 - allowing Gemini side-effect tools;
 - editing applied migrations;
 - bypassing staging for production research releases;
 - disabling security or test gates;
-- representing demo success as live-trading approval.
+- representing demo success as live-trading approval;
+- changing the official brand name, tagline, or primary domain;
+- using hype, guaranteed-return, or deceptive urgency in product content.
