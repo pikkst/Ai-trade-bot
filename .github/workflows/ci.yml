@@ -20,19 +20,13 @@ jobs:
       - name: Install backend dependencies
         run: |
           cd backend
-          python -m pip install -e ".[dev]"
+          python -m pip install -e ".[dev]" -r requirements.txt
       - name: Format
-        run: |
-          cd backend
-          ruff format --check .
+        run: make format
       - name: Lint
-        run: |
-          cd backend
-          ruff check .
+        run: make lint
       - name: Type check
-        run: |
-          cd backend
-          mypy app
+        run: make type-check
 
   test:
     runs-on: ubuntu-latest
@@ -44,11 +38,9 @@ jobs:
       - name: Install backend dependencies
         run: |
           cd backend
-          python -m pip install -e ".[dev]"
+          python -m pip install -e ".[dev]" -r requirements.txt
       - name: Run tests
-        run: |
-          cd backend
-          python -m pytest tests/ -v
+        run: make test
 
   frontend:
     runs-on: ubuntu-latest
@@ -60,35 +52,40 @@ jobs:
       - name: Install frontend dependencies
         run: |
           cd frontend
-          npm install
+          npm ci
       - name: Type check
-        run: |
-          cd frontend
-          npm run type-check
+        run: make type-check
       - name: Lint
-        run: |
-          cd frontend
-          npm run lint
+        run: make lint
       - name: Build
-        run: |
-          cd frontend
-          npm run build
+        run: make frontend-build
+      - name: Frontend test
+        run: make frontend-test
 
   docs-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Check README structure matches implementation
-        run: |
-          errors=0
-          for f in backend/app/main.py frontend/src/App.tsx supabase/config.toml Makefile tasks.ps1 .env.example .gitignore backend/requirements.txt frontend/package-lock.json frontend/public supabase/migrations tests generated-artifacts cloudflare-pages.toml; do
-            if [ ! -e "$f" ]; then
-              echo "FAIL: $f missing"
-              errors=$((errors + 1))
-            fi
-          done
-          if [ $errors -gt 0 ]; then
-            echo "Docs check failed: $errors path(s) missing"
-            exit 1
-          fi
-          echo "README structure matches implementation. Docs check passed."
+        run: make docs-check
+
+  windows-commands:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+      - name: Command help
+        run: .\tasks.ps1 help
+      - name: Docs check
+        run: .\tasks.ps1 docs-check
+      - name: Lint
+        run: .\tasks.ps1 lint
+      - name: Type check
+        run: .\tasks.ps1 type-check
+      - name: Research cycle smoke
+        run: .\tasks.ps1 research-cycle

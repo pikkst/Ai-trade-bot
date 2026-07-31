@@ -16,6 +16,7 @@ $ErrorActionPreference = "Stop"
 function Invoke-Native {
     param(
         [string]$Name,
+        [Parameter(ValueFromRemainingArguments = $true)]
         [string[]]$Arguments
     )
     try {

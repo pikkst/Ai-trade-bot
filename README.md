@@ -205,8 +205,12 @@ Production research means production-quality research and paper trading. It does
 │   └── requirements.txt  Pinned Python dependencies
 ├── frontend/             React/TypeScript/Vite product and public demo
 │   ├── src/              React application source
+│   │   ├── tests/        Frontend test files
+│   │   └── ...
 │   ├── public/           Static assets
 │   ├── package.json      Node dependencies and scripts
+│   ├── package-lock.json Pinned frontend dependencies
+│   ├── vitest.config.ts  Vitest test configuration
 │   └── vite.config.ts    Vite configuration
 ├── supabase/             Local Supabase configuration, migrations, and seed data
 │   ├── config.toml       Supabase CLI configuration
@@ -235,13 +239,15 @@ Production research means production-quality research and paper trading. It does
 | `make lint` or `.\tasks.ps1 lint` | Run lint checks |
 | `make type-check` or `.\tasks.ps1 type-check` | Run static type checks |
 | `make test` or `.\tasks.ps1 test` | Run unit and property tests |
+| `make frontend-build` or `.\tasks.ps1 frontend-dev` | Build the frontend production bundle |
+| `make frontend-test` or `.\tasks.ps1 test` | Run frontend tests |
 | `make local-up` or `.\tasks.ps1 local-up` | Start local Supabase and dependencies |
 | `make local-down` or `.\tasks.ps1 local-down` | Stop local services |
 | `make local-reset` or `.\tasks.ps1 local-reset` | Recreate database, migrations, and seed data |
 | `make api-dev` or `.\tasks.ps1 api-dev` | Run FastAPI with reload |
-| `make frontend-dev` or `.\tasks.ps1 frontend-dev` | Run Vite development server |
 | `make research-cycle` or `.\tasks.ps1 research-cycle` | Run one deterministic research cycle |
 | `make all-checks` or `.\tasks.ps1 all-checks` | Run the local pre-push quality gate |
+| `make docs-check` or `.\tasks.ps1 docs-check` | Validate repository structure matches README |
 
 All commands work on Windows PowerShell and Unix-like shells. No database, Gemini, Binance, or cloud credential is required for the default local profile.
 

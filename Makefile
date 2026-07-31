@@ -1,4 +1,4 @@
-.PHONY: bootstrap format lint type-check test local-up local-down local-reset api-dev frontend-dev research-cycle all-checks help export-test restore-test security-test docs-check
+.PHONY: bootstrap format lint type-check test local-up local-down local-reset api-dev frontend-dev research-cycle all-checks help export-test restore-test security-test docs-check frontend-build frontend-test
 
 PYTHON := python3
 PIP := $(PYTHON) -m pip
@@ -67,7 +67,13 @@ frontend-dev: ## Run Vite development server
 research-cycle: ## Run one deterministic research cycle
 	cd backend && $(PYTHON) -m app.cli.run_research_cycle --experiment-id dummy --occurrence 2026-01-01T00:00:00Z
 
-all-checks: format lint type-check test ## Run the local pre-push quality gate
+all-checks: format lint type-check test frontend-build frontend-test ## Run the local pre-push quality gate
+
+frontend-build: ## Build the frontend production bundle
+	cd $(FRONTEND) && npm run build
+
+frontend-test: ## Run frontend tests
+	cd $(FRONTEND) && npm test
 
 security-test: ## Run static, dependency, secret, and artifact checks
 	cd backend && bandit -r app/
