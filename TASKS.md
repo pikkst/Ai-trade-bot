@@ -1,177 +1,1504 @@
 # Implementation Tasks
 
-Legend: **P0** required for MVP; **P1** important; **P2** later.
+Last reviewed: 2026-07-31
 
-## Epic 1 — Repository Foundation
-- [ ] P0 T1.1 Create Python project and package layout
-- [ ] P0 T1.2 Add `pyproject.toml`
-- [ ] P0 T1.3 Configure Ruff
-- [ ] P0 T1.4 Configure MyPy strict
-- [ ] P0 T1.5 Configure Pytest
-- [ ] P0 T1.6 Add pre-commit hooks
-- [ ] P0 T1.7 Add Docker Compose
-- [ ] P0 T1.8 Add `.env.example`
-- [ ] P0 T1.9 Add GitHub Actions quality workflow
-- [ ] P0 T1.10 Add contribution templates
+## How to Use This File
 
-## Epic 2 — Application Core
-- [ ] P0 T2.1 Implement settings model
-- [ ] P0 T2.2 Implement structured logging
-- [ ] P0 T2.3 Implement correlation IDs
-- [ ] P0 T2.4 Implement error taxonomy
-- [ ] P0 T2.5 Implement health endpoints
-- [ ] P0 T2.6 Implement database session management
-- [ ] P0 T2.7 Implement Redis connection
-- [ ] P0 T2.8 Implement migration baseline
-- [ ] P0 T2.9 Implement idempotency service
-- [ ] P0 T2.10 Add application startup validation
+Each task is an independently implementable work item. An AI coding agent or developer must select one task ID, read all referenced documents, satisfy every acceptance criterion, and provide evidence for the Definition of Done before marking it complete.
 
-## Epic 3 — Market Data
-- [ ] P0 T3.1 Define exchange adapter protocol
-- [ ] P0 T3.2 Implement Binance public adapter
-- [ ] P0 T3.3 Normalize symbols
-- [ ] P0 T3.4 Persist exchange precision metadata
-- [ ] P0 T3.5 Implement candle ingestion
-- [ ] P0 T3.6 Implement backfill checkpoints
-- [ ] P0 T3.7 Detect missing candles
-- [ ] P0 T3.8 Detect duplicates
-- [ ] P0 T3.9 Detect stale data
-- [ ] P0 T3.10 Create immutable market snapshots
-- [ ] P1 T3.11 Add ticker ingestion
-- [ ] P1 T3.12 Add order-book snapshots
+Priority:
 
-## Epic 4 — Feature Engineering
-- [ ] P0 T4.1 Define feature-set version model
-- [ ] P0 T4.2 Implement returns
-- [ ] P0 T4.3 Implement SMA and EMA
-- [ ] P0 T4.4 Implement RSI
-- [ ] P0 T4.5 Implement ATR
-- [ ] P0 T4.6 Implement volatility
-- [ ] P0 T4.7 Implement volume features
-- [ ] P0 T4.8 Add deterministic feature tests
-- [ ] P0 T4.9 Hash feature inputs and outputs
-- [ ] P1 T4.10 Add market-regime classifier
+- **P0** — required for the first usable MVP
+- **P1** — required before the 30-day experiment is considered complete
+- **P2** — later enhancement
 
-## Epic 5 — AI Analysis
-- [ ] P0 T5.1 Define provider protocol
-- [ ] P0 T5.2 Implement fake provider
-- [ ] P0 T5.3 Implement OpenAI-compatible provider
-- [ ] P1 T5.4 Implement Ollama provider
-- [ ] P1 T5.5 Implement vLLM provider
-- [ ] P0 T5.6 Define report JSON schema
-- [ ] P0 T5.7 Implement prompt versioning
-- [ ] P0 T5.8 Implement output validation
-- [ ] P0 T5.9 Implement timeout and retry rules
-- [ ] P0 T5.10 Record tokens, latency, and cost
-- [ ] P0 T5.11 Add AI budget controls
-- [ ] P0 T5.12 Add prompt-injection tests
+Status:
 
-## Epic 6 — Strategy Engine
-- [ ] P0 T6.1 Define strategy protocol
-- [ ] P0 T6.2 Define intent schema
-- [ ] P0 T6.3 Implement HOLD-only smoke strategy
-- [ ] P0 T6.4 Implement BTC/EUR trend baseline
-- [ ] P0 T6.5 Add strategy versioning
-- [ ] P0 T6.6 Add observation mode
-- [ ] P0 T6.7 Add deterministic unit tests
-- [ ] P1 T6.8 Add AI agreement feature
+- `[ ]` not started
+- `[~]` in progress
+- `[x]` completed and verified
 
-## Epic 7 — Risk Engine
-- [ ] P0 T7.1 Define policy version model
-- [ ] P0 T7.2 Implement position limit
-- [ ] P0 T7.3 Implement order-notional limit
-- [ ] P0 T7.4 Implement exposure limit
-- [ ] P0 T7.5 Implement daily drawdown halt
-- [ ] P0 T7.6 Implement total drawdown halt
-- [ ] P0 T7.7 Implement stale-data rejection
-- [ ] P0 T7.8 Implement duplicate protection
-- [ ] P0 T7.9 Implement cooldown
-- [ ] P0 T7.10 Implement global kill switch
-- [ ] P0 T7.11 Add fail-closed tests
-- [ ] P0 T7.12 Add EUR 20 research profile
+---
 
-## Epic 8 — Portfolio and Paper Trading
-- [ ] P0 T8.1 Implement portfolio model
-- [ ] P0 T8.2 Implement append-only ledger
-- [ ] P0 T8.3 Implement double-entry invariants
-- [ ] P0 T8.4 Implement market orders
-- [ ] P0 T8.5 Implement limit orders
-- [ ] P0 T8.6 Implement cancellation
-- [ ] P0 T8.7 Implement fee model
-- [ ] P0 T8.8 Implement slippage model
-- [ ] P0 T8.9 Implement partial fills
-- [ ] P0 T8.10 Implement P&L
-- [ ] P0 T8.11 Implement drawdown
-- [ ] P0 T8.12 Implement reconciliation
-- [ ] P0 T8.13 Halt on mismatch
+# Epic 1 — Repository and Quality Foundation
 
-## Epic 9 — Backtesting
-- [ ] P0 T9.1 Implement historical event loop
-- [ ] P0 T9.2 Reuse strategy contract
-- [ ] P0 T9.3 Reuse risk contract
-- [ ] P0 T9.4 Reuse paper fill model
-- [ ] P0 T9.5 Prevent look-ahead
-- [ ] P0 T9.6 Add cash benchmark
-- [ ] P0 T9.7 Add buy-and-hold benchmark
-- [ ] P0 T9.8 Calculate performance metrics
-- [ ] P0 T9.9 Store reproducibility metadata
-- [ ] P1 T9.10 Add walk-forward evaluation
+## [ ] T1.1 — Initialize the Python Backend Project
 
-## Epic 10 — API
-- [ ] P0 T10.1 Implement workspaces API
-- [ ] P0 T10.2 Implement market API
-- [ ] P0 T10.3 Implement analysis API
-- [ ] P0 T10.4 Implement strategy API
-- [ ] P0 T10.5 Implement risk API
-- [ ] P0 T10.6 Implement paper portfolio API
-- [ ] P0 T10.7 Implement paper orders API
-- [ ] P0 T10.8 Implement backtest API
-- [ ] P0 T10.9 Implement audit API
-- [ ] P0 T10.10 Generate OpenAPI
-- [ ] P0 T10.11 Add pagination and filters
+**Priority:** P0
 
-## Epic 11 — Security
-- [ ] P0 T11.1 Implement authentication
-- [ ] P0 T11.2 Implement owner/operator/viewer roles
-- [ ] P0 T11.3 Add rate limiting
-- [ ] P0 T11.4 Add secure headers
-- [ ] P0 T11.5 Add CORS allowlist
-- [ ] P0 T11.6 Add secret redaction
-- [ ] P0 T11.7 Add dependency scanning
-- [ ] P0 T11.8 Add Bandit and Semgrep
-- [ ] P0 T11.9 Add container scanning
-- [ ] P0 T11.10 Document key rotation
+### Description
 
-## Epic 12 — Observability
-- [ ] P0 T12.1 Export Prometheus metrics
-- [ ] P0 T12.2 Create platform dashboard
-- [ ] P0 T12.3 Create data-quality dashboard
-- [ ] P0 T12.4 Create AI dashboard
-- [ ] P0 T12.5 Create risk dashboard
-- [ ] P0 T12.6 Create portfolio dashboard
-- [ ] P0 T12.7 Configure critical alerts
-- [ ] P0 T12.8 Configure warning alerts
+Create the initial Python 3.12 backend project and package structure defined by the architecture documents.
 
-## Epic 13 — Frontend
-- [ ] P1 T13.1 Initialize React and TypeScript
-- [ ] P1 T13.2 Add authentication flow
-- [ ] P1 T13.3 Add workspace settings
-- [ ] P1 T13.4 Add market overview
-- [ ] P1 T13.5 Add AI analysis view
-- [ ] P1 T13.6 Add paper portfolio view
-- [ ] P1 T13.7 Add backtest report
-- [ ] P1 T13.8 Add audit timeline
-- [ ] P1 T13.9 Add halt controls
+### User Story
 
-## Epic 14 — 30-Day Experiment
-- [ ] P0 T14.1 Freeze experiment configuration
-- [ ] P0 T14.2 Seed EUR 20 virtual balance
-- [ ] P0 T14.3 Enable BTC/EUR
-- [ ] P0 T14.4 Verify fee and slippage assumptions
-- [ ] P0 T14.5 Run preflight checks
-- [ ] P0 T14.6 Start paper experiment
-- [ ] P0 T14.7 Monitor data completeness
-- [ ] P0 T14.8 Monitor risk events
-- [ ] P0 T14.9 Compare benchmarks
-- [ ] P0 T14.10 Produce final report
-- [ ] P0 T14.11 Review whether sandbox progression is justified
+As the development team, I want a standardized backend project structure, so that all later domain modules follow consistent boundaries and tooling.
+
+### Acceptance Criteria
+
+- `backend/pyproject.toml` exists.
+- Python version is constrained to the approved 3.12 baseline.
+- `backend/app/main.py` exposes a minimal FastAPI application.
+- Package directories exist for `api`, `core`, `domains`, `infrastructure`, and `workers`.
+- Domain directories exist for market data, features, AI analysis, strategy, risk, execution, portfolio, backtesting, and audit.
+- Gemini-specific infrastructure is isolated under `backend/app/infrastructure/ai/gemini/`.
+- The application imports without database, Redis, Binance, or Gemini credentials.
+- A basic test verifies that the application object can be imported.
+
+### Definition of Done
+
+- Project structure is committed.
+- Import test passes.
+- Ruff and MyPy can discover the package.
+- README repository structure remains accurate.
+- No business logic is placed in route handlers.
+
+### Dependencies
+
+None.
+
+### References
+
+- `AGENTS.md`
+- `docs/ARCHITECTURE.md`
+- `docs/BACKEND.md`
+- `docs/TECH_STACK.md`
+
+### Notes
+
+This task is independent and suitable as the first implementation task.
+
+---
+
+## [ ] T1.2 — Configure Python Dependency Locking and Quality Tools
+
+**Priority:** P0
+
+### Description
+
+Configure deterministic dependency management and the mandatory static-analysis and test tools.
+
+### User Story
+
+As the development team, I want reproducible dependency installation and automated quality checks, so that local and CI environments use the same verified toolchain.
+
+### Acceptance Criteria
+
+- Runtime and development dependencies are declared in `backend/pyproject.toml`.
+- A committed lock file is generated by the selected package manager.
+- Ruff formatting and linting are configured.
+- MyPy strict mode is enabled for application packages.
+- Pytest and coverage configuration are present.
+- Hypothesis is available for property-based tests.
+- Bandit configuration is present.
+- Commands exist for format, lint, type-check, unit test, full test, and security scan.
+- Tool configuration excludes generated artifacts without excluding production source code.
+
+### Definition of Done
+
+- Clean installation from the lock file succeeds.
+- All quality commands execute successfully on the initial project.
+- Tool usage is documented in `CONTRIBUTING.md`.
+- CI-ready command names are stable.
+
+### Dependencies
+
+- T1.1
+
+### References
+
+- `AGENTS.md`
+- `docs/TESTING.md`
+- `docs/SECURITY.md`
+- `docs/TECH_STACK.md`
+
+---
+
+## [ ] T1.3 — Create the Local Docker Compose Environment
+
+**Priority:** P0
+
+### Description
+
+Create a local development environment for the API, worker, PostgreSQL, Redis, Prometheus, and Grafana.
+
+### User Story
+
+As a developer, I want the complete local platform to start with one documented command, so that environment differences do not block development or testing.
+
+### Acceptance Criteria
+
+- `docker-compose.yml` or `compose.yml` is committed.
+- Services exist for API, worker, PostgreSQL, Redis, Prometheus, and Grafana.
+- Health checks exist for PostgreSQL, Redis, and the API.
+- Containers use pinned image versions rather than floating `latest` tags.
+- Persistent volumes are defined for PostgreSQL and Grafana.
+- No real secret is embedded in Compose files.
+- `.env.example` contains every required variable with safe placeholder values.
+- The API starts with `AI_PROVIDER=fake` and without a Gemini API key.
+- Shutdown and restart preserve PostgreSQL data.
+
+### Definition of Done
+
+- A documented command starts all required services.
+- Health checks become healthy.
+- A clean teardown command is documented.
+- Trivy finds no unresolved critical image finding introduced by this task.
+- Deployment documentation is updated.
+
+### Dependencies
+
+- T1.1
+- T1.2
+
+### References
+
+- `docs/DEPLOYMENT.md`
+- `docs/OBSERVABILITY.md`
+- `docs/SECURITY.md`
+
+---
+
+## [ ] T1.4 — Add the GitHub Actions Quality Pipeline
+
+**Priority:** P0
+
+### Description
+
+Create CI workflows that verify formatting, linting, typing, tests, migrations, documentation consistency, and security checks.
+
+### User Story
+
+As the development team, I want every pull request automatically validated, so that broken or unsafe changes cannot be merged silently.
+
+### Acceptance Criteria
+
+- CI runs on pull requests and pushes to `main`.
+- Ruff format check runs without modifying files.
+- Ruff lint and MyPy strict checks run.
+- Unit and integration tests run with PostgreSQL and Redis services.
+- Alembic migration upgrade from an empty database is tested after migrations exist.
+- Bandit, Semgrep, dependency review, secret scanning, and Trivy are represented by workflows or documented repository settings.
+- README documentation links are verified.
+- CI fails if generated documentation or schemas are stale once generators exist.
+- Dependency caches do not include secrets.
+
+### Definition of Done
+
+- Workflow files are committed.
+- A pull request run is green.
+- Required status-check names are documented.
+- A deliberately failing test is confirmed to fail CI and is reverted.
+
+### Dependencies
+
+- T1.2
+- T1.3
+
+### References
+
+- `AGENTS.md`
+- `docs/TESTING.md`
+- `docs/SECURITY.md`
+
+---
+
+# Epic 2 — Core Application Infrastructure
+
+## [ ] T2.1 — Implement Typed Application Settings
+
+**Priority:** P0
+
+### Description
+
+Implement validated application settings for the API, database, Redis, Binance, Gemini, paper trading, risk limits, and observability.
+
+### User Story
+
+As an operator, I want invalid or unsafe configuration rejected at startup, so that the platform cannot run with missing secrets, contradictory modes, or dangerous defaults.
+
+### Acceptance Criteria
+
+- Settings use Pydantic v2 and `pydantic-settings`.
+- Environment-specific configuration is typed and validated.
+- All variables in `.env.example` have matching settings fields.
+- `LIVE_TRADING_ENABLED` defaults to `false` and cannot be enabled by the MVP configuration model.
+- Gemini credentials are required only when `AI_PROVIDER=gemini`.
+- Gemini request, token, and cost budgets are positive and bounded.
+- Risk percentages are validated as decimal percentages in documented ranges.
+- Secret values are represented by secret types and redacted from serialization and logs.
+- Startup returns actionable validation errors without printing secret contents.
+
+### Definition of Done
+
+- Unit tests cover valid, missing, malformed, contradictory, and unsafe settings.
+- `.env.example` and deployment documentation are synchronized.
+- MyPy and all tests pass.
+
+### Dependencies
+
+- T1.1
+- T1.2
+
+### References
+
+- `.env.example`
+- `docs/GEMINI_INTEGRATION.md`
+- `docs/RISK_ENGINE.md`
+- `docs/SECURITY.md`
+
+---
+
+## [ ] T2.2 — Implement Structured Logging and Correlation IDs
+
+**Priority:** P0
+
+### Description
+
+Implement JSON logging and request/job correlation across API requests and background tasks.
+
+### User Story
+
+As an operator, I want every workflow traceable across services, so that market-data, Gemini, risk, and execution failures can be investigated from a single correlation identifier.
+
+### Acceptance Criteria
+
+- Logs are emitted as structured JSON outside local pretty-print mode.
+- API requests receive or generate a correlation ID.
+- Correlation ID is returned in response headers and error payloads.
+- Background jobs propagate correlation ID, logical job ID, and attempt ID.
+- Sensitive fields including API keys, authorization headers, cookies, signatures, and database URLs are redacted.
+- Stable event names and error codes are defined.
+- Logging Gemini prompts is disabled by default.
+- Unit tests verify redaction and context propagation.
+
+### Definition of Done
+
+- API and worker example flows produce correlated logs.
+- Redaction tests pass.
+- Observability documentation lists the implemented fields.
+- No secret appears in test snapshots or CI output.
+
+### Dependencies
+
+- T2.1
+
+### References
+
+- `docs/OBSERVABILITY.md`
+- `docs/SECURITY.md`
+- `AGENTS.md`
+
+---
+
+## [ ] T2.3 — Implement Database Session Management and Migration Baseline
+
+**Priority:** P0
+
+### Description
+
+Create PostgreSQL connection management, transaction helpers, and the initial additive Alembic migration baseline.
+
+### User Story
+
+As the development team, I want safe and testable database transaction boundaries, so that financial and audit state cannot be partially committed.
+
+### Acceptance Criteria
+
+- SQLAlchemy 2 async engine and session factory are implemented.
+- Connection pool settings are configurable and validated.
+- Application services own transaction boundaries.
+- Network calls are not performed inside database transactions.
+- Alembic is configured for application metadata.
+- Initial migration creates only approved foundational tables or an explicit empty baseline.
+- Migration upgrade and downgrade behavior is tested according to project policy.
+- Database errors map to stable application errors without leaking credentials.
+
+### Definition of Done
+
+- A new database upgrades successfully to head.
+- Integration tests prove commit and rollback behavior.
+- An already-applied migration is not edited.
+- Database documentation is updated with exact implemented tables.
+
+### Dependencies
+
+- T1.3
+- T2.1
+
+### References
+
+- `docs/DATABASE_SCHEMA.md`
+- `docs/BACKEND.md`
+- `AGENTS.md`
+
+---
+
+## [ ] T2.4 — Implement Redis and ARQ Worker Infrastructure
+
+**Priority:** P0
+
+### Description
+
+Create the Redis connection, ARQ worker settings, job serialization, retry metadata, and idempotent enqueue contract.
+
+### User Story
+
+As the platform, I want reliable background processing, so that market ingestion and Gemini analysis can retry safely without creating duplicate state.
+
+### Acceptance Criteria
+
+- Redis connection lifecycle is implemented.
+- ARQ worker starts with documented queues.
+- Job payloads are typed and versioned.
+- Every job has a logical idempotency key and unique attempt ID.
+- Retry policy distinguishes transient and permanent failures.
+- Duplicate enqueue attempts return the existing logical job rather than creating duplicate work.
+- Dead-letter or terminal-failure state is persisted or otherwise auditable.
+- Redis loss cannot corrupt the authoritative PostgreSQL ledger.
+
+### Definition of Done
+
+- Integration tests cover enqueue, execution, retry, duplicate, timeout, and terminal failure.
+- Worker health information is exposed.
+- Metrics and logs are present.
+- Architecture and deployment documents are synchronized.
+
+### Dependencies
+
+- T1.3
+- T2.2
+- T2.3
+
+### References
+
+- `docs/ARCHITECTURE.md`
+- `docs/OBSERVABILITY.md`
+- `AGENTS.md`
+
+---
+
+# Epic 3 — Binance Market Data
+
+## [ ] T3.1 — Define the Exchange Market-Data Adapter Contract
+
+**Priority:** P0
+
+### Description
+
+Define project-owned typed protocols for exchange time, symbol metadata, candles, ticker data, and provider health.
+
+### User Story
+
+As the development team, I want Binance isolated behind a stable adapter contract, so that domain logic remains testable and future exchange support does not leak SDK types.
+
+### Acceptance Criteria
+
+- Protocols define server time, symbols, candles, ticker, and health operations.
+- Domain models use normalized `BASE/QUOTE` symbols.
+- Price, quantity, and filter values use `Decimal`.
+- Timestamps are timezone-aware UTC.
+- Provider-specific status and rate-limit metadata are mapped to project-owned types.
+- Typed exceptions distinguish validation, authentication, rate-limit, timeout, and provider failures.
+- Fake adapter fixtures cover normal and failure behavior.
+
+### Definition of Done
+
+- Protocol and models are committed.
+- Unit tests validate serialization and invariants.
+- No Binance SDK type appears outside infrastructure code.
+
+### Dependencies
+
+- T1.1
+
+### References
+
+- `docs/MARKET_DATA.md`
+- `docs/BINANCE_INTEGRATION.md`
+- `AGENTS.md`
+
+---
+
+## [ ] T3.2 — Implement Binance Spot Symbol Metadata Synchronization
+
+**Priority:** P0
+
+### Description
+
+Fetch and persist Binance Spot symbol metadata and trading filters required for validation and simulation.
+
+### User Story
+
+As the trading engine, I want current exchange precision and minimum constraints, so that quantities and simulated orders follow Binance rules.
+
+### Acceptance Criteria
+
+- Adapter fetches current Spot exchange information from the official Binance interface.
+- BTC/EUR, ETH/EUR, and SOL/EUR metadata can be synchronized when available.
+- Exchange-native symbol, base asset, quote asset, status, tick size, step size, minimum quantity, and minimum notional are persisted.
+- Decimal conversion preserves exact published values.
+- Metadata versions or update timestamps are stored.
+- Unsupported or inactive symbols are rejected with stable errors.
+- Rate-limit metadata and transient failures are handled.
+- Recorded official-response fixtures support deterministic contract tests.
+
+### Definition of Done
+
+- Synchronization is idempotent.
+- Integration tests cover create, update, inactive symbol, malformed filter, and duplicate runs.
+- Database schema documentation includes implemented columns and constraints.
+
+### Dependencies
+
+- T2.3
+- T2.4
+- T3.1
+
+### References
+
+- `docs/BINANCE_INTEGRATION.md`
+- `docs/DATABASE_SCHEMA.md`
+
+---
+
+## [ ] T3.3 — Implement Historical Candle Backfill
+
+**Priority:** P0
+
+### Description
+
+Implement chunked historical OHLCV backfill for finalized Binance Spot candles.
+
+### User Story
+
+As the research platform, I want complete historical candles, so that indicators, backtests, and Gemini analysis use reproducible market data.
+
+### Acceptance Criteria
+
+- Backfill supports configured symbol, interval, start, and end times.
+- Pagination respects Binance request limits and rate limits.
+- Candle values use `Decimal` and UTC timestamps.
+- Finalized candles are persisted idempotently with a unique exchange/symbol/interval/open-time key.
+- OHLC relationships, non-negative volume, chronology, duplicates, and missing intervals are validated.
+- Checkpoints allow restart after interruption.
+- Invalid provider data creates a data-quality event and is not silently accepted.
+- Re-running the same backfill creates no duplicate candles.
+
+### Definition of Done
+
+- Unit and integration tests cover pagination, restart, duplicate, gap, malformed candle, timeout, and 429 behavior.
+- Metrics expose downloaded candles, failures, gaps, and duration.
+- Market-data documentation describes the implemented behavior.
+
+### Dependencies
+
+- T3.2
+
+### References
+
+- `docs/MARKET_DATA.md`
+- `docs/BINANCE_INTEGRATION.md`
+
+---
+
+## [ ] T3.4 — Implement Binance WebSocket Candle Ingestion and Gap Recovery
+
+**Priority:** P0
+
+### Description
+
+Implement near-real-time candle stream ingestion with reconnect, deduplication, final-candle detection, and REST gap recovery.
+
+### User Story
+
+As the analysis platform, I want continuous and complete finalized candle updates, so that scheduled analysis never uses stale or missing data.
+
+### Acceptance Criteria
+
+- WebSocket subscription is implemented for configured symbols and intervals.
+- Partial and final candle events are distinguished.
+- Only finalized candles become authoritative strategy and Gemini inputs.
+- Duplicate events are idempotently ignored.
+- Reconnect uses bounded backoff with jitter.
+- After reconnect, the service detects elapsed intervals and backfills gaps through REST.
+- Stale-stream detection exposes a health failure and metric.
+- Shutdown closes the connection cleanly and preserves checkpoint state.
+
+### Definition of Done
+
+- Tests cover duplicate events, out-of-order events, disconnect, reconnect, missed intervals, stale stream, and clean shutdown.
+- A local fake stream can drive deterministic integration tests.
+- Alerts and runbook references are documented.
+
+### Dependencies
+
+- T3.3
+
+### References
+
+- `docs/MARKET_DATA.md`
+- `docs/BINANCE_INTEGRATION.md`
+- `docs/OBSERVABILITY.md`
+
+---
+
+# Epic 4 — Deterministic Features and Snapshots
+
+## [ ] T4.1 — Implement Immutable Market Snapshots
+
+**Priority:** P0
+
+### Description
+
+Create immutable market snapshots that bind exact finalized candle ranges, data-quality state, and feature versions to every later decision.
+
+### User Story
+
+As an auditor, I want every analysis tied to immutable input data, so that a decision can be reproduced after market data or code changes.
+
+### Acceptance Criteria
+
+- Snapshot records include exchange, symbol, interval, as-of time, candle range, data hash, freshness status, and quality status.
+- Snapshot creation rejects incomplete, stale, invalid, or non-final candle ranges according to policy.
+- Identical inputs produce the same content hash.
+- Snapshot rows are immutable after creation.
+- Corrections produce a new snapshot and explicit relationship rather than mutating the original.
+- Strategy, Gemini, risk, and backtest records can reference a snapshot ID.
+
+### Definition of Done
+
+- Database constraints protect immutability and uniqueness.
+- Unit and integration tests cover hash stability, stale data, missing candles, duplicate creation, and correction flow.
+- Schema and architecture documentation are updated.
+
+### Dependencies
+
+- T3.3
+- T3.4
+
+### References
+
+- `docs/ARCHITECTURE.md`
+- `docs/DATABASE_SCHEMA.md`
+- `docs/MARKET_DATA.md`
+
+---
+
+## [ ] T4.2 — Implement Versioned Technical Indicator Calculation
+
+**Priority:** P0
+
+### Description
+
+Implement deterministic calculation of returns, SMA, EMA, RSI, ATR, volatility, and volume features using Polars.
+
+### User Story
+
+As the strategy and Gemini analysis layers, I want tested and versioned features, so that identical market snapshots always produce identical analytical inputs.
+
+### Acceptance Criteria
+
+- Feature-set configuration has an immutable version and configuration hash.
+- Calculations use only candles available at the snapshot as-of time.
+- Warm-up requirements are explicit.
+- Missing or insufficient history produces a typed non-ready result.
+- Numeric precision and null handling are documented.
+- Output values and input snapshot hash are stored.
+- Reference fixtures compare results with independently verified expected values.
+- No future candle can affect an earlier feature output.
+
+### Definition of Done
+
+- Unit and property-based tests cover edge cases and deterministic repetition.
+- Look-ahead regression tests pass.
+- Feature documentation includes formulas, parameters, and versioning behavior.
+
+### Dependencies
+
+- T4.1
+
+### References
+
+- `docs/STRATEGY_ENGINE.md`
+- `docs/BACKTEST_ENGINE.md`
+- `AGENTS.md`
+
+---
+
+# Epic 5 — Google Gemini Analysis
+
+## [ ] T5.1 — Define the Provider-Independent AI Contract
+
+**Priority:** P0
+
+### Description
+
+Define typed project-owned request, response, usage, safety, and error contracts for AI analysis providers.
+
+### User Story
+
+As the development team, I want Gemini isolated behind a stable protocol, so that domain logic remains deterministic and testable without paid API calls.
+
+### Acceptance Criteria
+
+- `LLMProvider` protocol supports analysis, timeout, cancellation, and typed results.
+- Request model references immutable snapshot, feature-set, prompt, schema, and experiment versions.
+- Response model separates provider metadata, raw structured data, validated report, usage, cost estimate, safety outcome, and validation outcome.
+- Typed errors cover timeout, rate limit, authentication, provider failure, refusal, safety block, empty response, and invalid schema.
+- SDK-specific Gemini objects are absent from domain contracts.
+- A deterministic fake provider implements the same contract.
+
+### Definition of Done
+
+- Contract tests run against the fake provider.
+- Serialization round-trip tests pass.
+- AI architecture documentation matches implemented models.
+
+### Dependencies
+
+- T1.1
+- T4.2
+
+### References
+
+- `docs/AI_ARCHITECTURE.md`
+- `docs/GEMINI_INTEGRATION.md`
+- `AGENTS.md`
+
+---
+
+## [ ] T5.2 — Define the Gemini Market Analysis Schema and Prompts
+
+**Priority:** P0
+
+### Description
+
+Create the versioned Pydantic/JSON Schema response contract and prompt templates for Gemini technical market analysis.
+
+### User Story
+
+As the strategy engine, I want Gemini to return a constrained and explainable report, so that free-form text cannot become an unsafe trading command.
+
+### Acceptance Criteria
+
+- Schema includes regime, advisory action, confidence, evidence, contradictions, risks, missing information, invalidation conditions, and summary.
+- All enums, ranges, maximum lengths, and nested structures are defined.
+- Unknown fields are rejected in strict validation.
+- System instruction prohibits invented facts, order execution, position sizing, credential access, and risk-policy changes.
+- Prompt clearly separates trusted instructions from structured evidence.
+- Confidence is documented as classification confidence, not probability of profit.
+- Prompt and schema have immutable semantic versions and content hashes.
+- Evaluation fixtures include bullish, bearish, sideways, uncertain, insufficient-data, contradictory, and prompt-injection cases.
+
+### Definition of Done
+
+- Schema generation is committed.
+- Valid and invalid fixture tests pass.
+- Prompt changes require version changes.
+- `docs/AI_PROMPTS.md` is updated with exact implemented templates or authoritative file paths.
+
+### Dependencies
+
+- T5.1
+
+### References
+
+- `docs/AI_PROMPTS.md`
+- `docs/GEMINI_INTEGRATION.md`
+
+---
+
+## [ ] T5.3 — Implement the Google Gemini API Adapter
+
+**Priority:** P0
+
+### Description
+
+Implement the official Google Gen AI SDK adapter behind the project `LLMProvider` protocol.
+
+### User Story
+
+As the AI analysis service, I want a robust Gemini adapter, so that structured market reports can be generated with bounded cost and predictable failure behavior.
+
+### Acceptance Criteria
+
+- Adapter uses the official `google-genai` Python SDK.
+- API key is read only from typed secret configuration.
+- Model name is configured and recorded per request.
+- Structured output uses the project schema where supported.
+- Temperature, output tokens, timeout, safety settings, and budgets are configured.
+- Request and attempt IDs are recorded.
+- 429 and selected transient 5xx failures use bounded exponential backoff with jitter.
+- Authentication, safety block, refusal, empty response, timeout, and invalid schema are mapped to typed outcomes.
+- No exchange, database, shell, code-execution, search-grounding, function-calling, or order-execution tools are enabled.
+- Raw provider metadata and validated project output are separated.
+
+### Definition of Done
+
+- Unit tests mock the SDK boundary.
+- Contract tests cover every mapped outcome.
+- A manually triggered non-production smoke test is documented but excluded from normal CI.
+- No Gemini key is required for CI.
+- Metrics and structured logs are implemented without leaking sensitive prompt data.
+
+### Dependencies
+
+- T2.1
+- T2.2
+- T5.1
+- T5.2
+
+### References
+
+- `docs/GEMINI_INTEGRATION.md`
+- `docs/AI_ARCHITECTURE.md`
+- `docs/SECURITY.md`
+
+---
+
+## [ ] T5.4 — Implement AI Analysis Orchestration and Validation
+
+**Priority:** P0
+
+### Description
+
+Create the application service and worker that loads an immutable snapshot and feature set, invokes Gemini, validates evidence, and persists an auditable analysis result.
+
+### User Story
+
+As an auditor, I want every Gemini report validated and linked to exact evidence, so that unsupported or stale model output cannot influence a strategy decision.
+
+### Acceptance Criteria
+
+- Service accepts a typed command with an idempotency key.
+- Snapshot and feature data must be complete, finalized, fresh, and versioned.
+- Duplicate commands return the existing logical analysis run.
+- Validated evidence references must exist in supplied features.
+- Unknown, missing, unsupported, stale, blocked, or malformed outputs are rejected.
+- Raw metadata, validated report, prompt version, schema version, model, usage, cost, safety result, and retry history are persisted.
+- Failure degrades to deterministic analysis or `HOLD`; it never opens a position.
+- Completion and rejection events are typed and auditable.
+
+### Definition of Done
+
+- End-to-end tests use the fake provider.
+- Failure tests cover all provider and validation outcomes.
+- Metrics cover latency, outcomes, tokens, cost, schema failures, and budget utilization.
+- Database and observability documents are updated.
+
+### Dependencies
+
+- T2.4
+- T4.2
+- T5.3
+
+### References
+
+- `docs/AI_ARCHITECTURE.md`
+- `docs/GEMINI_INTEGRATION.md`
+- `docs/DATABASE_SCHEMA.md`
+
+---
+
+## [ ] T5.5 — Build the Gemini Evaluation Suite
+
+**Priority:** P1
+
+### Description
+
+Create a versioned evaluation harness for schema compliance, evidence grounding, action consistency, prompt injection, safety behavior, latency, and cost.
+
+### User Story
+
+As the development team, I want measurable Gemini quality gates, so that prompt or model changes cannot silently degrade analytical reliability.
+
+### Acceptance Criteria
+
+- Evaluation dataset is versioned and contains expected properties rather than profit labels.
+- Cases include normal regimes, insufficient data, contradictions, malicious text, secret requests, risk override requests, and order-execution requests.
+- Metrics include schema success, unsupported claims, evidence reference validity, action consistency, safety blocks, latency, token use, and estimated cost.
+- Results are stored as machine-readable JSON and human-readable Markdown.
+- Baseline thresholds are configurable and documented.
+- CI runs fake-provider evaluations; paid Gemini evaluations are manually triggered or scheduled with explicit budget controls.
+- A model, prompt, schema, or safety-setting change creates a new evaluation result.
+
+### Definition of Done
+
+- Evaluation runner and fixtures are committed.
+- Baseline report is generated.
+- Regression threshold failures produce a non-zero exit code.
+- AI documentation references the evaluation workflow.
+
+### Dependencies
+
+- T5.2
+- T5.3
+- T5.4
+
+### References
+
+- `docs/GEMINI_INTEGRATION.md`
+- `docs/AI_ARCHITECTURE.md`
+- `docs/TESTING.md`
+
+---
+
+# Epic 6 — Strategy and Risk
+
+## [ ] T6.1 — Implement the Strategy Contract and HOLD-Only Baseline
+
+**Priority:** P0
+
+### Description
+
+Define deterministic strategy inputs and outputs and implement a safe HOLD-only strategy used to validate the complete pipeline.
+
+### User Story
+
+As the development team, I want a non-trading baseline strategy, so that the full data, Gemini, risk, audit, and paper pipeline can be tested without opening a position.
+
+### Acceptance Criteria
+
+- Strategy contract accepts immutable snapshot, feature set, optional validated Gemini report, and strategy version.
+- Output is a typed intent with action, symbol, evidence references, target request, invalidation condition, and configuration hash.
+- HOLD-only strategy always emits HOLD for valid input.
+- Invalid, stale, or missing inputs emit a typed rejection rather than a trade intent.
+- Strategy execution is deterministic for identical versioned input.
+- Strategy does not access Binance or the paper executor directly.
+
+### Definition of Done
+
+- Unit and property-based tests prove determinism.
+- Pipeline integration test reaches risk evaluation without creating an order.
+- Strategy documentation is synchronized.
+
+### Dependencies
+
+- T4.2
+- T5.4
+
+### References
+
+- `docs/STRATEGY_ENGINE.md`
+- `AGENTS.md`
+
+---
+
+## [ ] T6.2 — Implement the BTC/EUR Trend Baseline Strategy
+
+**Priority:** P0
+
+### Description
+
+Implement the first conservative, versioned BTC/EUR long-only trend strategy using deterministic features and optional Gemini agreement.
+
+### User Story
+
+As a researcher, I want a transparent baseline strategy, so that AI-assisted results can be compared with a simple deterministic method.
+
+### Acceptance Criteria
+
+- Strategy uses documented finalized-candle indicators only.
+- Entry, exit, reduce, and hold conditions are explicit and versioned.
+- No leverage, shorting, averaging down, or hidden discretionary override exists.
+- Gemini may act only as an advisory agreement or veto input according to documented configuration.
+- Missing or rejected Gemini output cannot create an entry.
+- Warm-up, cooldown, and invalidation behavior are explicit.
+- Identical inputs produce identical intents.
+- Strategy emits no position size; risk engine owns sizing limits.
+
+### Definition of Done
+
+- Unit tests cover every branch and boundary.
+- Golden fixtures document expected decisions.
+- Strategy specification contains the exact implemented rules and parameters.
+- Backtest compatibility is demonstrated.
+
+### Dependencies
+
+- T6.1
+
+### References
+
+- `docs/STRATEGY_ENGINE.md`
+- `docs/RISK_ENGINE.md`
+
+---
+
+## [ ] T6.3 — Implement the Versioned Risk Policy Engine
+
+**Priority:** P0
+
+### Description
+
+Implement the deterministic non-bypassable risk engine and the EUR 20 experiment policy.
+
+### User Story
+
+As the portfolio owner, I want every strategy intent checked against hard limits, so that a coding error or AI recommendation cannot exceed the experiment risk envelope.
+
+### Acceptance Criteria
+
+- Risk outcomes are approve, approve-with-reduced-size, reject, halt-portfolio, or halt-workspace.
+- Policy versions and configuration hashes are immutable.
+- Controls cover maximum position, order notional, exposure, daily drawdown, total drawdown, stale data, volatility, cooldown, open orders, duplicates, minimum notional, precision, and kill switches.
+- EUR 20 profile enforces maximum 25% position, maximum EUR 5 equivalent order, one open order, no leverage, no shorting, 5% daily halt, and 15% total halt.
+- Missing policy, stale snapshot, invalid precision, missing fee model, database failure, or reconciliation mismatch fails closed.
+- Risk results include rule-by-rule evidence and final reason codes.
+- No undocumented bypass is present.
+
+### Definition of Done
+
+- Unit and property-based tests cover all limits and combined conditions.
+- Fail-closed tests deliberately inject dependency failures.
+- Risk decisions are persisted and auditable.
+- Risk documentation contains exact implemented formulas and units.
+
+### Dependencies
+
+- T3.2
+- T6.1
+
+### References
+
+- `docs/RISK_ENGINE.md`
+- `docs/SECURITY.md`
+- `AGENTS.md`
+
+---
+
+# Epic 7 — Portfolio and Paper Execution
+
+## [ ] T7.1 — Implement the Append-Only Double-Entry Ledger
+
+**Priority:** P0
+
+### Description
+
+Create the authoritative paper-portfolio ledger and accounting invariants.
+
+### User Story
+
+As an auditor, I want balances and P&L derived from an append-only ledger, so that financial state is reproducible and cannot be silently overwritten.
+
+### Acceptance Criteria
+
+- Ledger entries are append-only and immutable.
+- Every transaction balances debits and credits in a documented base accounting model.
+- Cash available, cash reserved, asset quantity, fees, realized P&L, and equity can be reconstructed.
+- All monetary values use `Decimal` and explicit currency.
+- Portfolio sequencing prevents concurrent out-of-order mutation.
+- Database constraints protect duplicate transaction references.
+- Reconciliation code compares derived state with stored projections.
+- Mismatch activates a portfolio halt.
+
+### Definition of Done
+
+- Property-based tests prove transaction balancing and reconstruction invariants.
+- Integration tests cover concurrency, duplicate references, rollback, and mismatch.
+- Database and portfolio documents contain exact implemented tables and formulas.
+
+### Dependencies
+
+- T2.3
+
+### References
+
+- `docs/PORTFOLIO_ENGINE.md`
+- `docs/DATABASE_SCHEMA.md`
+
+---
+
+## [ ] T7.2 — Implement the Paper Order Lifecycle and Fill Model
+
+**Priority:** P0
+
+### Description
+
+Implement idempotent market and limit paper orders, cancellation, fills, fees, slippage, precision, minimum notional, and partial-fill behavior.
+
+### User Story
+
+As a researcher, I want realistic and conservative simulated execution, so that paper results do not ignore material trading costs or exchange constraints.
+
+### Acceptance Criteria
+
+- One approved risk evaluation creates at most one logical order.
+- Market and limit buy/sell orders are supported without shorts.
+- Order states and transitions are explicitly validated.
+- Reference price, spread, slippage, fee, and partial-fill assumptions are versioned.
+- Quantity is rounded according to persisted Binance filters.
+- Minimum quantity and notional are validated before order creation.
+- Ambiguous intrabar ordering resolves conservatively.
+- Fill and ledger updates occur atomically.
+- Cancellation is idempotent.
+- Restart does not duplicate fills.
+
+### Definition of Done
+
+- Unit, integration, and property tests cover all states, rounding, fees, partial fills, cancellation, duplicate execution, restart, and rollback.
+- Fill formulas and examples are documented.
+- Metrics cover orders, fills, rejection reasons, fees, and slippage.
+
+### Dependencies
+
+- T3.2
+- T6.3
+- T7.1
+
+### References
+
+- `docs/PAPER_TRADING.md`
+- `docs/PORTFOLIO_ENGINE.md`
+
+---
+
+# Epic 8 — Backtesting
+
+## [ ] T8.1 — Implement the Reproducible Historical Backtest Engine
+
+**Priority:** P0
+
+### Description
+
+Implement historical event replay using the same feature, strategy, risk, paper-fill, and ledger contracts used by paper trading.
+
+### User Story
+
+As a researcher, I want reproducible and realistic backtests, so that strategy behavior can be compared before a paper experiment begins.
+
+### Acceptance Criteria
+
+- Backtest uses finalized historical candles only.
+- No future candle or feature is visible to an earlier event.
+- Strategy, risk, fill, fee, slippage, and ledger implementations are reused rather than reimplemented.
+- Inputs include data version/hash, period, symbol, interval, capital, strategy version, risk version, and fill-model version.
+- Outputs include return, cash benchmark, buy-and-hold benchmark, drawdown, volatility, Sharpe, Sortino, win rate, profit factor, exposure, turnover, fees, equity curve, orders, fills, and warnings.
+- Commit SHA, dependency versions, configuration hash, and random seed are stored.
+- Re-running identical inputs produces identical results.
+
+### Definition of Done
+
+- Look-ahead regression tests pass.
+- Golden backtest fixtures are committed.
+- Generated report can be exported as JSON and Markdown.
+- Backtest documentation matches implemented formulas and assumptions.
+
+### Dependencies
+
+- T4.2
+- T6.2
+- T6.3
+- T7.2
+
+### References
+
+- `docs/BACKTEST_ENGINE.md`
+- `docs/TESTING.md`
+
+---
+
+# Epic 9 — REST API
+
+## [ ] T9.1 — Implement Health, Readiness, and Version Endpoints
+
+**Priority:** P0
+
+### Description
+
+Implement operational endpoints for process liveness, dependency readiness, and build/version metadata.
+
+### User Story
+
+As an operator, I want accurate health endpoints, so that orchestration and monitoring distinguish a running process from a usable service.
+
+### Acceptance Criteria
+
+- `/health/live` checks process liveness without external dependencies.
+- `/health/ready` checks PostgreSQL, Redis, required configuration, market-data freshness policy, and worker availability as appropriate.
+- Version endpoint exposes application version, commit SHA, migration revision, and schema versions without secrets.
+- Failure responses use stable error codes and correlation IDs.
+- Endpoint behavior is represented in generated OpenAPI.
+- Tests cover healthy and dependency-failure states.
+
+### Definition of Done
+
+- API, integration tests, metrics, and documentation are committed.
+- Docker health check uses the correct endpoint.
+- No readiness failure reveals credentials or stack traces.
+
+### Dependencies
+
+- T2.2
+- T2.3
+- T2.4
+
+### References
+
+- `docs/API_SPECIFICATION.md`
+- `docs/OBSERVABILITY.md`
+
+---
+
+## [ ] T9.2 — Implement Market, Analysis, Risk, Portfolio, Order, and Backtest APIs
+
+**Priority:** P1
+
+### Description
+
+Implement the documented `/api/v1` resource endpoints using typed request/response models and application services.
+
+### User Story
+
+As the frontend, I want stable typed APIs, so that users can inspect market data, Gemini reports, risk results, paper portfolios, orders, and backtests without accessing internal storage.
+
+### Acceptance Criteria
+
+- Implemented endpoints match the approved API resource inventory.
+- State-changing commands require `Idempotency-Key` where duplication is possible.
+- Authentication and role authorization are applied server-side.
+- List endpoints paginate and filter predictably.
+- Error responses contain stable code, message, details, and correlation ID.
+- Secret provider fields, unrestricted prompts, raw credentials, and stack traces are never returned.
+- Generated OpenAPI schemas are committed or reproducibly generated.
+- API tests cover success, validation, authorization, idempotency, conflict, stale data, risk rejection, and halt states.
+
+### Definition of Done
+
+- OpenAPI generation is automated.
+- API specification contains exact implemented requests and responses.
+- CI verifies generated API artifacts are current.
+- Tests, lint, type checks, and security scans pass.
+
+### Dependencies
+
+- T5.4
+- T6.3
+- T7.2
+- T8.1
+- T9.1
+
+### References
+
+- `docs/API_SPECIFICATION.md`
+- `docs/SECURITY.md`
+
+---
+
+# Epic 10 — Security and Observability
+
+## [ ] T10.1 — Implement Authentication and Role Authorization
+
+**Priority:** P1
+
+### Description
+
+Implement secure authentication and owner, operator, and viewer authorization for all non-public APIs.
+
+### User Story
+
+As the portfolio owner, I want access controlled by least privilege, so that only authorized users can change configuration, start experiments, or halt portfolios.
+
+### Acceptance Criteria
+
+- Password hashing uses Argon2id or another explicitly approved algorithm.
+- Access tokens are short-lived and securely validated.
+- Refresh or session design is documented if implemented.
+- Owner, operator, and viewer permissions are defined centrally.
+- Authorization tests cover every protected endpoint.
+- Rate limiting applies to authentication and sensitive commands.
+- Audit events record login, failure, configuration changes, experiment commands, and halts without storing secrets.
+- Default credentials do not exist.
+
+### Definition of Done
+
+- Threat-oriented tests cover brute force, invalid token, expired token, role escalation, and missing authorization.
+- Security documentation contains implemented behavior.
+- Bandit, Semgrep, dependency, and secret scans pass.
+
+### Dependencies
+
+- T2.3
+- T9.1
+
+### References
+
+- `docs/SECURITY.md`
+- `docs/API_SPECIFICATION.md`
+
+---
+
+## [ ] T10.2 — Implement Prometheus Metrics, Grafana Dashboards, and Alerts
+
+**Priority:** P1
+
+### Description
+
+Implement operational visibility for market data, Gemini, risk, paper execution, portfolio health, API, workers, database, and Redis.
+
+### User Story
+
+As an operator, I want actionable dashboards and alerts, so that stale data, AI failures, risk halts, accounting mismatches, and infrastructure degradation are detected quickly.
+
+### Acceptance Criteria
+
+- Prometheus metrics have documented names, units, labels, and cardinality limits.
+- Metrics cover ingestion lag, gaps, Gemini outcomes/latency/tokens/cost, budget utilization, strategy intents, risk results, orders, fills, fees, slippage, reconciliation, P&L, drawdown, queue depth, API latency, database pool, Redis, CPU, and memory.
+- Grafana dashboards are provisioned from committed files.
+- Critical alerts include reconciliation mismatch, portfolio/workspace halt, database failure, credential failure, and sustained stale market data.
+- Warning alerts include elevated Gemini errors, rate limits, queue depth, and budget utilization.
+- Every critical alert references a committed runbook.
+- High-cardinality entity IDs are not Prometheus labels.
+
+### Definition of Done
+
+- Dashboards load automatically in local Compose.
+- Alert rules pass validation.
+- Failure-injection tests demonstrate selected alerts.
+- Observability documentation lists exact implemented artifacts.
+
+### Dependencies
+
+- T1.3
+- T2.2
+- T3.4
+- T5.4
+- T6.3
+- T7.2
+
+### References
+
+- `docs/OBSERVABILITY.md`
+- `docs/DEPLOYMENT.md`
+
+---
+
+# Epic 11 — Frontend
+
+## [ ] T11.1 — Implement the React Application Shell and Typed API Client
+
+**Priority:** P1
+
+### Description
+
+Create the React/TypeScript application, authentication shell, generated or validated API client, and shared state/error handling.
+
+### User Story
+
+As a user, I want a reliable interface connected to typed APIs, so that platform state and failures are presented consistently.
+
+### Acceptance Criteria
+
+- React, TypeScript strict mode, Vite, React Router, and TanStack Query are configured.
+- API types are generated from OpenAPI or validated against it.
+- Authentication state and protected routes are implemented.
+- Global error handling displays correlation IDs.
+- Currency, decimal precision, and UTC timestamps are rendered explicitly.
+- Simulation mode and any halt state are always visible.
+- Gemini confidence is labelled as analytical confidence, never probability of profit.
+- Primary navigation is keyboard accessible.
+
+### Definition of Done
+
+- Frontend lint, type-check, unit tests, and build pass.
+- API compatibility check runs in CI.
+- Basic accessibility checks pass.
+- No secret is embedded in the frontend bundle.
+
+### Dependencies
+
+- T9.2
+- T10.1
+
+### References
+
+- `AGENTS.md`
+- `docs/API_SPECIFICATION.md`
+
+---
+
+## [ ] T11.2 — Implement Market, Gemini Analysis, Risk, Portfolio, and Backtest Views
+
+**Priority:** P1
+
+### Description
+
+Implement the first usable research dashboard for inspecting market data, Gemini reports, evidence, risks, paper portfolio state, orders, and backtest comparisons.
+
+### User Story
+
+As a researcher, I want all inputs and decisions visible in one interface, so that I can understand why the platform held, entered, exited, rejected, or halted.
+
+### Acceptance Criteria
+
+- Market view shows symbol, interval, freshness, gaps, and finalized-candle status.
+- Gemini view shows model, prompt/schema versions, analytical confidence, evidence, contradictions, risks, missing information, safety/validation status, tokens, and estimated cost.
+- Risk view shows every evaluated rule and final reason code.
+- Portfolio view shows cash, positions, equity, realized/unrealized P&L, fees, exposure, and drawdown.
+- Orders view shows lifecycle, fills, slippage, fees, and idempotency reference.
+- Backtest view compares strategy with cash and buy-and-hold.
+- Stale, rejected, halted, and simulated states are visually unmistakable.
+- Raw secrets and unrestricted prompts are not exposed.
+
+### Definition of Done
+
+- Component and integration tests cover loading, success, empty, stale, rejected, halted, and error states.
+- Accessibility checks pass for primary workflows.
+- Screens use real API contracts rather than hardcoded mock shapes.
+
+### Dependencies
+
+- T11.1
+
+### References
+
+- `README.md`
+- `docs/AI_ARCHITECTURE.md`
+- `docs/RISK_ENGINE.md`
+- `docs/PORTFOLIO_ENGINE.md`
+
+---
+
+# Epic 12 — Controlled 30-Day Paper Experiment
+
+## [ ] T12.1 — Create and Validate the EUR 20 Experiment Configuration
+
+**Priority:** P1
+
+### Description
+
+Create an immutable experiment configuration and preflight validator for the first 30-day BTC/EUR paper-trading run.
+
+### User Story
+
+As the portfolio owner, I want the experiment parameters frozen and validated, so that results cannot be changed retrospectively by configuration drift.
+
+### Acceptance Criteria
+
+- Configuration records symbol, interval, period, EUR 20 initial capital, strategy version, risk version, feature version, Gemini model, prompt/schema/safety versions, fee model, slippage model, and benchmark settings.
+- Maximum position is 25%, maximum order equivalent is EUR 5, daily halt is 5%, total halt is 15%, and one open order is permitted.
+- Live trading, leverage, shorting, margin, futures, custody, and withdrawals are explicitly disabled.
+- Preflight verifies market-data completeness, symbol filters, database migrations, worker readiness, fake/live Gemini configuration choice, budgets, dashboards, alerts, and kill switches.
+- Configuration is content-hashed and immutable after experiment start.
+- Failed preflight prevents start with actionable reasons.
+
+### Definition of Done
+
+- Valid and invalid preflight tests pass.
+- Owner approval is recorded before experiment start.
+- Experiment runbook and rollback/stop procedure are committed.
+- Configuration can be exported as JSON.
+
+### Dependencies
+
+- T5.5
+- T6.2
+- T6.3
+- T7.2
+- T8.1
+- T10.2
+- T11.2
+
+### References
+
+- `README.md`
+- `docs/RISK_ENGINE.md`
+- `docs/DEPLOYMENT.md`
+
+---
+
+## [ ] T12.2 — Run the 30-Day Paper Experiment and Produce the Final Report
+
+**Priority:** P1
+
+### Description
+
+Operate the controlled paper-trading experiment, preserve daily evidence, and generate the final comparison and safety report.
+
+### User Story
+
+As the portfolio owner, I want an auditable 30-day result, so that progression to a Binance sandbox can be decided from evidence rather than isolated profitable trades.
+
+### Acceptance Criteria
+
+- Experiment starts only from a successful immutable preflight configuration.
+- Daily data completeness, Gemini usage/cost, schema failures, safety blocks, strategy intents, risk decisions, orders, fills, fees, P&L, drawdown, and alerts are recorded.
+- Manual intervention and downtime are logged.
+- Cash and buy-and-hold benchmarks use the same start/end timestamps and fee assumptions where applicable.
+- Final report includes return, drawdown, volatility, trades, win rate, profit factor, exposure, turnover, fees, Gemini cost, rejected decisions, halt events, data-quality incidents, and benchmark comparisons.
+- Report distinguishes statistical observations from conclusions.
+- No claim of profitability or readiness is made from insufficient evidence.
+- Sandbox recommendation is approve, reject, or extend-paper-testing with explicit reasons.
+
+### Definition of Done
+
+- Machine-readable JSON and human-readable Markdown reports are committed or archived according to policy.
+- All referenced configuration, code, data, prompt, schema, strategy, risk, and fill-model versions are resolvable.
+- Owner review is recorded.
+- Any discovered defect creates a new detailed task rather than being hidden in the report.
+
+### Dependencies
+
+- T12.1
+
+### References
+
+- `docs/BACKTEST_ENGINE.md`
+- `docs/OBSERVABILITY.md`
+- `ROADMAP.md`
+
+---
+
+# Epic 13 — Binance Sandbox Progression
+
+## [ ] T13.1 — Define the Binance Sandbox Readiness Gate
+
+**Priority:** P2
+
+### Description
+
+Define and automate the evidence gate required before any exchange testnet or demo order integration begins.
+
+### User Story
+
+As the portfolio owner, I want explicit sandbox-entry criteria, so that paper-trading defects or weak controls are not carried into an external execution environment.
+
+### Acceptance Criteria
+
+- Gate requires successful paper experiment review or an explicitly approved extension decision.
+- No unresolved critical/high security finding exists.
+- Reconciliation, idempotency, duplicate prevention, retry, precision, fee, slippage, halt, and recovery tests pass.
+- Credential storage and rotation procedure exists.
+- Testnet/demo environment availability and current Binance documentation are verified at implementation time.
+- Sandbox credentials have no withdrawal permission and are isolated by environment.
+- Owner approval is mandatory and auditable.
+
+### Definition of Done
+
+- Automated readiness report is generated.
+- Failed criteria prevent sandbox enablement.
+- Binance integration and security documents are updated with the verified current environment.
+
+### Dependencies
+
+- T12.2
+
+### References
+
+- `docs/BINANCE_INTEGRATION.md`
+- `docs/SECURITY.md`
+- `ROADMAP.md`
+
+---
+
+## Backlog Maintenance Rules
+
+- New work must use the same task structure.
+- A task must describe one independently reviewable outcome.
+- Acceptance criteria must be objectively verifiable.
+- Definition of Done must include tests, documentation, and operational evidence where applicable.
+- Dependencies must identify task IDs, not vague phases.
+- Tasks must not combine unrelated refactoring and feature work.
+- A completed task may be split retrospectively only if the history and evidence remain traceable.
+- Live trading work must not be added without explicit owner approval and a new roadmap milestone.
