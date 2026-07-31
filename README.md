@@ -2,11 +2,11 @@
 
 > **Evidence-Driven Market Intelligence**
 
-The Daily Roast AI is a documentation-first market research, backtesting, paper-trading, and Gemini-assisted decision-support platform.
+The Daily Roast AI is a documentation-first market-research, backtesting, paper-trading, and Gemini-assisted decision-support platform.
 
 It helps users inspect market evidence, compare deterministic and AI-assisted analysis, test strategies, simulate decisions with realistic costs, understand risk, and trace every conclusion to its source.
 
-> **Current status:** implementation-ready specification. Start with Master Task 1 (`M001`) in [`TASKS.md`](TASKS.md).
+> **Current status:** implementation-ready specification. Product implementation starts with Master Task 1 (`M001`) in [`TASKS.md`](TASKS.md).
 
 ## Product Identity
 
@@ -41,17 +41,18 @@ There is one implementation sequence:
 2. read [`docs/IMPLEMENTATION_EXECUTION_PLAN.md`](docs/IMPLEMENTATION_EXECUTION_PLAN.md);
 3. open [`TASKS.md`](TASKS.md);
 4. begin with **Master Task 1 (`M001`)**;
-5. complete hard dependencies and detailed acceptance cards before moving forward;
-6. continue through **Master Task 36 (`M036`)** for the production-research completion milestone.
+5. use [`docs/TASK_CATALOG_INDEX.md`](docs/TASK_CATALOG_INDEX.md) to find mapped detailed task cards;
+6. complete hard dependencies and all applicable acceptance criteria before moving forward;
+7. continue through **Master Task 36 (`M036`)** for the production-research completion milestone.
 
-`TASKS.md` defines order and hard dependencies. Supplemental files provide detailed acceptance criteria:
+`TASKS.md` defines order and hard dependencies. Supplemental files provide detailed acceptance criteria only:
 
 - [`UX_DESIGN_TASKS.md`](UX_DESIGN_TASKS.md);
 - [`CLOUD_MVP_TASKS.md`](CLOUD_MVP_TASKS.md);
 - [`LOCAL_AND_PRODUCTION_TASKS.md`](LOCAL_AND_PRODUCTION_TASKS.md);
-- `SPRINT_3_TASKS.md` through `SPRINT_20_TASKS.md`.
+- `SPRINT_3_TASKS.md` through `SPRINT_21_TASKS.md`.
 
-Do not select a supplemental task as an independent entry point when its master-task dependencies are incomplete.
+Do not select a supplemental task as an independent entry point. A detailed file marked “Ready for implementation” means its contract is drafted; it does not mean its Master Task dependencies are verified.
 
 ## Active MVP Architecture
 
@@ -74,9 +75,9 @@ GitHub Actions best-effort schedule
 ### Required technology
 
 - Python 3.12;
-- FastAPI, Pydantic v2, SQLAlchemy 2, Alembic;
+- FastAPI, Pydantic v2, SQLAlchemy 2, and additive Alembic/Supabase migrations;
 - Supabase PostgreSQL and Auth;
-- React, TypeScript, Vite, React Router, TanStack Query;
+- React, TypeScript, Vite, React Router, and TanStack Query;
 - Binance Spot public REST;
 - Google Gemini using the official `google-genai` SDK;
 - GitHub Actions, Cloudflare Pages, and Render Free for the initial cloud profile;
@@ -84,7 +85,7 @@ GitHub Actions best-effort schedule
 
 ### Deferred infrastructure
 
-The following are not mandatory MVP dependencies:
+The following are not mandatory M001–M036 dependencies:
 
 - Redis;
 - ARQ or another persistent queue;
@@ -92,9 +93,11 @@ The following are not mandatory MVP dependencies:
 - Binance WebSocket ingestion;
 - hosted Prometheus or Grafana;
 - Kubernetes;
-- paid high-availability infrastructure.
+- automatic paid infrastructure or scaling;
+- Binance test/private credentials;
+- live trading.
 
-They require measured need, an accepted ADR, migration and rollback plans, tests, cost review, and owner approval.
+Activation requires measured need, an accepted ADR, M034 change governance, migration and rollback plans, security/privacy review, tests, cost/capacity evidence, staged paper verification, and owner approval. Exchange credential or real-capital work additionally requires a separate future milestone.
 
 ## Core Safety Flow
 
@@ -121,7 +124,7 @@ Gemini cannot:
 - create orders;
 - bypass risk;
 - change a running experiment;
-- approve a release or strategy;
+- approve a release, strategy, or behavior change;
 - enable live trading.
 
 ## MVP Scope
@@ -138,7 +141,7 @@ Included:
 - authenticated evidence workspaces and bilingual product shell;
 - controlled cloud scheduling and a 30-day virtual EUR 20 paper experiment;
 - documentation, security, recovery, incident, data, performance, research-review, and change-management governance;
-- staging and production-grade research-service development.
+- isolated staging and production-grade research-service development.
 
 Excluded:
 
@@ -155,8 +158,8 @@ Excluded:
 
 - virtual capital: EUR 20;
 - primary market: BTC/EUR;
-- finalized candle interval: 1 hour;
-- best-effort cycle cadence: approximately hourly;
+- finalized candle interval: one hour;
+- best-effort cadence: approximately hourly;
 - maximum position: 25% of reconciled equity;
 - maximum order: EUR 5 equivalent;
 - maximum daily drawdown: 5%;
@@ -174,9 +177,10 @@ Profit is not an acceptance criterion. The experiment measures correctness, safe
 ```text
 M001–M006   Repository and local foundation
 M007–M013   Core research domains
-M014–M025   API, workspaces, product shell, and developer evidence
-M026–M027   Full local/CI verification, export, restore, and security gate
-M028–M029   Free-cloud demo and controlled paper experiment
+M014–M025   API, workspaces, product shell, governance, and developer evidence
+M026–M027   Local/CI verification, export, restore, recovery, and security gate
+M028        Free-cloud deployment
+M029        Controlled paper experiment
 M030–M034   Performance, data, research, incident, and change governance
 M035        Post-experiment decision and staging readiness
 M036        Production research launch and continuous operations
@@ -191,11 +195,14 @@ Production research means production-quality research and paper trading. It does
 | File | Responsibility |
 |---|---|
 | [`AGENTS.md`](AGENTS.md) | Mandatory implementation and safety rules |
-| [`TASKS.md`](TASKS.md) | Canonical Master Task 1–36 sequence |
+| [`TASKS.md`](TASKS.md) | Canonical M001–M036 sequence |
 | [`docs/IMPLEMENTATION_EXECUTION_PLAN.md`](docs/IMPLEMENTATION_EXECUTION_PLAN.md) | Task authority, stages, dependencies, evidence, and completion |
-| [`SPRINT_20_TASKS.md`](SPRINT_20_TASKS.md) | Documentation synchronization sprint |
-| [`ROADMAP.md`](ROADMAP.md) | Product phase gates mapped to master tasks |
-| [`docs/DOCUMENTATION_AUDIT.md`](docs/DOCUMENTATION_AUDIT.md) | Current repository-wide consistency findings |
+| [`docs/TASK_CATALOG_INDEX.md`](docs/TASK_CATALOG_INDEX.md) | Mapping from detailed IDs and catalogs to Master Tasks |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Branch, pull-request, review, and verification workflow |
+| [`SPRINT_20_TASKS.md`](SPRINT_20_TASKS.md) | Canonical-backlog synchronization evidence |
+| [`SPRINT_21_TASKS.md`](SPRINT_21_TASKS.md) | Catalog and lifecycle cross-reference synchronization |
+| [`ROADMAP.md`](ROADMAP.md) | Product phase gates mapped to Master Tasks |
+| [`docs/DOCUMENTATION_AUDIT.md`](docs/DOCUMENTATION_AUDIT.md) | Repository-wide consistency findings and verified commits |
 
 ### Product, architecture, and domain contracts
 
@@ -213,17 +220,10 @@ Production research means production-quality research and paper trading. It does
 | [`docs/PAPER_TRADING.md`](docs/PAPER_TRADING.md) | Simulated execution model |
 | [`docs/PORTFOLIO_ENGINE.md`](docs/PORTFOLIO_ENGINE.md) | Ledger, portfolio projections, and reconciliation |
 | [`docs/BACKTEST_ENGINE.md`](docs/BACKTEST_ENGINE.md) | Historical replay and reproducibility |
-| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, secrets, Auth/RLS, and gates |
-| [`docs/TESTING.md`](docs/TESTING.md) | Test strategy and promotion evidence |
-| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Environment deployment and promotion |
-
-### Detailed implementation workstreams
-
-- `UX_DESIGN_TASKS.md`;
-- `CLOUD_MVP_TASKS.md`;
-- `LOCAL_AND_PRODUCTION_TASKS.md`;
-- `SPRINT_3_TASKS.md` through `SPRINT_20_TASKS.md`;
-- their corresponding `docs/*_IMPLEMENTATION.md` workspace specifications.
+| [`docs/TESTING.md`](docs/TESTING.md) | Test strategy and Master Task promotion evidence |
+| [`docs/TEST_ENVIRONMENTS.md`](docs/TEST_ENVIRONMENTS.md) | Environment validation gates |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | M028–M036 deployment lifecycle |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, secrets, Auth/RLS, and security gates |
 
 ## Engineering Principles
 
