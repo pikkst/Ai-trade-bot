@@ -1,15 +1,30 @@
 # Testing
 
 Last reviewed: 2026-07-31
-Status: Authoritative MVP test strategy
+Status: Authoritative test strategy
 
 ## 1. Objectives
 
-Testing must prove deterministic behavior, financial conservation, safe degradation, authorization, idempotency, reproducibility, and correct separation between Google Gemini analysis and deterministic trading controls.
+Testing must prove deterministic behavior, financial conservation, safe degradation, authorization, RLS, idempotency, reproducibility, provider isolation, and correct separation between Gemini analysis and deterministic trading controls.
 
-A passing happy-path suite is insufficient. Failure behavior is a first-class product requirement.
+A passing happy-path suite is insufficient. Failure behavior, restart safety, cloud scheduling uncertainty, migration safety, and recovery are first-class requirements.
 
-## 2. Test Pyramid
+The detailed environment matrix and promotion gates are defined in `TEST_ENVIRONMENTS.md`.
+
+## 2. Active Test Architecture
+
+The first MVP uses:
+
+- local Supabase/PostgreSQL and Auth for integration and browser tests;
+- deterministic fake Binance and Gemini providers for normal CI;
+- a one-shot research-cycle CLI rather than Redis/ARQ workers;
+- PostgreSQL leases and idempotency for duplicate protection;
+- GitHub Actions as an external best-effort scheduler;
+- optional protected provider smoke workflows.
+
+Redis, ARQ, persistent WebSocket, and hosted Prometheus/Grafana tests are deferred until an accepted ADR activates those components.
+
+## 3. Test Pyramid
 
 ### Unit Tests
 
@@ -17,344 +32,222 @@ Pure domain calculations, value objects, state machines, reason-code mapping, va
 
 ### Property-Based Tests
 
-Use Hypothesis for broad invariant coverage of decimal values, ledger transactions, precision boundaries, drawdown, risk sizing, and idempotency.
+Use Hypothesis for decimal values, ledger transactions, precision boundaries, drawdown, risk sizing, idempotency, and reconstruction invariants.
 
 ### Integration Tests
 
-Use real PostgreSQL and Redis test containers for repositories, migrations, transactions, queue behavior, locks, and outbox publication.
+Use local Supabase/PostgreSQL for repositories, migrations, transactions, constraints, RLS, Auth, advisory locks, leases, atomic ledger posting, and restore validation.
 
 ### Contract Tests
 
-Verify project-owned Binance and Gemini adapters against fixtures, recorded public responses, or dedicated test environments. Normal CI must not make paid Gemini calls or private exchange calls.
+Verify Binance, Gemini, Supabase/PostgREST, Render startup, and Cloudflare build assumptions against fakes, mocks, fixtures, recorded public structures, or protected smoke environments.
 
 ### End-to-End Tests
 
-Exercise critical flows through the API and workers with fake external providers.
+Exercise browser, FastAPI, local Auth, database, fake providers, strategy, risk, paper execution, ledger, and audit lineage.
 
 ### Security Tests
 
-Authorization matrix, secret redaction, unsafe configuration, prompt injection, dependency scans, and halt enforcement.
+Cover authorization, RLS, secret redaction, unsafe configuration, prompt injection, dependency scans, frontend secret absence, and halt enforcement.
 
 ### Performance and Resilience Tests
 
-Measure key read paths, job throughput, restart safety, timeout behavior, and bounded recovery.
+Measure research-cycle runtime, common API reads, backtest limits, duplicate-cycle handling, cold starts, provider timeouts, database interruptions, export, and restore.
 
-## 3. Determinism and Reproducibility
+## 4. Determinism and Reproducibility
 
-Tests must verify that identical inputs and versions produce identical:
+Identical inputs and versions must produce identical:
 
 - feature values and hashes;
 - strategy intents;
 - risk decisions;
-- paper fills under deterministic model configuration;
+- deterministic paper fills;
 - ledger entries;
-- backtest metrics and event sequence.
+- portfolio projections;
+- backtest metrics and event sequence;
+- research-cycle logical result.
 
-Persisted reproducibility metadata must be sufficient to rerun a backtest or explain why exact reproduction is impossible.
+Gemini output is probabilistic. Normal tests validate project schemas, grounding, safety, retry, and budget behavior using immutable fixtures and a fake provider.
 
-Gemini output itself is probabilistic. Tests validate schema handling, grounding, policy behavior, and versioned fixtures rather than requiring identical live model prose.
-
-## 4. Core Domain Test Matrix
+## 5. Core Domain Matrix
 
 ### Market Data
 
-- valid finalized candles;
-- invalid OHLC relationships;
-- negative volume;
-- duplicate candle;
-- out-of-order candle;
-- missing interval;
-- stale data;
-- WebSocket reconnect and REST gap repair;
-- retry and rate-limit behavior;
-- immutable finalized candle correction flow;
-- snapshot hash stability.
+Test finalized candles, invalid OHLC, negative volume, duplicates, ordering, gaps, stale data, REST retry, rate limit, immutable correction, snapshot hash stability, and missed-cycle recovery without fabricated trades.
 
-### Feature Engineering
+### Features
 
-- SMA and EMA reference values;
-- RSI boundary and insufficient-history behavior;
-- ATR and volatility reference values;
-- decimal/precision behavior;
-- deterministic feature hashes;
-- missing-data rejection;
-- version change produces a distinct result identity.
+Test SMA, EMA, RSI, ATR, volatility, warm-up, missing history, precision, deterministic hashes, and no look-ahead.
 
-### Google Gemini Integration
+### Gemini
 
-- successful structured response;
-- schema mismatch;
-- unknown fields under strict validation;
-- missing required fields;
-- invalid confidence range;
-- unsupported evidence reference;
-- authentication failure;
-- 429 rate limit;
-- timeout;
-- retryable 5xx;
-- terminal provider error;
-- safety block;
-- refusal;
-- empty response;
-- budget exhaustion before request;
-- prompt injection and malicious evidence;
-- secret never included in prompt or log;
-- fake provider behavior in CI.
+Test valid structured output, schema failure, unsupported evidence, auth failure, 429, timeout, 5xx, safety block, refusal, empty output, budget exhaustion, prompt injection, secret exclusion, and fake-provider behavior.
 
 ### Strategy
 
-- HOLD, ENTER, EXIT, and REDUCE intents;
-- identical input determinism;
-- AI report optionality and rejection behavior;
-- stale or invalid input rejection;
-- strategy version isolation;
-- no direct order side effect.
+Test HOLD, ENTER, EXIT, REDUCE, determinism, optional Gemini behavior, stale input rejection, version isolation, and absence of direct order effects.
 
 ### Risk
 
-- position limit;
-- order-notional limit;
-- gross exposure limit;
-- daily drawdown halt;
-- total drawdown halt;
-- volatility guard;
-- cooldown;
-- open-order limit;
-- duplicate protection;
-- precision and minimum-notional rejection;
-- missing policy version;
-- stale data;
-- fail-closed exception behavior;
-- portfolio and workspace halt.
+Test position, order, exposure, drawdown, volatility, cooldown, duplicate, minimum-notional, precision, missing policy, stale data, exception behavior, and halts.
 
 ### Paper Execution
 
-- market order;
-- limit order crossing and non-crossing;
-- partial fill;
-- cancellation;
-- fee calculation;
-- spread and slippage;
-- conservative intrabar ambiguity;
-- duplicate order command;
-- restart after order creation;
-- fill quantity never exceeds approved quantity;
-- terminal state immutability.
+Test market and limit orders, partial fills, cancellation, fee, spread, slippage, precision, conservative intrabar handling, restart, duplicate command, and approved-quantity limits.
 
 ### Portfolio and Ledger
 
-- balanced double-entry transaction;
-- cash reservation and release;
-- buy and sell fills;
-- fee posting;
-- realized and unrealized P&L;
-- equity and exposure;
-- drawdown high-water mark;
-- non-negative balance policy;
-- ledger sequence uniqueness;
-- rebuild projections from ledger;
-- mismatch detection and halt;
-- atomic fill and ledger commit.
+Test double-entry balance, reservation, release, fees, realized/unrealized P&L, equity, exposure, drawdown, sequence uniqueness, reconstruction, mismatch detection, and atomic commit.
 
 ### Backtesting
 
-- no look-ahead;
-- finalized data only;
-- fee and slippage always applied;
-- cash benchmark;
-- buy-and-hold benchmark;
-- deterministic replay;
-- date boundary and missing-data handling;
-- strategy/risk/execution contract reuse;
-- metric reference calculations;
-- reproducibility metadata stored.
+Test finalized data, no look-ahead, cost models, benchmarks, deterministic replay, boundaries, missing data, shared contracts, metrics, and reproducibility metadata.
 
-### API
+### API and Auth
 
-- authentication and role matrix;
-- workspace isolation;
-- request validation;
-- decimal string serialization;
-- UTC timestamp serialization;
-- pagination and deterministic ordering;
-- idempotency replay and conflict;
-- stable error envelopes;
-- no secret or stack trace leakage;
-- OpenAPI examples validate.
+Test Supabase JWT verification, owner/operator/viewer roles, workspace isolation, validation, decimal serialization, UTC timestamps, pagination, idempotency, errors, OpenAPI, CORS, and no secret leakage.
 
-## 5. Property-Based Invariants
+### Frontend
 
-At minimum:
+Test components, route authorization, stale/cold-start/halt states, simulation labeling, accessibility, production build, SPA routing, CSP assumptions, and absence of forbidden secrets in bundles.
+
+## 6. Property Invariants
 
 1. Every ledger transaction balances.
-2. Replaying an idempotent command does not create additional side effects.
-3. Filled quantity never exceeds approved quantity.
-4. Risk-approved notional never exceeds configured limits.
-5. Drawdown is never negative and is consistent with the equity high-water mark.
-6. Monetary calculations preserve configured decimal precision.
-7. Reconstructed portfolio state equals persisted reconciled state.
-8. Strategy output belongs to the allowed intent enum.
-9. Invalid or stale AI output cannot produce an approved order.
-10. A halt prevents all new entry orders.
+2. An idempotent command or research cycle creates no duplicate side effect.
+3. Only one process owns a logical cycle lease.
+4. Filled quantity never exceeds risk approval.
+5. Approved notional never exceeds policy.
+6. Drawdown is consistent with equity high-water mark.
+7. Monetary precision is preserved.
+8. Reconstructed portfolio equals reconciled state.
+9. Invalid or stale AI output cannot create an approved order.
+10. A halt prevents new entries.
+11. Browser roles cannot mutate server-only financial tables.
+12. Restore preserves migration revision and ledger reconciliation.
 
-## 6. Migration Tests
+## 7. Migration, RLS, and Database Tests
 
 CI must verify:
 
 - upgrade from empty database to head;
-- upgrade from previous supported revision;
-- downgrade only where explicitly supported;
-- one migration head unless a merge migration is intentional;
+- deterministic seed application;
+- one expected migration head;
+- applied migrations remain unchanged;
 - constraints and indexes exist;
-- already-applied migrations are unchanged;
-- data migrations are restartable where relevant.
+- RLS deny-by-default behavior;
+- owner, operator, viewer, unauthenticated, and server access matrices;
+- read-only views expose only approved fields;
+- database leases reject overlap;
+- schema drift fails CI.
 
-## 7. External Provider Test Policy
+## 8. External Provider Policy
 
 ### Gemini
 
-- normal CI uses deterministic fake provider;
-- optional scheduled contract job may call Gemini only with dedicated key, strict budget, and no secret output;
-- model-dependent evaluations use versioned datasets and record configured model ID;
-- failures never block safe deterministic tests from running.
+Normal CI uses the deterministic fake provider. Protected manual smoke tests may use a dedicated key with strict request/token budgets and must not run for untrusted fork code.
 
 ### Binance
 
-- normal CI uses fixtures and fake transport;
-- public contract tests may run on a controlled schedule;
-- no private credentials in MVP;
-- rate-limit-sensitive tests remain bounded.
+Normal CI uses fixtures. A bounded scheduled or manual public REST smoke test may verify server time, symbol metadata, and a small finalized-candle request. No private key is permitted in MVP.
 
-## 8. End-to-End Scenarios
+### Free Cloud Providers
 
-Required MVP E2E scenarios:
+Cloudflare, Render, and Supabase integration assumptions are validated through builds, health checks, staging/demo smoke tests, and documented contracts. Tests must account for cold starts, pauses, and best-effort scheduling.
 
-1. Valid candle ingestion to snapshot and features.
-2. Valid fake Gemini report to deterministic strategy HOLD.
-3. Gemini invalid schema to safe rejection and HOLD.
-4. Strategy ENTER to risk approval to paper order and atomic fill.
-5. Strategy ENTER to risk rejection with no order.
-6. Duplicate command produces no duplicate order or ledger entry.
-7. Ledger mismatch activates halt.
-8. Stale market data prevents analysis-dependent entry.
-9. Backtest generates cash and buy-and-hold comparison.
-10. Owner starts, pauses, and halts an experiment; viewer cannot.
+## 9. Required End-to-End Scenarios
 
-## 9. Coverage Policy
+1. Local login through Supabase Auth.
+2. Valid candles to immutable snapshot and features.
+3. Fake Gemini valid report to strategy and risk.
+4. Invalid Gemini report to safe fallback or HOLD.
+5. ENTER to approval to paper order, fill, ledger, and reconciliation.
+6. Risk rejection with no order.
+7. Duplicate research cycle with no duplicate state.
+8. Stale market data blocking entry.
+9. Ledger mismatch causing halt.
+10. Backtest with cash and buy-and-hold benchmarks.
+11. Owner can control experiment; viewer cannot.
+12. UI displays complete decision lineage and simulation status.
+13. Export and restore preserve integrity.
+14. Render cold start does not stop scheduled research.
 
-Coverage is a diagnostic, not the sole quality measure.
+## 10. Coverage Policy
 
-Targets:
-
-- at least 90% branch coverage for risk, execution, portfolio, and accounting domains;
+- at least 90% branch coverage for risk, execution, portfolio, and accounting;
 - at least 85% branch coverage for other core backend domains;
-- every public API operation has at least one automated contract or E2E test;
-- every stable error code has at least one test;
-- every critical security control has a test or scan.
+- every public API operation has an automated contract or E2E test;
+- every stable error code has a test;
+- every critical RLS and authorization rule has a test;
+- every critical safety invariant has a test or verified scan.
 
-Uncovered critical branches require explicit justification in the pull request.
+Coverage does not replace meaningful failure and invariant testing.
 
-## 10. Performance Tests
+## 11. CI Workflows
 
-Before sandbox progression, measure:
+The project should maintain:
 
-- common read endpoint p50/p95/p99;
-- candle ingestion throughput and lag;
-- feature calculation duration;
-- backtest throughput for representative ranges;
-- queue depth recovery after restart;
-- PostgreSQL query plans for recurring queries;
-- memory behavior for large backtests.
+- quality checks;
+- local Supabase migration and integration tests;
+- frontend tests and production build;
+- security scans;
+- documentation consistency checks;
+- optional provider smoke checks;
+- hourly research cycle;
+- demo deployment;
+- future staging deployment;
+- future protected production deployment.
 
-Design targets in documentation must be replaced by measured results where available.
+Normal pull requests must not access production data or paid-provider credentials.
 
-## 11. Resilience Tests
+## 12. Reliability and Recovery Tests
 
-- kill worker during a job and verify safe retry;
-- restart after order creation before fill;
-- restart after fill before response publication;
-- PostgreSQL unavailable;
-- Redis unavailable;
-- Gemini timeout and outage;
-- Binance disconnect;
-- duplicate queue delivery;
-- malformed queue payload;
-- clock drift outside tolerance;
-- exhausted AI budget;
-- disk or storage failure where testable.
+Test interrupted cycles, duplicate workflow delivery, GitHub scheduling delay, Render cold start, Supabase outage, Gemini quota exhaustion, Binance timeout, partial transaction failure, export/restore, projection rebuild, and halt behavior.
 
-## 12. Security Tooling
+A backup process is not accepted until a restore and ledger reconciliation have succeeded.
 
-Required CI checks:
+## 13. Security Tooling
 
-- Ruff;
-- MyPy strict;
-- Pytest;
-- Bandit;
-- Semgrep;
-- dependency vulnerability review;
-- secret scanning;
-- Trivy filesystem and container scanning;
-- SBOM generation before sandbox release.
+Required checks include Ruff, MyPy strict, Pytest, Bandit, Semgrep, dependency review, secret scanning, frontend dependency audit, bundle secret inspection, Trivy where artifacts or containers exist, and SBOM generation before production research promotion.
 
-## 13. Test Data
+## 14. Test Data
 
-- no production secrets or personal data;
-- deterministic factories and seeds;
-- representative decimal precision and minimum-notional values;
-- explicit UTC timestamps;
-- versioned market fixtures;
-- malicious prompt-injection fixtures;
-- expected metric reference datasets.
+Use synthetic users, explicit UTC timestamps, deterministic seeds, versioned market fixtures, malicious prompt fixtures, decimal boundary values, and known ledger examples. Never use production secrets or personal data.
 
-## 14. Flaky Test Policy
+## 15. Flaky Test Policy
 
-Flaky tests are defects.
+Flaky tests are defects. Do not blindly rerun until green. Quarantine requires an issue, owner, reason, and expiry. Remove time dependence through fake clocks, randomness through seeds, provider dependence through fakes, and race masking through proper synchronization.
 
-- do not blindly rerun until green;
-- quarantine only with issue, owner, reason, and expiry;
-- remove time dependence through fake clocks;
-- remove random dependence through explicit seeds;
-- remove provider dependence through fakes;
-- investigate race conditions rather than increasing sleeps.
+## 16. Promotion Gates
 
-## 15. Release Gates
+### Local Completion
 
-A release candidate requires:
+Clean checkout, bootstrap, migrations, seed, unit/integration/contract/E2E tests, quality checks, and no secret requirement.
 
-- formatting, linting, and strict typing pass;
-- unit, property, integration, contract, and required E2E tests pass;
-- migration tests pass;
-- no unresolved critical security finding;
-- no unresolved high finding without approved time-limited exception;
-- required coverage thresholds met;
-- no flaky critical-path test;
-- paper-trading smoke test passes;
-- reconciliation and halt tests pass;
-- generated OpenAPI and documentation are current;
-- live trading remains disabled.
+### Cloud Demo
 
-## 16. Evidence in Pull Requests
+Auth, RLS, public URLs, fake-provider demo, protected real-provider configuration, simulation labels, and reset/export procedures.
 
-Every implementation PR must report:
+### Formal Paper Experiment
 
-- tests added or changed;
-- commands executed;
-- relevant result summary;
-- coverage impact;
-- security scan result;
-- migration result;
-- untested risk and justification;
-- documentation updated.
+All P0 safety tests, idempotency, data freshness, Gemini degradation, risk halts, ledger reconstruction, restore evidence, and frozen configuration.
 
-## 17. Related Documents
+### Staging and Production Research
+
+Separate environments, migration rehearsal, protected CI/CD, production-like E2E, load/failure testing, managed backups, measured SLOs, security/privacy review, and manual approval.
+
+See `TEST_ENVIRONMENTS.md` for the full gates.
+
+## 17. Pull Request Evidence
+
+Each implementation PR reports tests added, commands executed, result summary, coverage impact, security scan result, migration result, untested risks, environment impact, and documentation updates.
+
+## 18. Related Documents
 
 - `/AGENTS.md`
-- `PRODUCT_REQUIREMENTS.md`
-- `ARCHITECTURE.md`
-- `BACKEND.md`
-- `GEMINI_INTEGRATION.md`
-- `RISK_ENGINE.md`
-- `PAPER_TRADING.md`
-- `PORTFOLIO_ENGINE.md`
+- `LOCAL_DEVELOPMENT.md`
+- `TEST_ENVIRONMENTS.md`
+- `PRODUCTION_DEVELOPMENT.md`
+- `FREE_CLOUD_ARCHITECTURE.md`
 - `SECURITY.md`
+- `/LOCAL_AND_PRODUCTION_TASKS.md`
