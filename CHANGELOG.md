@@ -4,11 +4,40 @@ All notable project changes are documented here.
 
 ## Unreleased
 
+### Sprint 22 — Runtime Contract Synchronization — 2026-08-01
+
+#### Added
+
+- `SPRINT_22_TASKS.md` covering architecture, backend, technology, configuration, and observability alignment.
+- Complete M001–M036 runtime/domain ownership in `docs/ARCHITECTURE.md` and `docs/BACKEND.md`.
+- Runtime contract mapping in `docs/TASK_CATALOG_INDEX.md`.
+- Durable cycle-stage, incident, export/restore, reconciliation, SLI/SLO, quota, cost, and capacity evidence requirements in `docs/OBSERVABILITY.md`.
+
+#### Changed
+
+- Expanded the modular-monolith package map to include experiments, research cycles, data governance, research review, incidents, changes, releases, and reporting.
+- Clarified that a successful process exit is not cycle completion without required stages, atomic financial evidence, audit closure, and reconciliation.
+- Reclassified technology as required, deferred, or future assessment and tied material technology changes to M030 evidence and M034 governance.
+- Reworked `.env.example` into a safe deployment/bootstrap inventory with Supabase Auth as the identity source and immutable experiment behavior stored in PostgreSQL.
+- Updated README, AGENTS, ROADMAP, execution governance, and the task catalog to make Sprint references future-safe.
+
+#### Fixed
+
+- Removed custom JWT/password settings that conflicted with the active Supabase Auth profile.
+- Removed ambiguity between environment wiring/defaults and immutable running-experiment configuration.
+- Added explicit false defaults for Redis, ARQ, persistent workers, WebSocket ingestion, automatic scaling/plan upgrades, private/test/live exchange execution, leverage/derivatives/shorting/custody/withdrawals, AI side-effect tools, and automatic approval/activation.
+- Clarified that logs and provider dashboards are not substitutes for durable cycle, financial, incident, approval, or audit evidence.
+- Clarified that hosted Prometheus, Grafana, and OpenTelemetry backends remain deferred rather than assumed complete.
+
+#### Safety
+
+- Preserved one-shot REST execution, deterministic idempotency and risk, append-only accounting, mandatory reconciliation, behavior-set freeze, no-auto-spend, and paper-only operation.
+
 ### Sprint 21 — Task Catalog and Lifecycle Synchronization — 2026-08-01
 
 #### Added
 
-- `docs/TASK_CATALOG_INDEX.md` mapping legacy `T*`, UX, cloud, local/production, and Sprint 3–21 task IDs to M001–M036.
+- `docs/TASK_CATALOG_INDEX.md` mapping legacy `T*`, UX, cloud, local/production, and Sprint task IDs to M001–M036.
 - `SPRINT_21_TASKS.md` documenting residual task-catalog and environment-lifecycle synchronization.
 - Explicit classifications for mandatory, conditional, deferred, superseded, future-assessment, and documentation-complete work.
 
@@ -149,7 +178,7 @@ All notable project changes are documented here.
 - Root `AGENTS.md` for coding agents and contributors.
 - `docs/GEMINI_INTEGRATION.md` for Google Gemini API.
 - `docs/DOCUMENTATION_AUDIT.md` for consistency and coverage.
-- Detailed requirements, architecture, API, database, AI, market, strategy, risk, execution, accounting, testing, security, observability, deployment, roadmap, ADR, and task specifications.
+- Detailed requirements, architecture, API, database, AI, trading, security, testing, deployment, observability, roadmap, ADR, and task specifications.
 
 #### Changed
 
