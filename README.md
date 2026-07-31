@@ -188,6 +188,65 @@ M036        Production research launch and continuous operations
 
 Production research means production-quality research and paper trading. It does not authorize real-money execution.
 
+## Repository Structure
+
+```text
+.
+├── backend/              FastAPI application and one-shot research-cycle CLI
+│   ├── app/              Importable Python package
+│   │   ├── main.py       FastAPI application entry point
+│   │   ├── api/          HTTP route handlers (thin, no domain logic)
+│   │   ├── cli/          CLI entry points
+│   │   ├── core/         Shared application infrastructure
+│   │   ├── domains/      Domain services (strategy, risk, execution, etc.)
+│   │   └── infrastructure/ Provider adapters (Supabase, Binance, Gemini)
+│   ├── pyproject.toml    Python project configuration
+│   └── requirements.txt  Pinned Python dependencies
+├── frontend/             React/TypeScript/Vite product and public demo
+│   ├── src/              React application source
+│   ├── public/           Static assets
+│   ├── package.json      Node dependencies and scripts
+│   └── vite.config.ts    Vite configuration
+├── supabase/             Local Supabase configuration, migrations, and seed data
+│   ├── config.toml       Supabase CLI configuration
+│   ├── migrations/       Versioned database migrations
+│   └── seed.sql          Deterministic synthetic seed data
+├── tests/                Unit, integration, contract, and E2E tests
+│   ├── unit/             Fast domain and unit tests
+│   ├── integration/      Database, Auth, RLS, and integration tests
+│   └── contract/         Provider and API contract tests
+├── infrastructure/       Deployment and CI configuration
+│   ├── render/           Render Free deployment scripts
+│   ├── cloudflare/       Cloudflare Pages deployment scripts
+│   └── github-actions/   GitHub Actions workflow definitions
+├── generated-artifacts/  OpenAPI specs, migration hashes, build outputs
+├── docs/                 Product, architecture, domain, and operations documentation
+├── .env.example          Safe committed environment variable reference
+├── .gitignore            Ignores local secrets and generated files
+├── Makefile              Cross-platform repository commands (Unix)
+├── tasks.ps1             Cross-platform repository commands (Windows PowerShell)
+└── README.md             This file
+```
+
+### Repository Commands
+
+| Command | Description |
+|---|---|
+| `make bootstrap` or `.\tasks.ps1 bootstrap` | Install dependencies and verify tools |
+| `make format` or `.\tasks.ps1 format` | Format supported languages |
+| `make lint` or `.\tasks.ps1 lint` | Run lint checks |
+| `make type-check` or `.\tasks.ps1 type-check` | Run static type checks |
+| `make test` or `.\tasks.ps1 test` | Run unit and property tests |
+| `make local-up` or `.\tasks.ps1 local-up` | Start local Supabase and dependencies |
+| `make local-down` or `.\tasks.ps1 local-down` | Stop local services |
+| `make local-reset` or `.\tasks.ps1 local-reset` | Recreate database, migrations, and seed data |
+| `make api-dev` or `.\tasks.ps1 api-dev` | Run FastAPI with reload |
+| `make frontend-dev` or `.\tasks.ps1 frontend-dev` | Run Vite development server |
+| `make research-cycle` or `.\tasks.ps1 research-cycle` | Run one deterministic research cycle |
+| `make all-checks` or `.\tasks.ps1 all-checks` | Run the local pre-push quality gate |
+
+All commands work on Windows PowerShell and Unix-like shells. No database, Gemini, Binance, or cloud credential is required for the default local profile.
+
 ## Authoritative Documentation
 
 ### Governance and entry points

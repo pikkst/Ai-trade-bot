@@ -1,0 +1,33 @@
+# Kilo deployment artifacts
+.saydeploy/
+.vscode/
+
+# Environment files with secrets
+.env.local
+.env.test
+.env.cloud
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated artifacts
+generated-artifacts/
