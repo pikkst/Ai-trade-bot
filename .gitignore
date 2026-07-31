@@ -29,6 +29,3 @@ build/
 # OS
 .DS_Store
 Thumbs.db
-
-# Generated artifacts
-generated-artifacts/
