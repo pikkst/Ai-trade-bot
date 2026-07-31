@@ -25,13 +25,15 @@ Completed documentation outcomes:
 - product, architecture, domain, UX, security, testing, deployment, and operations specifications;
 - Sprint 3–19 detailed workspace catalogs;
 - Sprint 20 canonical task-system synchronization;
-- Sprint 21 task-catalog and environment lifecycle mapping;
+- Sprint 21 task-catalog and environment-lifecycle mapping;
+- Sprint 22 runtime architecture, backend, technology, configuration, and observability synchronization;
 - one canonical Master Task M001–M036 sequence;
-- a stable index mapping legacy, UX, cloud, local/production, and Sprint IDs to Master Tasks;
-- active free-cloud architecture aligned around Supabase, REST, one-shot CLI, GitHub Actions, Render, and Cloudflare Pages;
-- Redis, ARQ, persistent workers, WebSocket ingestion, hosted Prometheus/Grafana, private Binance, and live trading deferred.
+- a stable index mapping legacy, UX, cloud, local/production, runtime, and Sprint IDs to Master Tasks;
+- active runtime aligned around Supabase Auth/PostgreSQL, REST, one-shot CLI, GitHub Actions, Render, and Cloudflare Pages;
+- durable cycle, incident, ledger, reconciliation, export/restore, and release evidence requirements;
+- Redis, ARQ, persistent workers, WebSocket ingestion, hosted Prometheus/Grafana/OpenTelemetry, private Binance, and live trading deferred.
 
-**Exit:** contributors start from `M001` and can locate every applicable detailed card without hidden architectural or dependency decisions.
+**Exit:** contributors start from `M001` and can locate every applicable detailed card without hidden architectural, runtime, configuration, or dependency decisions.
 
 ## Phase 1 — Repository and Local Foundation
 
@@ -143,7 +145,7 @@ Frozen baseline:
 
 Deliver:
 
-- cloud observability and cycle status;
+- cloud observability and cycle-stage status;
 - export/restore evidence;
 - exact configuration and behavior-set hash preflight;
 - owner approval and immutable start evidence;
@@ -253,4 +255,4 @@ Requires separate legal, exchange-eligibility, tax, security, financial-risk, ac
 - [`TASKS.md`](TASKS.md) — canonical M001–M036 sequence and dependencies;
 - [`docs/IMPLEMENTATION_EXECUTION_PLAN.md`](docs/IMPLEMENTATION_EXECUTION_PLAN.md) — task governance and completion model;
 - [`docs/TASK_CATALOG_INDEX.md`](docs/TASK_CATALOG_INDEX.md) — mapping and classification of detailed task IDs;
-- `UX_DESIGN_TASKS.md`, `CLOUD_MVP_TASKS.md`, `LOCAL_AND_PRODUCTION_TASKS.md`, and `SPRINT_3_TASKS.md` through `SPRINT_21_TASKS.md` — detailed acceptance catalogs used only through mapped Master Tasks.
+- `UX_DESIGN_TASKS.md`, `CLOUD_MVP_TASKS.md`, `LOCAL_AND_PRODUCTION_TASKS.md`, and repository files matching `SPRINT_*_TASKS.md` — detailed acceptance catalogs used only through mapped Master Tasks.
