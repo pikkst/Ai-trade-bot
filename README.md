@@ -50,7 +50,7 @@ There is one implementation sequence:
 - [`UX_DESIGN_TASKS.md`](UX_DESIGN_TASKS.md);
 - [`CLOUD_MVP_TASKS.md`](CLOUD_MVP_TASKS.md);
 - [`LOCAL_AND_PRODUCTION_TASKS.md`](LOCAL_AND_PRODUCTION_TASKS.md);
-- `SPRINT_3_TASKS.md` through `SPRINT_21_TASKS.md`.
+- repository files matching `SPRINT_*_TASKS.md`.
 
 Do not select a supplemental task as an independent entry point. A detailed file marked “Ready for implementation” means its contract is drafted; it does not mean its Master Task dependencies are verified.
 
@@ -201,6 +201,7 @@ Production research means production-quality research and paper trading. It does
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Branch, pull-request, review, and verification workflow |
 | [`SPRINT_20_TASKS.md`](SPRINT_20_TASKS.md) | Canonical-backlog synchronization evidence |
 | [`SPRINT_21_TASKS.md`](SPRINT_21_TASKS.md) | Catalog and lifecycle cross-reference synchronization |
+| [`SPRINT_22_TASKS.md`](SPRINT_22_TASKS.md) | Runtime architecture, configuration, and observability synchronization |
 | [`ROADMAP.md`](ROADMAP.md) | Product phase gates mapped to Master Tasks |
 | [`docs/DOCUMENTATION_AUDIT.md`](docs/DOCUMENTATION_AUDIT.md) | Repository-wide consistency findings and verified commits |
 
@@ -211,6 +212,8 @@ Production research means production-quality research and paper trading. It does
 | [`docs/PRODUCT_REQUIREMENTS.md`](docs/PRODUCT_REQUIREMENTS.md) | Product and experiment requirements |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Active runtime and domain architecture |
 | [`docs/BACKEND.md`](docs/BACKEND.md) | Backend boundaries and one-shot execution |
+| [`docs/TECH_STACK.md`](docs/TECH_STACK.md) | Required, deferred, and future technology |
+| [`.env.example`](.env.example) | Safe environment-variable inventory and prohibited flags |
 | [`docs/API_SPECIFICATION.md`](docs/API_SPECIFICATION.md) | API resources, commands, errors, and OpenAPI |
 | [`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md) | PostgreSQL entities, constraints, ledger, and retention |
 | [`docs/MARKET_DATA.md`](docs/MARKET_DATA.md) | Finalized market-data and quality contracts |
@@ -220,6 +223,7 @@ Production research means production-quality research and paper trading. It does
 | [`docs/PAPER_TRADING.md`](docs/PAPER_TRADING.md) | Simulated execution model |
 | [`docs/PORTFOLIO_ENGINE.md`](docs/PORTFOLIO_ENGINE.md) | Ledger, portfolio projections, and reconciliation |
 | [`docs/BACKTEST_ENGINE.md`](docs/BACKTEST_ENGINE.md) | Historical replay and reproducibility |
+| [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Durable operational evidence, health, metrics, and incidents |
 | [`docs/TESTING.md`](docs/TESTING.md) | Test strategy and Master Task promotion evidence |
 | [`docs/TEST_ENVIRONMENTS.md`](docs/TEST_ENVIRONMENTS.md) | Environment validation gates |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | M028–M036 deployment lifecycle |
