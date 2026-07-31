@@ -2,65 +2,75 @@
 
 AI Trade Bot is a documentation-first cryptocurrency research, backtesting, paper-trading, and AI decision-support platform.
 
-The MVP collects Binance Spot market data, calculates deterministic indicators, uses Google Gemini API to generate structured analytical reports, validates recommendations through deterministic strategy and risk rules, and executes only simulated paper trades.
+The MVP collects Binance Spot public market data, calculates deterministic indicators, uses Google Gemini API to generate structured analytical reports, validates recommendations through deterministic strategy and risk rules, and executes only simulated paper trades.
+
+> **Current status:** documentation and implementation specification. Source-code directories are placeholders until their corresponding `TASKS.md` items are completed and verified.
 
 ## MVP Scope
 
 Included:
 
-- Binance Spot public market data
-- Historical and near-real-time OHLCV ingestion
-- Data-quality checks and immutable market snapshots
-- Deterministic technical indicators
-- Google Gemini API structured market analysis
-- Deterministic strategy evaluation
-- Non-bypassable risk controls
-- Paper-trading balances, orders, fills, fees, slippage, and reconciliation
-- Backtesting and cash/buy-and-hold benchmarks
-- Audit logs and decision lineage
-- Docker-based local development
-- Prometheus metrics and Grafana dashboards
+- Binance Spot public market data;
+- historical and near-real-time finalized OHLCV ingestion;
+- data-quality checks, gap repair, and immutable market snapshots;
+- deterministic technical indicators;
+- Google Gemini API structured market analysis;
+- deterministic strategy evaluation;
+- non-bypassable deterministic risk controls;
+- paper-trading balances, orders, fills, fees, spread, slippage, and reconciliation;
+- append-only double-entry portfolio ledger;
+- reproducible backtesting and cash/buy-and-hold benchmarks;
+- audit logs and complete decision lineage;
+- Docker-based local and persistent research environments;
+- Prometheus metrics, Grafana dashboards, alerts, and runbooks.
 
 Excluded from the MVP:
 
-- live trading;
-- leverage, margin, futures, and shorting;
+- live trading and private Binance order placement;
+- leverage, margin, futures, options, and shorting;
 - custody and withdrawals;
-- high-frequency trading;
+- high-frequency trading, market making, and arbitrage;
 - autonomous AI execution authority;
+- self-modifying prompts, strategies, or risk policies;
+- public multi-tenant SaaS and billing;
 - guaranteed-return or profitability claims.
 
 ## Core Safety Flow
 
 ```text
-Binance market data
-  -> data validation
-  -> deterministic features
+Binance public market data
+  -> data validation and freshness policy
+  -> immutable market snapshot
+  -> deterministic versioned features
   -> Gemini structured analysis
-  -> schema and evidence validation
-  -> deterministic strategy
-  -> deterministic risk engine
-  -> paper execution
-  -> ledger reconciliation
-  -> audit and reporting
+  -> schema, evidence, safety, and policy validation
+  -> deterministic strategy intent
+  -> deterministic non-bypassable risk engine
+  -> paper execution model
+  -> append-only ledger and reconciliation
+  -> audit, metrics, and reporting
 ```
 
-Gemini is an advisory analytical component. It cannot create orders, select credentials, resize positions, alter risk policies, enable live trading, or bypass validation.
+Gemini is an advisory analytical component. It cannot create orders, select credentials, resize final positions, alter strategy or risk policy, enable live trading, mutate the database, or bypass validation.
 
 ## Initial Validation Experiment
 
-The first controlled experiment uses a virtual EUR 20 balance for 30 days.
+The first controlled experiment uses a virtual EUR 20 balance for 30 calendar days.
 
 - Primary pair: BTC/EUR
-- Optional observation pairs: ETH/EUR and SOL/EUR
-- Maximum position: 25% of portfolio equity
+- Optional observation-only pairs: ETH/EUR and SOL/EUR
+- Maximum position: 25% of reconciled portfolio equity
+- Maximum single order: EUR 5 equivalent
 - Maximum daily drawdown: 5%
 - Maximum total drawdown: 15%
 - One open order maximum
 - No leverage or shorting
-- Fees and slippage included
+- Fees, spread, slippage, precision, and minimum-notional checks included
 - Benchmarks: cash and buy-and-hold
-- Human review enabled
+- Frozen versioned experiment configuration
+- Human owner review enabled
+
+Profit is not an MVP acceptance criterion. The experiment validates system correctness, safety, data quality, AI handling, decision lineage, accounting, and operational reliability.
 
 ## Authoritative Technology Stack
 
@@ -72,13 +82,13 @@ The first controlled experiment uses a virtual EUR 20 balance for 30 days.
 - Binance native Spot REST and WebSocket APIs
 - Google Gemini API through the official `google-genai` Python SDK
 - Gemini structured output with project-owned JSON Schema or Pydantic models
-- Deterministic fake AI provider for tests
+- Deterministic fake AI provider for normal CI and tests
 - React, TypeScript, Vite, and TanStack Query
 - Docker Compose
 - Prometheus and Grafana
 - Pytest, Hypothesis, Ruff, MyPy, Bandit, Semgrep, and Trivy
 
-Exact dependency versions must be pinned in lock files and validated by CI.
+Exact dependency versions belong in committed lock files and release manifests. Gemini model identifiers and active quotas are configuration recorded per experiment; they are not hardcoded assumptions in domain logic.
 
 ## Repository Structure
 
@@ -100,48 +110,76 @@ Exact dependency versions must be pinned in lock files and validated by CI.
 └── tests/
 ```
 
+Empty source directories and `.gitkeep` files are placeholders. Their existence does not mean the corresponding implementation is complete.
+
+## Documentation Precedence
+
+When documents conflict, use this order:
+
+1. security, financial-integrity, and fail-closed requirements;
+2. [`AGENTS.md`](AGENTS.md);
+3. [`docs/PRODUCT_REQUIREMENTS.md`](docs/PRODUCT_REQUIREMENTS.md);
+4. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and accepted ADRs;
+5. domain-specific specifications under `docs/`;
+6. [`TASKS.md`](TASKS.md);
+7. local implementation conventions.
+
+Material conflicts must be documented and corrected. They must not be silently resolved in code.
+
 ## AI Coding Agents
 
-All coding agents and contributors must follow [`AGENTS.md`](AGENTS.md). It defines mandatory architecture, security, testing, documentation, financial-calculation, Gemini-integration, and definition-of-done rules.
+All coding agents and contributors must follow [`AGENTS.md`](AGENTS.md) before changing code. It defines mandatory architecture, security, testing, documentation, financial-calculation, Gemini-integration, and Definition of Done rules.
 
 [`docs/AGENTS.md`](docs/AGENTS.md) is different: it describes runtime analytical agents inside the application.
 
 ## Actual Documentation Inventory
 
-The following table lists the Markdown specification files that currently exist in the repository. The file path is authoritative.
+The following table lists the authoritative Markdown specification files that currently exist in the repository. Exact file paths are authoritative.
 
-| Exact file | Current responsibility |
+| Exact file | Responsibility |
 |---|---|
 | [`AGENTS.md`](AGENTS.md) | Mandatory instructions for AI coding agents and human contributors |
-| [`TASKS.md`](TASKS.md) | Implementable MVP work items with user story, acceptance criteria, and definition of done |
-| [`ROADMAP.md`](ROADMAP.md) | Product phases from documentation through controlled sandbox and later live evaluation |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution and pull-request workflow |
+| [`TASKS.md`](TASKS.md) | Independently implementable work items with user story, acceptance criteria, Definition of Done, dependencies, and references |
+| [`ROADMAP.md`](ROADMAP.md) | Gated product phases from documentation through the paper experiment and future Binance test-environment assessment |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Branch, implementation, test, review, and pull-request workflow |
 | [`CHANGELOG.md`](CHANGELOG.md) | Material documentation and implementation changes |
-| [`docs/DOCUMENTATION_AUDIT.md`](docs/DOCUMENTATION_AUDIT.md) | Documentation coverage, known gaps, and audit procedure |
-| [`docs/PRODUCT_REQUIREMENTS.md`](docs/PRODUCT_REQUIREMENTS.md) | MVP goals, exclusions, functional requirements, non-functional requirements, and completion criteria |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Modular-monolith architecture, domains, components, consistency, and failure policy |
-| [`docs/BACKEND.md`](docs/BACKEND.md) | Backend package boundaries, configuration, errors, and quality rules |
-| [`docs/API_SPECIFICATION.md`](docs/API_SPECIFICATION.md) | Planned `/api/v1` resources, authentication, idempotency, errors, and versioning |
-| [`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md) | Planned tables, constraints, indexes, ledger rules, and retention |
-| [`docs/AI_ARCHITECTURE.md`](docs/AI_ARCHITECTURE.md) | Provider boundary, Gemini analysis flow, validation, failures, evaluations, and invariants |
-| [`docs/GEMINI_INTEGRATION.md`](docs/GEMINI_INTEGRATION.md) | Authoritative Gemini SDK, authentication, structured output, budgets, safety, retries, tests, and observability specification |
-| [`docs/AGENTS.md`](docs/AGENTS.md) | Runtime analytical-agent roles and contracts |
-| [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md) | Prompt principles, templates, and output-schema rules |
-| [`docs/MARKET_DATA.md`](docs/MARKET_DATA.md) | Binance market-data normalization, validation, freshness, and backfill |
-| [`docs/BINANCE_INTEGRATION.md`](docs/BINANCE_INTEGRATION.md) | Binance adapter, rate limits, WebSocket recovery, testnet progression, and reconciliation |
-| [`docs/STRATEGY_ENGINE.md`](docs/STRATEGY_ENGINE.md) | Deterministic strategy contract, intents, lifecycle, and baseline strategy |
-| [`docs/RISK_ENGINE.md`](docs/RISK_ENGINE.md) | Mandatory risk decisions, limits, EUR 20 profile, halt conditions, and fail-closed behavior |
-| [`docs/PAPER_TRADING.md`](docs/PAPER_TRADING.md) | Simulated order lifecycle, fill assumptions, fees, slippage, and idempotency |
-| [`docs/PORTFOLIO_ENGINE.md`](docs/PORTFOLIO_ENGINE.md) | Append-only ledger, balances, positions, P&L, equity, and reconciliation |
-| [`docs/BACKTEST_ENGINE.md`](docs/BACKTEST_ENGINE.md) | Historical event replay, look-ahead prevention, benchmarks, metrics, and reproducibility |
-| [`docs/SECURITY.md`](docs/SECURITY.md) | Threats, secrets, authorization, scanning, credential restrictions, and incident response |
-| [`docs/TESTING.md`](docs/TESTING.md) | Unit, integration, contract, end-to-end, property, failure, and release-gate testing |
-| [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Structured logs, Prometheus metrics, dashboards, alerts, and runbook expectations |
-| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Local, CI, sandbox, and future production deployment boundaries |
-| [`docs/TECH_STACK.md`](docs/TECH_STACK.md) | Definitive MVP technologies and decision policy |
-| [`docs/ADR.md`](docs/ADR.md) | Accepted architecture decisions and rationale |
+| [`docs/DOCUMENTATION_AUDIT.md`](docs/DOCUMENTATION_AUDIT.md) | Coverage, consistency findings, known implementation-dependent artifacts, and audit procedure |
+| [`docs/PRODUCT_REQUIREMENTS.md`](docs/PRODUCT_REQUIREMENTS.md) | Vision, users, scope, functional and non-functional requirements, experiment rules, success metrics, and MVP completion criteria |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System context, containers, domains, flows, state machines, transactions, idempotency, deployment, and failure behavior |
+| [`docs/BACKEND.md`](docs/BACKEND.md) | Backend layers, package boundaries, configuration, persistence, jobs, provider adapters, errors, tests, and prohibited patterns |
+| [`docs/API_SPECIFICATION.md`](docs/API_SPECIFICATION.md) | Planned `/api/v1` resources, roles, payload conventions, idempotency, errors, jobs, and OpenAPI verification |
+| [`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md) | Logical entities, ownership, fields, constraints, indexes, retention, ledger rules, and migration policy |
+| [`docs/AI_ARCHITECTURE.md`](docs/AI_ARCHITECTURE.md) | AI provider boundary, Gemini analysis flow, output validation, failures, evaluation, and invariants |
+| [`docs/GEMINI_INTEGRATION.md`](docs/GEMINI_INTEGRATION.md) | Authoritative Gemini SDK, authentication, structured output, budgets, safety, retry, test, and observability specification |
+| [`docs/AGENTS.md`](docs/AGENTS.md) | Runtime analytical-agent roles, contracts, orchestration, versioning, evaluation, and restrictions |
+| [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md) | Prompt layers, templates, evidence envelope, injection defense, output contract, versioning, and evaluation |
+| [`docs/MARKET_DATA.md`](docs/MARKET_DATA.md) | Binance market-data models, normalization, validation, freshness, backfill, WebSocket recovery, correction, and snapshots |
+| [`docs/BINANCE_INTEGRATION.md`](docs/BINANCE_INTEGRATION.md) | Binance interfaces, adapter, rate-limit handling, WebSocket continuity, future private-API progression, and reconciliation |
+| [`docs/STRATEGY_ENGINE.md`](docs/STRATEGY_ENGINE.md) | Deterministic strategy inputs, intents, Gemini relationship, baseline strategies, lifecycle, and anti-overfitting rules |
+| [`docs/RISK_ENGINE.md`](docs/RISK_ENGINE.md) | Non-bypassable policies, sizing boundaries, EUR 20 profile, drawdown, halts, reason codes, and fail-closed behavior |
+| [`docs/PAPER_TRADING.md`](docs/PAPER_TRADING.md) | Simulated order lifecycle, execution-model versions, market/limit fills, fees, slippage, precision, idempotency, and limitations |
+| [`docs/PORTFOLIO_ENGINE.md`](docs/PORTFOLIO_ENGINE.md) | Double-entry ledger, reservations, cost basis, P&L, equity, drawdown, projections, and reconciliation |
+| [`docs/BACKTEST_ENGINE.md`](docs/BACKTEST_ENGINE.md) | Historical replay, no-look-ahead, Gemini modes, execution timing, benchmarks, metrics, reproducibility, and anti-overfitting |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, secrets, authentication, Gemini safety, financial controls, supply chain, incident response, and release gates |
+| [`docs/TESTING.md`](docs/TESTING.md) | Test pyramid, domain matrix, property invariants, provider policy, E2E, resilience, performance, coverage, and release gates |
+| [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Logs, correlation, metrics, dashboards, alerts, health, runbooks, retention, and testing |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Local, CI, persistent sandbox, service topology, migrations, backups, rollback, promotion gates, and release artifacts |
+| [`docs/TECH_STACK.md`](docs/TECH_STACK.md) | Definitive MVP technologies, provider and exchange selections, quality tooling, and versioning policy |
+| [`docs/ADR.md`](docs/ADR.md) | Accepted architecture decisions, consequences, and reconsideration conditions |
 
-Empty source directories and `.gitkeep` files are placeholders; their existence does not mean the corresponding implementation is complete.
+## Implementation Entry Point
+
+Implementation begins with `T1.1` in [`TASKS.md`](TASKS.md).
+
+For each task:
+
+1. read `/AGENTS.md` and all task references;
+2. verify dependencies;
+3. satisfy every acceptance criterion;
+4. add tests and operational evidence;
+5. update affected documents and changelog;
+6. complete the Definition of Done;
+7. mark the task complete only after verification.
 
 ## Engineering Principles
 
@@ -152,13 +190,29 @@ Empty source directories and `.gitkeep` files are placeholders; their existence 
 - Timezone-aware UTC timestamps
 - Idempotent external side effects
 - Safe defaults and explicit feature flags
-- Complete auditability
-- No secrets in source control or logs
+- Complete auditability and decision lineage
+- PostgreSQL as system of record; Redis is ephemeral
+- Append-only ledger as financial source of truth
+- No secrets in source control, logs, metrics, or prompts
 - No profitability claims without statistically valid evidence
+- Fail closed when data, policy, precision, accounting, or integrity is uncertain
 
-## Documentation Status
+## Documentation and Implementation Status
 
-The specification set is sufficient to begin the first implementation tasks, but it is not a substitute for generated implementation artifacts. Exact dependency locks, OpenAPI schemas, database migrations, metric names, Grafana JSON, measured performance results, and operational recovery targets must be created and updated in the same pull requests as their implementations.
+The design specification is complete enough to begin task-by-task MVP implementation. It intentionally does not pretend that generated implementation artifacts already exist.
+
+The following must be created and maintained with code:
+
+- dependency lock files;
+- generated OpenAPI schemas and endpoint inventory;
+- Alembic migrations and exact SQL schema;
+- exact implemented indicator and fill formulas with fixtures;
+- Prometheus metric names, alert rules, and Grafana provisioning files;
+- Gemini evaluation datasets and baseline reports;
+- container image digests and SBOMs;
+- measured performance, restore, RPO, and RTO evidence.
+
+See [`docs/DOCUMENTATION_AUDIT.md`](docs/DOCUMENTATION_AUDIT.md) for the latest audit.
 
 ## Disclaimer
 
