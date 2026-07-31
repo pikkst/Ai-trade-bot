@@ -18,8 +18,6 @@ This document defines the default MVP stack. Alternatives require an Architectur
 - Ruff for formatting and linting
 - MyPy strict mode for static typing
 
-Python 3.12 is selected as the compatibility baseline. Newer runtimes may be added to CI after all critical dependencies are verified, but production must use a pinned and tested runtime.
-
 ## Database and Background Jobs
 
 - PostgreSQL as the authoritative system of record
@@ -27,8 +25,6 @@ Python 3.12 is selected as the compatibility baseline. Newer runtimes may be add
 - ARQ as the MVP async job runner
 - Polars for new analytical data pipelines
 - Pandas only where a required library lacks a practical Polars integration
-
-The previous open choices of “Celery or ARQ” and “Pandas or Polars” are resolved for the MVP. ARQ and Polars minimize initial operational and dependency complexity. A move to Celery requires evidence that ARQ no longer meets reliability or scheduling requirements.
 
 ## Exchange Integration
 
@@ -38,15 +34,17 @@ The previous open choices of “Celery or ARQ” and “Pandas or Polars” are 
 
 ## AI
 
-- Provider-independent `LLMProvider` protocol
-- OpenAI Responses API for new OpenAI integration work
-- Strict JSON Schema Structured Outputs where supported
-- Ollama for simple local development
-- vLLM for future higher-throughput local serving
-- Fake deterministic provider for CI and tests
-- Versioned prompts, schemas, models, and evaluation datasets
+- Google Gemini API is the authoritative cloud AI provider for version 1
+- Official Google Gen AI Python SDK (`google-genai`)
+- Project-owned provider-independent `LLMProvider` protocol
+- Gemini structured output with JSON Schema or Pydantic where supported
+- Deterministic fake provider for CI and unit tests
+- Versioned prompts, schemas, models, safety settings, and evaluation datasets
+- Explicit request, token, and cost budgets
 
-Models must be configured and pinned rather than hardcoded into domain logic.
+OpenAI is not part of the version 1 implementation plan. Ollama or vLLM may be added later through an ADR without changing domain contracts.
+
+Models must be configured and pinned for each experiment rather than hardcoded into domain logic. Preview models must not be used for a production-facing deployment unless their current service status and terms explicitly permit production use.
 
 ## Frontend
 
@@ -78,16 +76,17 @@ Models must be configured and pinned rather than hardcoded into domain logic.
 
 ## Versioning Policy
 
-Exact dependency versions belong in lock files and build manifests, not in prose documentation. Every release must record:
+Exact dependency versions belong in lock files and build manifests. Every release must record:
 
 - Python runtime version
 - Node.js runtime version
-- Locked Python dependencies
-- Locked frontend dependencies
-- Container image digests
-- Database migration revision
-- Strategy, risk-policy, prompt, and AI schema versions
+- locked Python dependencies
+- locked frontend dependencies
+- container image digests
+- database migration revision
+- strategy and risk-policy versions
+- Gemini model, prompt, schema, and safety-setting versions
 
 ## Selection Principles
 
-The stack prioritizes deterministic behavior, strong typing, auditability, local development, reproducibility, replaceable provider adapters, and low operational complexity for the first version.
+The stack prioritizes deterministic behavior, strong typing, auditability, local development, reproducibility, replaceable infrastructure adapters, and low operational complexity for the first version.
