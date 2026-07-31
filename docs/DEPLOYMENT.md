@@ -1,21 +1,31 @@
 # Deployment
 
-Last reviewed: 2026-07-31
-Status: Authoritative environment and deployment specification
+Last reviewed: 2026-08-01  
+Status: Authoritative environment and deployment specification mapped to `TASKS.md`
 
 ## 1. Deployment Objective
 
-The first MVP must run without a local computer and without a required monthly infrastructure payment. It is an experimental paper-trading environment, not a production SLA deployment.
+Build and promote The Daily Roast AI from a deterministic local implementation to a free-cloud demonstration, a controlled paper experiment, isolated staging, and a production-grade research service.
 
-The full development path is:
+Deployment does not authorize live trading, private Binance execution, withdrawals, custody, leverage, margin, futures, options, or shorting.
+
+## 2. Canonical Deployment Sequence
 
 ```text
-Local -> CI -> Free Cloud Demo -> 30-Day Paper Experiment -> Staging -> Production Research
+M001–M025  Build domains, API, UI, governance, and developer evidence
+M026       Integrated local/CI verification
+M027       Export, restore, recovery, and security gate
+M028       Free-cloud infrastructure and deployment
+M029       Controlled paper experiment
+M030–M034  Evidence hardening and governance
+M035       Post-experiment decision and isolated staging
+M036       Production research launch and continuous operation
+Future     Separate Binance test/private or live-capital assessment
 ```
 
-Production research does not authorize private Binance execution or real-money trading.
+No later environment can compensate for an unverified earlier gate. Favorable performance cannot skip verification, restore, staging, or approval.
 
-## 2. Free Cloud Topology
+## 3. Active Free-Cloud Topology
 
 ```mermaid
 flowchart TD
@@ -23,193 +33,286 @@ flowchart TD
     CF --> API[Render Free FastAPI]
     API --> SB[(Dedicated Supabase PostgreSQL)]
     API --> AUTH[Supabase Auth]
-    GH[GitHub Actions hourly workflow] --> CLI[Research-cycle CLI]
-    CLI --> BIN[Binance Spot REST]
+    GH[GitHub Actions best-effort schedule] --> CLI[One-shot Research Cycle]
+    CLI --> BIN[Binance Spot Public REST]
     CLI --> GEM[Google Gemini API]
     CLI --> SB
 ```
 
-## 3. Environment Responsibilities
+Render hosts authenticated reads and explicit commands. It is not the experiment scheduler. The scheduled cycle must continue independently of Render sleep or cold start.
 
-### Local
+## 4. Environment Responsibilities
 
-- Supabase CLI for PostgreSQL, Auth, migrations, RLS, and seed data;
-- FastAPI and React development servers;
-- fake Binance and Gemini by default;
-- deterministic one-shot research cycle;
-- no paid credentials required;
-- cross-platform commands including Windows 11 support.
+### Local — M001–M025
+
+- local Supabase/PostgreSQL and Auth;
+- deterministic fake Binance and Gemini by default;
+- no cloud project or paid credential required;
+- one-shot research cycle;
+- Windows 11 and Unix-like command paths;
+- synthetic fixtures and isolated state;
+- complete domain/API/UI development.
 
 See `LOCAL_DEVELOPMENT.md`.
 
-### CI
+### CI and Integrated Verification — M002, M026, M027
 
-- resettable local Supabase or PostgreSQL-compatible test environment;
+- ephemeral/resettable database/Auth;
 - fake providers;
-- migrations, RLS, Auth, unit, property, integration, contract, frontend, E2E, security, and documentation checks;
-- no access to production data or secrets.
+- migrations, RLS, Auth, unit, property, integration, contract, frontend, accessibility, E2E, security, documentation, and generated-artifact checks;
+- export, isolated restore, ledger rebuild, reconciliation, and recovery drills;
+- no production data, paid Gemini, or private Binance credential.
 
-See `TEST_ENVIRONMENTS.md`.
+See `TEST_ENVIRONMENTS.md` and `TESTING.md`.
 
-### Free Cloud Demo and Paper Experiment
+### Free-Cloud Demo — M028
 
-- Cloudflare Pages for frontend;
-- Render Free for FastAPI;
-- dedicated Supabase Free for PostgreSQL and Auth;
-- GitHub Actions for one-shot scheduling;
-- Binance public REST and bounded Gemini usage;
-- no Redis, ARQ, persistent WebSocket worker, hosted Prometheus, or hosted Grafana.
+- dedicated Supabase project separate from Eventnexus;
+- Cloudflare Pages frontend;
+- Render Free FastAPI;
+- GitHub Actions one-shot scheduling;
+- Binance public REST;
+- fake or bounded Gemini;
+- approved domains, HTTPS, CORS, CSP, Auth redirects, and secret isolation;
+- no Redis, ARQ, persistent worker, mandatory WebSocket, hosted Prometheus/Grafana, or live/private exchange path.
 
-### Staging
+### Controlled Paper Experiment — M029
 
-- separate database, Auth, Gemini key, domains, and deployment credentials;
-- production build artifacts;
-- synthetic data;
-- migration rehearsal;
-- protected provider smoke calls;
-- E2E, load, failure, security, and restore testing;
-- reset without production impact.
+- exact frozen configuration and behavior-set hashes;
+- virtual EUR 20 baseline unless an approved configuration states otherwise;
+- BTC/EUR one-hour finalized candles;
+- approximately hourly best-effort cycles;
+- deterministic risk limits and halts;
+- append-only ledger and reconciliation;
+- incidents, status, exports, restore, and final report;
+- owner approval and auditable terminal state.
 
-### Production Research
+### Evidence Hardening — M030–M034
+
+- measured performance, SLO, quota, cost, and capacity evidence;
+- dataset lifecycle and lineage governance;
+- research review and strategy lifecycle;
+- incident/postmortem/corrective-action controls;
+- governed behavior changes and staged paper canaries.
+
+### Staging — M035
+
+- separate database, Auth, Gemini key, domains, storage, deployment credentials, and synthetic data;
+- immutable production build artifacts;
+- migration rehearsal and compatibility window;
+- restore, rollback/forward-fix, E2E, load, failure, accessibility, security, privacy, content, and runbook validation;
+- protected access and bounded provider/cost use.
+
+### Production Research — M036
 
 - separate managed environment;
 - protected CI/CD and manual approval;
-- managed backups and tested restore;
-- measured SLOs and incident routing;
-- security and privacy review;
-- authenticated research and paper trading only;
+- controlled migration step;
+- immutable artifact and release evidence;
+- managed backup and tested restore;
+- measured SLOs, capacity, cost, incident routing, support, and status communication;
+- authenticated research, backtesting, audit, and paper portfolios;
 - live trading disabled.
 
-See `PRODUCTION_DEVELOPMENT.md`.
-
-## 4. Service Responsibilities
+## 5. Service Responsibilities
 
 ### Cloudflare Pages
 
-Hosts the static React/Vite build. It contains no server secrets.
+Hosts the static React/Vite build. Client assets contain only allowlisted public values and no server secrets.
 
 ### Render
 
-Hosts FastAPI reads and explicit commands in the free profile. It is not the experiment scheduler. Cold starts must not stop scheduled research.
+Hosts the FastAPI read/command application. It does not run the authoritative schedule or store authoritative local files.
 
 ### Supabase
 
-Provides PostgreSQL and Auth. A dedicated AI Trade Bot project is mandatory. Critical financial tables are server-only; browser access is limited to approved RLS-protected views.
+Provides PostgreSQL and Auth. Critical financial and control tables are server/workflow-only. Browser access is deny-by-default and limited to approved RLS-protected reads.
 
 ### GitHub Actions
 
-Runs manually dispatchable and scheduled one-shot research cycles. Workflow concurrency and database leases prevent overlap.
+Runs manually dispatchable and scheduled one-shot cycles. Workflow concurrency and a database lock/lease prevent overlapping side effects.
 
-### Future Production Worker Platform
+### Binance
 
-A persistent worker, queue, or WebSocket service may be introduced only after measured need and an accepted ADR.
+Provides public Spot REST market data only. No private credential or order endpoint is used in M001–M036.
 
-## 5. Research-Cycle Requirements
+### Google Gemini
 
-The one-shot command fetches finalized candles, repairs gaps, calculates features, optionally calls Gemini, evaluates strategy and risk, simulates paper execution, posts ledger entries, reconciles state, and persists audit results.
+Provides bounded structured advisory analysis. It has no execution or state-mutation tools. Provider failure degrades to deterministic fallback or HOLD.
 
-It must be idempotent, restart-safe, and independent of local disk, Render availability, Redis, ARQ, and WebSocket in the free profile.
+### Future Worker or Queue Platform
 
-## 6. Secrets and Environment Isolation
+A persistent worker, Redis/ARQ, WebSocket ingestion, or managed metrics platform requires M034 change governance, measured need from M030, ADR, migration/rollback, security/privacy, cost, testing, staged verification, and owner approval.
 
-Each environment uses separate credentials. Public frontend variables are limited to API base URL, Supabase URL, and publishable key.
+## 6. Research-Cycle Deployment Contract
 
-Never expose service-role keys, database credentials, Gemini keys, JWT signing material, or future Binance secrets in frontend builds, logs, fixtures, or source control.
+The one-shot command:
 
-## 7. Database and Migrations
+1. loads the frozen experiment configuration;
+2. acquires a PostgreSQL lock or durable lease;
+3. fetches actual eligible finalized candles;
+4. repairs approved gaps;
+5. creates snapshot and features;
+6. checks AI budget and optionally calls Gemini;
+7. validates or rejects AI output;
+8. evaluates strategy and risk;
+9. simulates approved paper execution;
+10. atomically posts order/fill/ledger/audit effects;
+11. updates/rebuilds the portfolio projection;
+12. reconciles;
+13. persists cycle status and releases the lock.
 
-- all schema changes are committed migrations;
-- clean rebuild and migration drift checks are mandatory;
-- RLS is deny-by-default;
+Retries never duplicate a financial side effect. Delayed schedules use actual eligible market data and never create imagined trades.
+
+## 7. Secrets and Environment Isolation
+
+Each environment uses separate credentials and scopes.
+
+Public frontend values are limited to approved API/Supabase public configuration. The following remain server/workflow-only:
+
+- service-role keys;
+- direct database credentials;
+- Gemini keys;
+- signing material;
+- deployment credentials;
+- future exchange credentials.
+
+Secrets never appear in source, images, client bundles, logs, prompts, responses, telemetry, screenshots, fixtures, or artifacts.
+
+## 8. Database and Migrations
+
+- every schema change is a committed additive migration;
 - applied migrations are immutable;
-- cloud database auto-deploy remains disabled until migration CI exists;
+- clean rebuild and drift checks are mandatory;
+- RLS is deny-by-default;
+- browser direct writes to critical tables are prohibited;
+- cloud database auto-deploy remains disabled until migration CI and controlled deployment exist;
 - staging rehearses production migrations;
-- production migration runs once through a controlled protected job;
-- destructive changes use expand-migrate-contract where appropriate.
+- production migration runs once through a protected step;
+- destructive changes use expand-migrate-contract and forward-fix planning;
+- application rollback compatibility is documented.
 
-## 8. Backup and Restore
+## 9. Backup, Export, and Restore
+
+### Before M028/M029
+
+M027 must prove logical export, isolated restore, migration revision, evidence hashes, ledger rebuild, and reconciliation.
 
 ### Free Cloud
 
-Use documented logical exports at a defined cadence and test restore into an isolated project or local environment.
+Use documented exports at an approved cadence. Free-tier provider backup limitations are disclosed and never overstated.
 
-### Production Research
+### Staging and Production Research
 
-Require automated encrypted backups, retention, tested restore, approved RPO/RTO, backup failure alerts, and ledger reconciliation after recovery.
+Require automated encrypted backups where selected, documented retention, tested restore, approved measured RPO/RTO, backup-failure handling, and post-restore reconciliation.
 
 A backup is not accepted until restore succeeds.
 
-## 9. Observability
+## 10. Observability
 
 ### Free Profile
 
-Use structured Render logs, GitHub Actions logs/artifacts, Supabase logs, persistent cycle/audit/halt/reconciliation records, and frontend freshness status.
+Use structured Render/GitHub/Supabase logs plus persistent cycle, audit, data-quality, halt, incident, and reconciliation records. The UI exposes last attempt/success, freshness, AI/fallback, risk, halt, reconciliation, and dependency state.
 
 ### Production Research
 
-Use centralized logs, error aggregation, metrics, uptime checks, provider cost/quota alerts, database monitoring, SLO dashboards, incident routing, and tested runbooks.
+Use approved centralized logs, error aggregation, metrics, uptime checks, database/provider monitoring, SLI/SLO/error budgets, incident routing, status communication, and tested runbooks.
 
-## 10. Failure Behavior
+Prometheus/Grafana remain optional future implementations rather than assumed completed work.
+
+## 11. Failure Behavior
 
 | Failure | Required behavior |
 |---|---|
-| Render asleep | UI shows startup state; scheduled research remains independent |
-| GitHub schedule delayed | record actual start; use valid finalized data only |
-| overlapping cycle | one database lease owner; others exit safely |
+| Render asleep/cold | UI shows startup; scheduled cycle remains independent |
+| GitHub schedule delayed | record intended/actual time; use actual eligible data |
+| cycle overlap | one lease owner; others exit safely |
 | database unavailable | fail closed; no financial side effect |
-| Binance unavailable | mark stale; block entries |
-| Gemini unavailable or quota exhausted | deterministic fallback or HOLD |
-| integrity or reconciliation error | halt and exit non-zero |
-| failed migration | stop deployment and preserve prior compatible application |
-| backup failure | alert and block production promotion according to policy |
+| Binance unavailable/stale | mark stale; block entry |
+| Gemini unavailable/quota exhausted | deterministic fallback or HOLD |
+| risk/integrity/reconciliation failure | halt and preserve evidence |
+| migration failure | stop deployment and keep compatible prior service |
+| export/backup failure | create blocker according to environment policy |
+| secret exposure | contain, rotate/revoke, verify, and block unsafe release |
+| staging/production smoke failure | roll back or halt according to approved plan |
 
-## 11. Deployment Sequences
+## 12. M028 Free-Cloud Deployment Sequence
 
-### Free Demo
+Prerequisites: M001–M027 verified.
 
-1. Complete local and CI foundations.
-2. Create dedicated Supabase project.
-3. Apply migrations and RLS.
-4. Deploy FastAPI to Render.
-5. Deploy frontend to Cloudflare Pages.
-6. Add GitHub Actions research cycle.
-7. Verify Auth, CORS, RLS, idempotency, cold start, export, and restore.
+1. create dedicated Supabase cloud project;
+2. configure controlled cloud migrations, Auth, and RLS;
+3. configure environment secrets/variables;
+4. configure scheduled/manual GitHub one-shot workflow;
+5. deploy FastAPI to Render;
+6. deploy frontend to Cloudflare Pages;
+7. configure approved domains and security policies;
+8. run Auth, RLS, API, frontend, cold-start, schedule, secret, export, and restore smoke checks;
+9. record deployment revision, migration head, artifact hashes, and limitations.
 
-### Staging
+## 13. M029 Experiment Sequence
 
-1. Build immutable artifacts.
-2. Deploy to isolated staging.
-3. Rehearse migrations.
-4. Run smoke, E2E, load, failure, security, and restore checks.
-5. Approve release candidate.
+1. verify cloud observability and runbooks;
+2. repeat export/restore evidence at required freshness;
+3. freeze exact experiment configuration and behavior set;
+4. run preflight against the exact hash;
+5. obtain owner approval;
+6. start and verify the first scheduled cycle;
+7. monitor cycle, market, AI, risk, ledger, reconciliation, incidents, quotas, and exports;
+8. pause or halt according to policy;
+9. close final cycle and reconcile;
+10. export evidence and generate final report;
+11. record terminal state and owner decision.
 
-### Production Research
+## 14. M035 Staging Sequence
 
-1. Pass protected CI gates.
-2. Obtain manual environment approval.
-3. Verify backup and rollback compatibility.
-4. Run migration once.
-5. Deploy immutable artifacts.
-6. Run health, smoke, Auth, and reconciliation checks.
-7. Verify alerts and release metadata.
-8. Roll back or halt if any critical check fails.
+1. build immutable release artifacts;
+2. provision isolated staging;
+3. restore or seed safe synthetic state;
+4. rehearse migrations and compatibility;
+5. deploy the release candidate;
+6. run smoke, E2E, accessibility, load, failure, security, privacy, restore, rollback, and content checks;
+7. verify alerts, incidents, costs, quotas, and runbooks;
+8. obtain release-candidate approval.
 
-## 12. Promotion Gates
+## 15. M036 Production-Research Sequence
 
-- **Local to Demo:** clean bootstrap, migrations, seed, fake-provider flow, tests, and no secrets.
-- **Demo to Paper Experiment:** RLS, idempotency, risk, ledger, restore, freshness, and observability checks.
-- **Paper Experiment to Staging:** post-experiment review and explicit owner decision.
-- **Staging to Production Research:** protected CI/CD, backups, measured SLOs, security/privacy review, incident readiness, and manual approval.
-- **Production Research to Binance Sandbox:** separate future specification and approval.
+1. pass protected CI and M035 evidence;
+2. obtain manual environment approval;
+3. verify backup, restore, rollback, capacity, cost, and incident readiness;
+4. run the controlled migration once;
+5. deploy immutable artifacts;
+6. run health, Auth, RLS, smoke, and reconciliation checks;
+7. verify alerts, support, status, and release metadata;
+8. roll back or halt on any critical failure;
+9. operate continuous reviews and route material changes through M034.
 
-## 13. Related Documents
+## 16. Promotion Gates
 
+- **M026:** integrated deterministic local/CI product works;
+- **M027:** restore/recovery/security gate passes;
+- **M028:** free-cloud deployment is functional and isolated;
+- **M029:** formal experiment closes with complete evidence;
+- **M030–M034:** reliability, data, research, incident, and change governance is verified;
+- **M035:** production-like staging release candidate passes;
+- **M036:** protected production-research launch passes.
+
+No gate authorizes live trading.
+
+## 17. Future Exchange Execution Separation
+
+Binance test/private access and live-capital execution are outside this deployment specification. Each requires a separate owner-approved milestone covering legal/exchange eligibility, credential protection, order/reconciliation contracts, real-loss limits, independent security/accounting review, incident response, emergency disablement, tax/record obligations, and staged verification.
+
+## 18. Related Documents
+
+- `/TASKS.md`
+- `IMPLEMENTATION_EXECUTION_PLAN.md`
+- `TASK_CATALOG_INDEX.md`
 - `LOCAL_DEVELOPMENT.md`
 - `TEST_ENVIRONMENTS.md`
 - `FREE_CLOUD_ARCHITECTURE.md`
 - `PRODUCTION_DEVELOPMENT.md`
-- `TECH_STACK.md`
 - `SECURITY.md`
 - `OBSERVABILITY.md`
-- `../CLOUD_MVP_TASKS.md`
-- `../LOCAL_AND_PRODUCTION_TASKS.md`
+- `/CLOUD_MVP_TASKS.md`
+- `/LOCAL_AND_PRODUCTION_TASKS.md`
