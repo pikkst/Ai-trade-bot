@@ -17,18 +17,19 @@ The MVP, cloud demo, controlled experiment, staging environment, and production 
 4. accepted architecture documents and ADRs;
 5. domain and workspace implementation specifications;
 6. `TASKS.md` for implementation order and hard dependencies;
-7. the detailed task cards referenced by the selected master task;
+7. the detailed task cards referenced by the selected Master Task and mapped in `docs/TASK_CATALOG_INDEX.md`;
 8. existing implementation conventions.
 
-A material conflict must be corrected in documentation before implementation. Do not choose whichever file is newest or easiest.
+A material conflict must be corrected in documentation before implementation. Do not choose whichever file is newest, shortest, or easiest.
 
 ## 3. Canonical Task Workflow
 
 `TASKS.md` is the only execution-order authority.
 
 - Start with Master Task 1 (`M001`).
-- Select one master task whose hard dependencies are `[x] VERIFIED`.
-- Select the exact detailed cards referenced by that master task.
+- Select one Master Task whose hard dependencies are `[x] VERIFIED`.
+- Open `docs/TASK_CATALOG_INDEX.md` and select the exact mandatory and applicable conditional detailed cards.
+- Treat deferred, superseded, and future-assessment cards according to the index.
 - Do not begin a later workspace sprint because its documentation exists.
 - A detailed task file provides acceptance criteria but does not override `TASKS.md` dependencies.
 - Documentation creation is not implementation completion.
@@ -39,9 +40,14 @@ Detailed task catalogs include:
 - `UX_DESIGN_TASKS.md`;
 - `CLOUD_MVP_TASKS.md`;
 - `LOCAL_AND_PRODUCTION_TASKS.md`;
-- `SPRINT_3_TASKS.md` through `SPRINT_20_TASKS.md`.
+- `SPRINT_3_TASKS.md` through `SPRINT_21_TASKS.md`.
 
-Read `docs/IMPLEMENTATION_EXECUTION_PLAN.md` before starting implementation.
+Read these before starting implementation:
+
+1. `docs/IMPLEMENTATION_EXECUTION_PLAN.md`;
+2. `TASKS.md`;
+3. `docs/TASK_CATALOG_INDEX.md`;
+4. every specification referenced by the selected Master Task and detailed cards.
 
 ## 4. Official Product Identity
 
@@ -84,7 +90,7 @@ The active implementation profile uses:
 - PostgreSQL advisory locks or durable leases;
 - append-only double-entry ledger and mandatory reconciliation.
 
-Deferred unless measured need, ADR, migration plan, tests, cost review, and owner approval exist:
+Deferred unless measured need, M034 change governance, ADR, migration/rollback, tests, security/privacy review, cost/capacity evidence, staged paper verification, and owner approval exist:
 
 - Redis and ARQ;
 - persistent workers;
@@ -92,10 +98,11 @@ Deferred unless measured need, ADR, migration plan, tests, cost review, and owne
 - hosted Prometheus and Grafana;
 - Kubernetes;
 - paid/high-availability infrastructure;
+- automatic plan purchase or scaling;
 - Binance test/private credentials;
 - live trading.
 
-Do not implement a deferred component merely because an old task card mentions it.
+Do not implement a deferred component merely because an old task card mentions it. Exchange credential or live-capital work additionally requires a separate future milestone outside M001–M036.
 
 ## 7. Repository Boundaries
 
@@ -155,8 +162,8 @@ Domain code must not import FastAPI, SQLAlchemy ORM models, Supabase SDK types, 
 - RLS is enabled on every Data API-visible object.
 - Browser access is deny-by-default.
 - Approved browser reads use documented views or APIs.
-- Browser writes to ledger, fills, risk decisions, AI runs, audit events, experiments, releases, or security-control records are prohibited.
-- Service-role and migration credentials are scoped, separated, and server/workflow-only.
+- Browser writes to ledger, fills, risk decisions, AI runs, audit events, experiments, releases, incidents, or security-control records are prohibited.
+- Service-role, workflow, read-only, and migration credentials are scoped, separated, and server/workflow-only.
 - A backup is not accepted until restore, migration verification, ledger rebuild, and reconciliation succeed.
 
 ## 11. Research-Cycle Rules
@@ -165,22 +172,23 @@ One logical cycle must:
 
 1. load the frozen experiment configuration;
 2. acquire a PostgreSQL lock or durable lease;
-3. fetch actual eligible finalized Binance REST data;
-4. validate quality, freshness, ordering, and gaps;
-5. create an immutable snapshot;
-6. calculate versioned deterministic features;
-7. reserve/check Gemini budget and optionally request structured analysis;
-8. validate grounding, schema, safety, certainty, and source validity;
-9. evaluate deterministic strategy;
-10. evaluate deterministic risk;
-11. simulate approved paper execution;
-12. atomically post order/fill/ledger/audit effects;
-13. rebuild or update the portfolio projection;
-14. reconcile;
-15. persist complete cycle and audit evidence;
-16. release or safely expire the lock.
+3. record intended and actual timing;
+4. fetch actual eligible finalized Binance REST data;
+5. validate quality, freshness, ordering, and gaps;
+6. create an immutable snapshot;
+7. calculate versioned deterministic features;
+8. reserve/check Gemini budget and optionally request structured analysis;
+9. validate grounding, schema, safety, certainty, and source validity;
+10. evaluate deterministic strategy;
+11. evaluate deterministic risk;
+12. simulate approved paper execution;
+13. atomically post order/fill/ledger/audit/outbox effects;
+14. rebuild or update the portfolio projection;
+15. reconcile;
+16. persist complete cycle and audit evidence;
+17. release or safely expire the lock.
 
-Retries must return existing results or deterministic conflicts and must never duplicate a financial side effect.
+Retries must return existing results or deterministic conflicts and must never duplicate a financial side effect. Delayed or missed schedules never create imagined trades.
 
 ## 12. Gemini Rules
 
@@ -190,7 +198,7 @@ Retries must return existing results or deterministic conflicts and must never d
 - Never send credentials, tokens, personal data, database URLs, unrelated content, or private provider payloads.
 - Separate trusted instructions from untrusted evidence.
 - Disable execution, shell, database, exchange, search, and code tools for the MVP analysis flow.
-- Handle authentication, timeout, cancellation, 429, 5xx, refusal, safety block, empty response, malformed output, invalid schema, unsupported claims, injection, stale source, and budget exhaustion explicitly.
+- Handle authentication, timeout, cancellation, 429, 5xx, refusal, safety block, empty response, malformed output, invalid schema, unsupported claims, false certainty, injection, stale source, and budget exhaustion explicitly.
 - Provider success is not validation acceptance.
 - Invalid or unavailable AI evidence degrades to deterministic fallback or HOLD.
 - Normal CI uses deterministic fake providers.
@@ -201,7 +209,7 @@ Retries must return existing results or deterministic conflicts and must never d
 - Deterministic inputs and versions produce deterministic outputs and hashes.
 - Shorting, leverage, margin, futures, options, custody, and withdrawals are prohibited.
 - Position size and order notional are bounded by deterministic risk.
-- Execution models include fees, spread, slippage, precision, minimum notional, partial fills, cancellation, time-in-force, and conservative event timing.
+- Execution models include fees, spread, slippage, precision, minimum notional, partial fills, cancellation, time in force, and conservative event timing.
 - One approved risk evaluation creates at most one paper order.
 - Filled quantity never exceeds approved quantity.
 - Ledger transactions balance and remain append-only.
@@ -239,19 +247,28 @@ Retries must return existing results or deterministic conflicts and must never d
 - reuse repository commands;
 - verify migrations, RLS, Auth, financial invariants, builds, security, accessibility, documentation, and generated artifacts.
 
-### Free Cloud Demo and Paper Experiment
+### Free-Cloud Demo — M028
 
 - dedicated Supabase project;
-- Cloudflare Pages, Render Free, GitHub Actions, Binance REST, bounded Gemini;
+- Cloudflare Pages, Render Free, GitHub Actions, Binance REST, and bounded Gemini;
 - Render is not the scheduler;
 - GitHub schedule is best effort;
 - free-tier limits are not SLA claims;
 - no persistent worker, Redis, ARQ, WebSocket requirement, hosted Prometheus/Grafana, or private Binance.
 
-### Staging and Production Research
+### Controlled Paper Experiment — M029
+
+- exact frozen configuration and behavior-set hashes;
+- current export/restore evidence;
+- preflight and owner approval;
+- complete cycles, incidents, halts, ledger, reconciliation, and final report;
+- no fabricated missed-cycle trades;
+- profit is not completion evidence.
+
+### Staging and Production Research — M035/M036
 
 - separate database, Auth, Gemini credentials, domains, secrets, storage, monitoring, and deployment credentials;
-- production artifacts validated in staging;
+- production artifacts validated unchanged in staging;
 - protected environments and manual approval;
 - controlled migration step;
 - tested backup/restore, measured SLOs, incident routing, security/privacy review, cost planning, and rollback readiness;
@@ -259,7 +276,7 @@ Retries must return existing results or deterministic conflicts and must never d
 
 ## 16. Testing Requirements
 
-Use the layers required by the selected master task:
+Use the layers required by the selected Master Task:
 
 - unit tests;
 - property tests;
@@ -270,7 +287,7 @@ Use the layers required by the selected master task:
 - idempotency, restart, concurrency, and duplicate-delivery tests;
 - ledger, reconstruction, reconciliation, and halt tests;
 - export, restore, rollback, resilience, and incident drills;
-- security scans and secret/bundle inspection;
+- security/privacy scans and secret/bundle inspection;
 - documentation, task, link, OpenAPI, schema, and generated-artifact checks.
 
 Flaky tests are defects. A quarantine requires an issue, owner, reason, and expiry.
@@ -279,11 +296,12 @@ Flaky tests are defects. A quarantine requires an issue, owner, reason, and expi
 
 Before editing:
 
-1. confirm the selected `Mxxx` task and detailed cards;
+1. confirm the selected `Mxxx` task;
 2. confirm all hard dependencies are verified;
-3. inspect relevant code, tests, migrations, schemas, and generated artifacts;
-4. list invariants, failure cases, security/privacy impact, environment impact, and verification commands;
-5. avoid unrelated scope.
+3. use `docs/TASK_CATALOG_INDEX.md` to select detailed cards;
+4. inspect relevant code, tests, migrations, schemas, and generated artifacts;
+5. list invariants, failure cases, security/privacy impact, environment impact, and verification commands;
+6. avoid unrelated scope.
 
 During implementation:
 
@@ -296,13 +314,13 @@ During implementation:
 
 Before marking verified:
 
-1. satisfy every mandatory acceptance criterion;
+1. satisfy every mandatory and applicable conditional acceptance criterion;
 2. run and record relevant commands;
 3. verify financial precision, idempotency, RLS, Auth, redaction, risk, ledger, reconciliation, and environment separation;
 4. update `TASKS.md` status/evidence;
 5. update affected specifications, API/schema/database docs, runbooks, changelog, and release evidence;
 6. inspect the final diff and commit;
-7. fetch the commit/PR and verify intended files and test evidence;
+7. fetch the commit or pull request and verify intended files and test evidence;
 8. record limitations and follow-up IDs.
 
 ## 18. Prohibited Without a Separate Approved Milestone
@@ -313,7 +331,7 @@ Before marking verified:
 - weakening RLS, Auth, risk, ledger, reconciliation, backup, recovery, or release gates;
 - reusing the Eventnexus Supabase project;
 - enabling paid usage automatically;
-- adding mandatory Redis/ARQ/WebSocket/hosted metrics without measured need and ADR;
+- adding mandatory Redis/ARQ/WebSocket/hosted metrics without measured need, M034 governance, and ADR;
 - exposing service-role, database, Gemini, signing, or exchange secrets;
 - allowing Gemini side-effect tools;
 - editing applied migrations;
