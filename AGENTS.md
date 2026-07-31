@@ -30,7 +30,7 @@ A material conflict must be corrected in documentation before implementation. Do
 - Select one Master Task whose hard dependencies are `[x] VERIFIED`.
 - Open `docs/TASK_CATALOG_INDEX.md` and select the exact mandatory and applicable conditional detailed cards.
 - Treat deferred, superseded, and future-assessment cards according to the index.
-- Do not begin a later workspace sprint because its documentation exists.
+- Do not begin a later workspace Sprint because its documentation exists.
 - A detailed task file provides acceptance criteria but does not override `TASKS.md` dependencies.
 - Documentation creation is not implementation completion.
 - Only `[x] VERIFIED` is complete.
@@ -40,7 +40,7 @@ Detailed task catalogs include:
 - `UX_DESIGN_TASKS.md`;
 - `CLOUD_MVP_TASKS.md`;
 - `LOCAL_AND_PRODUCTION_TASKS.md`;
-- `SPRINT_3_TASKS.md` through `SPRINT_21_TASKS.md`.
+- repository files matching `SPRINT_*_TASKS.md`.
 
 Read these before starting implementation:
 
