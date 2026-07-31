@@ -3,7 +3,9 @@ import argparse
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="The Daily Roast AI — Research Cycle CLI")
+    parser = argparse.ArgumentParser(
+        description="The Daily Roast AI — Research Cycle CLI"
+    )
     parser.add_argument("--experiment-id", required=True, help="Experiment UUID")
     parser.add_argument("--occurrence", required=True, help="ISO 8601 occurrence timestamp")
     args = parser.parse_args()
