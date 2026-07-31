@@ -58,24 +58,25 @@ The first controlled experiment uses a virtual balance equivalent to EUR 20 for 
 - Python 3.12
 - FastAPI
 - PostgreSQL
-- Redis
-- SQLAlchemy 2
-- Alembic
+- Redis and ARQ
+- SQLAlchemy 2 and Alembic
 - Pydantic 2
-- Celery or ARQ
-- CCXT and exchange-native clients where required
-- Pandas or Polars
-- OpenAI-compatible APIs
+- Polars
+- Binance native Spot REST and WebSocket interfaces
+- OpenAI Responses API through a provider abstraction
 - Optional local LLM through Ollama or vLLM
 - React and TypeScript
 - Docker Compose
 - Prometheus and Grafana
-- Pytest, Ruff, MyPy, Bandit, and Semgrep
+- Pytest, Ruff, MyPy, Bandit, Semgrep, and Trivy
+
+Exact versions must be pinned in lock files and validated by CI.
 
 ## Repository Structure
 
 ```text
 .
+├── AGENTS.md
 ├── README.md
 ├── TASKS.md
 ├── ROADMAP.md
@@ -91,17 +92,25 @@ The first controlled experiment uses a virtual balance equivalent to EUR 20 for 
 └── tests/
 ```
 
+## AI Coding Agents
+
+All AI coding tools and contributors must read and follow [AGENTS.md](AGENTS.md) before changing code. It defines safety boundaries, architecture rules, testing requirements, documentation duties, and the definition of done.
+
+The similarly named [`docs/AGENTS.md`](docs/AGENTS.md) describes runtime analytical agents inside the product; it is not the coding-agent instruction file.
+
 ## Documentation Index
 
 | Document | Purpose |
 |---|---|
+| [AI Coding Agent Rules](AGENTS.md) | Mandatory implementation rules for AI coding tools and contributors |
+| [Documentation Audit](docs/DOCUMENTATION_AUDIT.md) | Coverage matrix, known gaps, and future audit procedure |
 | [Product Requirements](docs/PRODUCT_REQUIREMENTS.md) | Goals, scope, users, requirements, acceptance criteria |
 | [Architecture](docs/ARCHITECTURE.md) | Components, flows, and failure behavior |
 | [Backend](docs/BACKEND.md) | Backend package design and engineering rules |
 | [API Specification](docs/API_SPECIFICATION.md) | REST resources, payloads, errors, and versioning |
 | [Database Schema](docs/DATABASE_SCHEMA.md) | Entities, constraints, indexes, and retention |
 | [AI Architecture](docs/AI_ARCHITECTURE.md) | AI boundaries, providers, and structured outputs |
-| [Agents](docs/AGENTS.md) | Agent responsibilities and contracts |
+| [Runtime AI Agents](docs/AGENTS.md) | Product agent responsibilities and contracts |
 | [AI Prompts](docs/AI_PROMPTS.md) | Prompt templates and output schemas |
 | [Market Data](docs/MARKET_DATA.md) | Data normalization, quality, and freshness |
 | [Binance Integration](docs/BINANCE_INTEGRATION.md) | Exchange adapter and sandbox progression |
@@ -131,6 +140,10 @@ The first controlled experiment uses a virtual balance equivalent to EUR 20 for 
 - Complete auditability
 - No secrets in source control or logs
 - No profitability claims without statistically valid evidence
+
+## Documentation Status
+
+The document set is structurally complete for beginning MVP implementation. Exact dependency pins, generated OpenAPI schemas, column-level migrations, dashboard definitions, and measured operational targets must be added and maintained together with the implementation. See the [documentation audit](docs/DOCUMENTATION_AUDIT.md).
 
 ## Disclaimer
 
