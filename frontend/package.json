@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "format": "echo \"No formatter configured yet\" && exit 0",
     "type-check": "tsc --noEmit",
+    "test": "echo \"No tests configured yet\" && exit 0",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -17,11 +19,11 @@
     "@tanstack/react-query": "^5.56.0"
   },
   "devDependencies": {
-    "@eslint/js": "^9.0.0",
     "@types/react": "^18.3.10",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "eslint": "^9.0.0",
+    "@eslint/js": "^9.0.0",
     "typescript": "~5.6.2",
     "vite": "^5.4.0"
   }

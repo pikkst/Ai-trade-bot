@@ -200,6 +200,7 @@ Production research means production-quality research and paper trading. It does
 │   │   ├── core/         Shared application infrastructure
 │   │   ├── domains/      Domain services (strategy, risk, execution, etc.)
 │   │   └── infrastructure/ Provider adapters (Supabase, Binance, Gemini)
+│   ├── tests/            Unit, integration, contract, and E2E tests
 │   ├── pyproject.toml    Python project configuration
 │   └── requirements.txt  Pinned Python dependencies
 ├── frontend/             React/TypeScript/Vite product and public demo
@@ -211,10 +212,6 @@ Production research means production-quality research and paper trading. It does
 │   ├── config.toml       Supabase CLI configuration
 │   ├── migrations/       Versioned database migrations
 │   └── seed.sql          Deterministic synthetic seed data
-├── tests/                Unit, integration, contract, and E2E tests
-│   ├── unit/             Fast domain and unit tests
-│   ├── integration/      Database, Auth, RLS, and integration tests
-│   └── contract/         Provider and API contract tests
 ├── infrastructure/       Deployment and CI configuration
 │   ├── render/           Render Free deployment scripts
 │   ├── cloudflare/       Cloudflare Pages deployment scripts
@@ -225,6 +222,7 @@ Production research means production-quality research and paper trading. It does
 ├── .gitignore            Ignores local secrets and generated files
 ├── Makefile              Cross-platform repository commands (Unix)
 ├── tasks.ps1             Cross-platform repository commands (Windows PowerShell)
+├── cloudflare-pages.toml Cloudflare Pages deployment configuration
 └── README.md             This file
 ```
 

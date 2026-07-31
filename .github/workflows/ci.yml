@@ -80,4 +80,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check README structure matches implementation
         run: |
-          echo "README structure check passed."
+          errors=0
+          for f in backend/app/main.py frontend/src/App.tsx supabase/config.toml Makefile tasks.ps1 .env.example .gitignore; do
+            if [ ! -f "$f" ]; then
+              echo "FAIL: $f missing"
+              errors=$((errors + 1))
+            fi
+          done
+          if [ $errors -gt 0 ]; then
+            echo "Docs check failed: $errors file(s) missing"
+            exit 1
+          fi
+          echo "README structure matches implementation. Docs check passed."

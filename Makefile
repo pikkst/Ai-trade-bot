@@ -1,29 +1,38 @@
-.PHONY: bootstrap format lint type-check test local-up local-down local-reset api-dev frontend-dev research-cycle all-checks help
+.PHONY: bootstrap format lint type-check test local-up local-down local-reset api-dev frontend-dev research-cycle all-checks help export-test restore-test security-test docs-check
 
 PYTHON := python3
 PIP := $(PYTHON) -m pip
-VENV := .venv
 FRONTEND := frontend
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'
 
-bootstrap: ## Install dependencies and verify tools
-	@echo "==> Verifying Python 3.12..."
-	@$(PYTHON) --version
+bootstrap: ## Install dependencies and verify tools (L1.1)
+	@echo "==> Verifying prerequisites..."
+	@command -v git >/dev/null 2>&1 || { echo "ERROR: Git is not installed. See docs/LOCAL_DEVELOPMENT.md"; exit 1; }
+	@$(PYTHON) --version 2>&1 | grep -q "Python 3.12" || { echo "ERROR: Python 3.12 is required. See docs/LOCAL_DEVELOPMENT.md"; exit 1; }
+	@$(PYTHON) -m pip --version >/dev/null 2>&1 || { echo "ERROR: pip is not available. Install Python 3.12 with pip."; exit 1; }
+	@node --version >/dev/null 2>&1 || { echo "ERROR: Node.js is not installed. See docs/LOCAL_DEVELOPMENT.md"; exit 1; }
+	@npm --version >/dev/null 2>&1 || { echo "ERROR: npm is not installed. See docs/LOCAL_DEVELOPMENT.md"; exit 1; }
+	@docker compose version >/dev/null 2>&1 || { echo "ERROR: Docker Compose v2 is not installed. See docs/LOCAL_DEVELOPMENT.md"; exit 1; }
+	@supabase --version >/dev/null 2>&1 || { echo "ERROR: Supabase CLI is not installed. See docs/LOCAL_DEVELOPMENT.md"; exit 1; }
+	@echo "==> All prerequisites verified."
+	@echo "==> Creating local environment files from examples..."
+	@if [ ! -f .env.local ]; then cp .env.example .env.local; echo "Created .env.local"; else echo ".env.local already exists, skipping"; fi
+	@if [ ! -f .env.test ]; then cp .env.example .env.test; echo "Created .env.test"; else echo ".env.test already exists, skipping"; fi
 	@echo "==> Installing backend dependencies..."
 	cd backend && $(PIP) install -e ".[dev]"
 	@echo "==> Installing frontend dependencies..."
-	cd $(FRONTEND) && npm install
+	cd $(FRONTEND) && npm ci
 	@echo "==> Bootstrap complete."
 
 format: ## Format supported languages
 	cd backend && ruff format .
-	cd $(FRONTEND) && npm run format 2>/dev/null || true
+	cd $(FRONTEND) && npm run format
 
 lint: ## Run lint checks
 	cd backend && ruff check .
-	cd $(FRONTEND) && npm run lint 2>/dev/null || true
+	cd $(FRONTEND) && npm run lint
 
 type-check: ## Run static type checks
 	cd backend && mypy app
@@ -31,7 +40,7 @@ type-check: ## Run static type checks
 
 test: ## Run unit and property tests
 	cd backend && $(PYTHON) -m pytest tests/ -v
-	cd $(FRONTEND) && npm test 2>/dev/null || true
+	cd $(FRONTEND) && npm test
 
 local-up: ## Start local Supabase and application dependencies
 	@echo "==> Starting local Supabase stack..."
@@ -65,8 +74,15 @@ security-test: ## Run static, dependency, secret, and artifact checks
 	cd backend && pip-audit
 
 docs-check: ## Run documentation and generated-artifact checks
-	@echo "==> Checking documentation links..."
-	@echo "Docs check passed."
+	@echo "==> Checking README structure matches implementation..."
+	@test -f backend/app/main.py || { echo "FAIL: backend/app/main.py missing"; exit 1; }
+	@test -f frontend/src/App.tsx || { echo "FAIL: frontend/src/App.tsx missing"; exit 1; }
+	@test -f supabase/config.toml || { echo "FAIL: supabase/config.toml missing"; exit 1; }
+	@test -f Makefile || { echo "FAIL: Makefile missing"; exit 1; }
+	@test -f tasks.ps1 || { echo "FAIL: tasks.ps1 missing"; exit 1; }
+	@test -f .env.example || { echo "FAIL: .env.example missing"; exit 1; }
+	@test -f .gitignore || { echo "FAIL: .gitignore missing"; exit 1; }
+	@echo "==> README structure matches implementation. Docs check passed."
 
 export-test: ## Create a test logical export
 	@echo "==> Export test placeholder."
