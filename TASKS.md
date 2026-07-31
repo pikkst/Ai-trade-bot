@@ -110,7 +110,7 @@ Every completed task records:
 
 # Stage A — Repository and Local Foundation
 
-## [ ] Master Task 1 — M001 Repository Scaffold and Shared Commands
+## [x] Master Task 1 — M001 Repository Scaffold and Shared Commands
 
 ### Outcome
 
