@@ -1,112 +1,129 @@
 # Documentation Audit
 
 Last reviewed: 2026-07-31
-Audit scope: root documentation, all `docs/` specifications, `.env.example`, and cloud task governance
-Status: Completed for the free-cloud pre-implementation baseline
+Audit scope: root documentation, all `docs/` specifications, environment examples, and all task-governance files
+Status: Completed for local, free-cloud MVP, testing, staging, and production-research planning
 
 ## Executive Result
 
-The documentation has been updated from a persistent Redis/ARQ/WebSocket sandbox design to a zero-required-cost cloud experiment profile.
+The documentation now defines one coherent lifecycle:
 
-The current authoritative MVP consistently defines:
+```text
+Local Development
+  -> CI and Test Environments
+  -> Free Cloud Demo
+  -> Controlled Paper Experiment
+  -> Staging
+  -> Production Research Service
+  -> Separate Binance Sandbox Assessment
+  -> Separate Live-Trading Assessment
+```
 
-- Cloudflare Pages for the static frontend;
-- Render Free for FastAPI;
-- a dedicated Supabase Free project for PostgreSQL and Auth;
-- GitHub Actions for approximately hourly one-shot research cycles;
-- Binance Spot REST and finalized candles;
-- Google Gemini API as advisory AI with EUR 0 monthly cost budget by default;
-- PostgreSQL locking/idempotency instead of mandatory Redis/ARQ;
-- structured logs and persistent cycle/audit status instead of required hosted Prometheus/Grafana;
-- paper trading only and no private Binance credentials.
+Production development is explicitly separated from live trading. The planned production service remains a research, backtesting, audit, and paper-trading platform.
 
-## New Authoritative Files
+## Authoritative Environment Documents
 
-- `docs/FREE_CLOUD_ARCHITECTURE.md`
-- `CLOUD_MVP_TASKS.md`
+- `LOCAL_DEVELOPMENT.md` — local tools, Supabase CLI, fake providers, commands, seed data, debugging, and Windows support.
+- `TEST_ENVIRONMENTS.md` — test environment matrix, fixtures, CI, provider policy, recovery, and promotion gates.
+- `FREE_CLOUD_ARCHITECTURE.md` — zero-required-cost demo and paper-experiment topology.
+- `FREE_CLOUD_REQUIREMENTS.md` — free-cloud refinement of the main product requirements.
+- `DEPLOYMENT.md` — deployment and promotion across all environments.
+- `PRODUCTION_DEVELOPMENT.md` — staging and production-grade research development.
 
-`CLOUD_MVP_TASKS.md` supersedes initial infrastructure task assumptions that require Redis, ARQ, persistent WebSocket ingestion, or hosted Prometheus/Grafana. Shared domain tasks in `TASKS.md` remain applicable.
+## Authoritative Task Sources
 
-## Corrected Contradictions
+- `/TASKS.md` — shared domains and application functionality.
+- `/CLOUD_MVP_TASKS.md` — free cloud deployment and experiment.
+- `/LOCAL_AND_PRODUCTION_TASKS.md` — local bootstrap, test automation, staging, production research, and post-launch work.
 
-### Queue and Scheduler
+Every task source uses detailed work cards with user story, acceptance criteria, Definition of Done, dependencies, and references.
 
-Earlier documents treated Redis and ARQ as mandatory MVP infrastructure. They are now deferred. The free-cloud profile uses a one-shot CLI, GitHub Actions, and a PostgreSQL advisory lock or lease.
+## Consistency Findings
 
-### Market Ingestion
+### Local Development
 
-Earlier architecture required REST plus a persistent WebSocket consumer. The hourly experiment now uses finalized REST candles and gap repair. WebSocket ingestion is a future optimization.
+The local profile now consistently uses local Supabase/PostgreSQL and Auth, fake Binance and Gemini by default, deterministic seed data, cross-platform commands, and no paid credentials for normal work.
 
-### Monitoring
+### Testing
 
-Earlier documents required hosted Prometheus/Grafana before the experiment. The free profile uses provider logs, health endpoints, durable cycle/audit/freshness/halt/reconciliation records, and frontend status. Prometheus/Grafana are deferred.
+The test strategy now consistently requires migration, RLS, authorization, financial invariant, provider contract, frontend bundle, E2E, failure, export, restore, staging, and production promotion tests.
 
-### Database and Auth
+References to Redis, ARQ, persistent WebSocket, and hosted Prometheus/Grafana are treated as deferred architecture options, not active free-cloud requirements.
 
-The first experiment now uses a dedicated Supabase project. The existing Eventnexus project must not be reused. RLS is deny-by-default and browser writes to financial/control tables are prohibited.
+### Cloud Demo and Experiment
 
-### Backend Availability
+The active cloud profile consistently uses Cloudflare Pages, Render Free, dedicated Supabase Free, GitHub Actions, Binance REST, and bounded Gemini usage. Render cold start does not control the research schedule.
 
-Render cold starts or idle spin-down no longer threaten scheduled execution because GitHub Actions runs the research CLI independently.
+### Production Research
 
-## Free-Tier Risk Controls
+Production development consistently requires isolated staging and production environments, protected CI/CD, manual approval, managed backups, measured recovery, SLOs, incident routing, Auth/RLS review, privacy review, and cost planning.
 
-- no SLA or production claim;
-- no automatic paid upgrade;
-- provider limits are checked at deployment time;
-- delayed/missed cycles are recorded and never fabricated;
-- stale data blocks entries;
-- Gemini failure/quota exhaustion degrades safely;
-- local and Render filesystems are not authoritative;
-- database export and restore drills are required.
+No production document authorizes private Binance execution or live capital.
 
 ## Documentation Coverage
 
 | Area | Authoritative document | Status |
 |---|---|---|
-| Product and experiment | `PRODUCT_REQUIREMENTS.md` | Baseline complete |
-| Cloud topology | `FREE_CLOUD_ARCHITECTURE.md` | Complete |
+| Product and experiment | `PRODUCT_REQUIREMENTS.md` | Complete pre-implementation baseline |
+| Local development | `LOCAL_DEVELOPMENT.md` | Complete specification |
+| Test environments | `TEST_ENVIRONMENTS.md` | Complete specification |
+| Free cloud topology | `FREE_CLOUD_ARCHITECTURE.md` | Complete specification |
+| Free cloud requirements | `FREE_CLOUD_REQUIREMENTS.md` | Complete refinement |
 | Runtime architecture | `ARCHITECTURE.md` | Free-cloud aligned |
-| Technology stack | `TECH_STACK.md` | Free-cloud aligned |
-| Deployment | `DEPLOYMENT.md` | Free-cloud aligned |
-| Coding-agent rules | `/AGENTS.md` | Free-cloud aligned |
-| Cloud tasks | `/CLOUD_MVP_TASKS.md` | Detailed active sequence |
-| Shared domain tasks | `/TASKS.md` | Applicable with cloud overrides |
-| Backend | `BACKEND.md` | One-shot CLI/FastAPI aligned |
-| Observability | `OBSERVABILITY.md` | Free-tier profile complete |
-| ADRs | `ADR.md` | Superseding decisions recorded |
-| Environment example | `/.env.example` | Free-cloud variables aligned |
+| Deployment lifecycle | `DEPLOYMENT.md` | Local through production research aligned |
+| Production development | `PRODUCTION_DEVELOPMENT.md` | Complete planning baseline |
+| Test strategy | `TESTING.md` | Environment-aligned |
+| Coding-agent rules | `/AGENTS.md` | Environment-aligned |
+| Shared domain tasks | `/TASKS.md` | Detailed baseline |
+| Cloud deployment tasks | `/CLOUD_MVP_TASKS.md` | Detailed active sequence |
+| Local and production tasks | `/LOCAL_AND_PRODUCTION_TASKS.md` | Detailed active sequence |
+| Roadmap | `/ROADMAP.md` | Full lifecycle aligned |
+| README inventory | `/README.md` | Matches authoritative document set |
 
 ## Known Implementation-Dependent Artifacts
 
-These are not yet complete because code does not exist:
+These remain intentionally incomplete until code or environments exist:
 
-- Supabase project and non-secret project identifiers;
-- `supabase/config.toml` and migrations;
-- exact RLS SQL and authorization tests;
-- dependency locks;
-- GitHub Actions workflow YAML;
-- Render and Cloudflare deployment configuration;
-- generated OpenAPI;
-- exact SQL schema and migration history;
-- database export/restore evidence;
-- experiment preflight report;
-- public frontend/API URLs.
+- package lock files;
+- local command scripts;
+- `supabase/config.toml`, migrations, RLS SQL, and seed data;
+- exact CI workflow YAML;
+- generated OpenAPI and API inventory;
+- frontend build and E2E configuration;
+- Render and Cloudflare deployment files;
+- actual cloud project references and public URLs;
+- provider smoke evidence;
+- backup/export and restore evidence;
+- staging and production infrastructure selections;
+- measured SLO, RPO, RTO, performance, and cost evidence;
+- production security and privacy review results.
 
-Each is required by `CLOUD_MVP_TASKS.md` and must be created with implementation.
+These are implementation deliverables, not missing prose. Their tasks require documentation to be updated in the same change.
 
 ## Audit Rules for Future Changes
 
 1. Verify README links and inventory.
-2. Verify active tasks against accepted ADRs.
-3. Search for Redis/ARQ/WebSocket/Prometheus/Grafana references and ensure they are clearly marked deferred where applicable.
-4. Verify no document permits reuse of the Eventnexus Supabase project.
-5. Verify RLS and browser-write restrictions remain consistent.
-6. Verify free-tier limitations and safe degradation remain documented.
-7. Verify all financial side effects remain idempotent and risk-gated.
-8. Verify Gemini remains advisory and within configured cost budgets.
-9. Update changelog for material architecture changes.
+2. Verify new work is placed in the correct task source.
+3. Verify local, CI, demo, paper, staging, and production credentials remain isolated.
+4. Verify normal CI does not require paid APIs or production data.
+5. Verify migrations, RLS, and frontend secret controls stay synchronized.
+6. Verify free-tier infrastructure is not represented as an SLA.
+7. Verify production research remains separate from private exchange and live trading.
+8. Verify backup claims include restore evidence.
+9. Verify financial side effects remain idempotent, risk-gated, and ledger-reconciled.
+10. Verify Gemini remains advisory and cost-bounded.
+11. Record material changes in `CHANGELOG.md`.
 
 ## Conclusion
 
-The documentation is coherent for starting the free-cloud MVP. Begin with `T1.1`, `T1.2`, then follow `C1` through `C8` together with the referenced shared domain tasks.
+The documentation is coherent for beginning local implementation, constructing the free cloud demo, running the controlled paper experiment, and continuing afterward into staging and a production-grade research service.
+
+Recommended implementation order:
+
+1. `T1.1-T1.2`;
+2. `L1.1-L1.4`;
+3. applicable shared domain tasks;
+4. `C1-C8`;
+5. `L2.1-L2.6` before the formal experiment;
+6. post-experiment review;
+7. `P1.1-P1.7` for staging and production research.
