@@ -1,129 +1,286 @@
 # Documentation Audit
 
-Last reviewed: 2026-07-31
-Audit scope: root documentation, all `docs/` specifications, environment examples, and all task-governance files
-Status: Completed for local, free-cloud MVP, testing, staging, and production-research planning
+Last reviewed: 2026-08-01  
+Audit scope: root governance files, all active architecture and environment profiles, detailed task catalogs, Sprint 3–20 workspaces, and implementation entry points  
+Status: Sprint 20 synchronization completed; implementation evidence remains future work
 
-## Executive Result
+## 1. Executive Result
 
-The documentation now defines one coherent lifecycle:
+The repository now defines one canonical implementation path:
 
 ```text
-Local Development
-  -> CI and Test Environments
-  -> Free Cloud Demo
-  -> Controlled Paper Experiment
-  -> Staging
-  -> Production Research Service
-  -> Separate Binance Sandbox Assessment
-  -> Separate Live-Trading Assessment
+M001–M006   Repository and local foundation
+M007–M013   Core research domains
+M014–M025   API, product workspaces, governance, and developer evidence
+M026–M027   Integrated local/CI verification, export, restore, and security gate
+M028–M029   Free-cloud demo and controlled 30-day paper experiment
+M030–M034   Performance, data, research, incident, and change governance
+M035        Post-experiment decision and staging readiness
+M036        Production research launch and continuous operations
 ```
 
-Production development is explicitly separated from live trading. The planned production service remains a research, backtesting, audit, and paper-trading platform.
+`TASKS.md` is the sole authority for execution order and hard dependencies. Detailed task catalogs remain authoritative for their acceptance criteria only when selected through a mapped master task.
 
-## Authoritative Environment Documents
+The product remains an evidence-driven research, backtesting, and paper-trading platform. No current document authorizes private Binance execution, Binance test trading, or live capital.
 
-- `LOCAL_DEVELOPMENT.md` — local tools, Supabase CLI, fake providers, commands, seed data, debugging, and Windows support.
-- `TEST_ENVIRONMENTS.md` — test environment matrix, fixtures, CI, provider policy, recovery, and promotion gates.
-- `FREE_CLOUD_ARCHITECTURE.md` — zero-required-cost demo and paper-experiment topology.
-- `FREE_CLOUD_REQUIREMENTS.md` — free-cloud refinement of the main product requirements.
-- `DEPLOYMENT.md` — deployment and promotion across all environments.
-- `PRODUCTION_DEVELOPMENT.md` — staging and production-grade research development.
+## 2. Correction to the Previous Audit
 
-## Authoritative Task Sources
+The 2026-07-31 audit stated that the documentation was fully coherent for implementation. That conclusion was incomplete.
 
-- `/TASKS.md` — shared domains and application functionality.
-- `/CLOUD_MVP_TASKS.md` — free cloud deployment and experiment.
-- `/LOCAL_AND_PRODUCTION_TASKS.md` — local bootstrap, test automation, staging, production research, and post-launch work.
+The active architecture documents already specified a free-cloud one-shot execution model, but the former root `TASKS.md` still contained mandatory P0 work for:
 
-Every task source uses detailed work cards with user story, acceptance criteria, Definition of Done, dependencies, and references.
+- Redis;
+- ARQ;
+- persistent workers;
+- Binance WebSocket ingestion;
+- Prometheus;
+- Grafana;
+- a Docker Compose topology built around those services.
 
-## Consistency Findings
+Those tasks conflicted with:
 
-### Local Development
+- `docs/ARCHITECTURE.md`;
+- `docs/BACKEND.md`;
+- `docs/FREE_CLOUD_ARCHITECTURE.md`;
+- `docs/DEPLOYMENT.md`;
+- `docs/OBSERVABILITY.md`;
+- `CLOUD_MVP_TASKS.md`.
 
-The local profile now consistently uses local Supabase/PostgreSQL and Auth, fake Binance and Gemini by default, deterministic seed data, cross-platform commands, and no paid credentials for normal work.
+The old task system also allowed multiple apparent entry points and included environment-dependent or cyclic relationships, such as local Supabase guidance depending on cloud provisioning.
 
-### Testing
+Sprint 20 corrected these issues rather than preserving the previous audit conclusion.
 
-The test strategy now consistently requires migration, RLS, authorization, financial invariant, provider contract, frontend bundle, E2E, failure, export, restore, staging, and production promotion tests.
+## 3. Canonical Authority
 
-References to Redis, ARQ, persistent WebSocket, and hosted Prometheus/Grafana are treated as deferred architecture options, not active free-cloud requirements.
+Implementation precedence is now consistently defined as:
 
-### Cloud Demo and Experiment
+1. security, privacy, financial-integrity, and fail-closed requirements;
+2. `AGENTS.md`;
+3. `docs/PRODUCT_REQUIREMENTS.md`;
+4. accepted architecture documents and ADRs;
+5. domain and workspace implementation specifications;
+6. `TASKS.md` for execution order and hard dependencies;
+7. detailed task cards referenced by the selected master task;
+8. existing implementation conventions.
 
-The active cloud profile consistently uses Cloudflare Pages, Render Free, dedicated Supabase Free, GitHub Actions, Binance REST, and bounded Gemini usage. Render cold start does not control the research schedule.
+Material conflicts must be corrected. A contributor must not silently choose the newest, shortest, or most convenient document.
 
-### Production Research
+## 4. Authoritative Entry Points
 
-Production development consistently requires isolated staging and production environments, protected CI/CD, manual approval, managed backups, measured recovery, SLOs, incident routing, Auth/RLS review, privacy review, and cost planning.
+| File | Authority |
+|---|---|
+| `/AGENTS.md` | Mandatory contributor and coding-agent rules |
+| `/TASKS.md` | Canonical Master Task M001–M036 sequence |
+| `/docs/IMPLEMENTATION_EXECUTION_PLAN.md` | Task governance, stages, status, evidence, and completion |
+| `/README.md` | Product orientation and implementation entry point |
+| `/ROADMAP.md` | Phase outcomes mapped to master tasks; not a competing backlog |
+| `/SPRINT_20_TASKS.md` | Synchronization sprint evidence |
 
-No production document authorizes private Binance execution or live capital.
+All entry points now instruct the developer to begin with `M001`.
 
-## Documentation Coverage
+## 5. Detailed Task Catalog Policy
 
-| Area | Authoritative document | Status |
-|---|---|---|
-| Product and experiment | `PRODUCT_REQUIREMENTS.md` | Complete pre-implementation baseline |
-| Local development | `LOCAL_DEVELOPMENT.md` | Complete specification |
-| Test environments | `TEST_ENVIRONMENTS.md` | Complete specification |
-| Free cloud topology | `FREE_CLOUD_ARCHITECTURE.md` | Complete specification |
-| Free cloud requirements | `FREE_CLOUD_REQUIREMENTS.md` | Complete refinement |
-| Runtime architecture | `ARCHITECTURE.md` | Free-cloud aligned |
-| Deployment lifecycle | `DEPLOYMENT.md` | Local through production research aligned |
-| Production development | `PRODUCTION_DEVELOPMENT.md` | Complete planning baseline |
-| Test strategy | `TESTING.md` | Environment-aligned |
-| Coding-agent rules | `/AGENTS.md` | Environment-aligned |
-| Shared domain tasks | `/TASKS.md` | Detailed baseline |
-| Cloud deployment tasks | `/CLOUD_MVP_TASKS.md` | Detailed active sequence |
-| Local and production tasks | `/LOCAL_AND_PRODUCTION_TASKS.md` | Detailed active sequence |
-| Roadmap | `/ROADMAP.md` | Full lifecycle aligned |
-| README inventory | `/README.md` | Matches authoritative document set |
+The following files contain detailed acceptance criteria but do not define independent implementation order:
 
-## Known Implementation-Dependent Artifacts
+- `UX_DESIGN_TASKS.md`;
+- `CLOUD_MVP_TASKS.md`;
+- `LOCAL_AND_PRODUCTION_TASKS.md`;
+- `SPRINT_3_TASKS.md` through `SPRINT_20_TASKS.md`.
 
-These remain intentionally incomplete until code or environments exist:
+Their work is mapped into `TASKS.md` Master Tasks.
 
-- package lock files;
-- local command scripts;
-- `supabase/config.toml`, migrations, RLS SQL, and seed data;
-- exact CI workflow YAML;
-- generated OpenAPI and API inventory;
-- frontend build and E2E configuration;
-- Render and Cloudflare deployment files;
-- actual cloud project references and public URLs;
+Documentation sprint completion does not imply that its implementation tasks are complete. Only a master task marked `VERIFIED` with implementation and verification evidence is complete.
+
+## 6. Active Runtime Profile
+
+The active MVP profile is consistent across README, AGENTS, TASKS, ROADMAP, architecture, backend, deployment, and free-cloud documents:
+
+- Python 3.12 modular monolith;
+- stateless FastAPI read/command API;
+- one-shot research-cycle CLI;
+- React/TypeScript/Vite frontend;
+- Supabase PostgreSQL and Auth;
+- Binance Spot public REST using finalized candles;
+- Google Gemini using the official `google-genai` SDK;
+- GitHub Actions best-effort scheduling;
+- Cloudflare Pages and Render Free for the initial cloud demo;
+- PostgreSQL advisory lock or durable lease;
+- deterministic idempotency;
+- append-only double-entry ledger;
+- mandatory reconciliation;
+- paper trading only.
+
+## 7. Deferred Architecture
+
+The following are explicitly deferred from mandatory MVP implementation:
+
+- Redis and ARQ;
+- persistent workers;
+- Binance WebSocket ingestion;
+- hosted Prometheus and Grafana;
+- Kubernetes;
+- paid/high-availability infrastructure;
+- Binance test/private credentials;
+- live trading.
+
+Activation requires measured need, an ADR, updated requirements and tasks, migration and rollback plans, security/privacy review, tests, cost/capacity evidence, staged verification, and owner approval.
+
+## 8. Dependency Audit
+
+Resolved canonical dependency rules include:
+
+- local Supabase/PostgreSQL/Auth does not depend on a cloud project;
+- local bootstrap and deterministic fakes precede protected provider and cloud workflows;
+- domain contracts precede consuming UI workspaces;
+- ledger and reconciliation precede final portfolio and experiment status;
+- the one-shot CLI precedes scheduled cloud execution;
+- integrated local/CI verification precedes cloud deployment;
+- export and tested restore precede the formal experiment;
+- measured evidence precedes SLO, capacity, cost, and scaling claims;
+- backtest, untouched-test, robustness, reproducibility, paper observation, and owner review precede strategy promotion;
+- behavior changes apply only to future configurations and never mutate a running experiment.
+
+No canonical dependency cycle remains in `TASKS.md`.
+
+## 9. Workspace Coverage
+
+| Master area | Detailed source |
+|---|---|
+| Frontend shell | `SPRINT_3_TASKS.md` |
+| Component library | `SPRINT_4_TASKS.md` |
+| Today’s Roast | `SPRINT_5_TASKS.md` |
+| Market Evidence | `SPRINT_6_TASKS.md` |
+| Strategy and Risk | `SPRINT_7_TASKS.md` |
+| Portfolio, Execution, Ledger, Reconciliation | `SPRINT_8_TASKS.md` |
+| Backtests and Comparison | `SPRINT_9_TASKS.md` |
+| Experiment Operations and Audit | `SPRINT_10_TASKS.md` |
+| Gemini Analysis and Validation | `SPRINT_11_TASKS.md` |
+| Auth, Governance, Security, Privacy, Release | `SPRINT_12_TASKS.md` |
+| Product Shell, Onboarding, Search, Trust, i18n | `SPRINT_13_TASKS.md` |
+| Developer Portal and Traceability | `SPRINT_14_TASKS.md` |
+| Performance, Resilience, SLO, FinOps | `SPRINT_15_TASKS.md` |
+| Data Lifecycle and Dataset Governance | `SPRINT_16_TASKS.md` |
+| Research Review and Strategy Lifecycle | `SPRINT_17_TASKS.md` |
+| Incident Response and Learning | `SPRINT_18_TASKS.md` |
+| Change Management and Staged Rollout | `SPRINT_19_TASKS.md` |
+| Documentation Synchronization | `SPRINT_20_TASKS.md` |
+
+Every workstream is represented by one or more master tasks in `TASKS.md`.
+
+## 10. Environment Lifecycle
+
+The synchronized environment path is:
+
+```text
+Local
+  -> CI and integrated local verification
+  -> Free-cloud demo
+  -> Controlled paper experiment
+  -> Evidence hardening and post-experiment review
+  -> Isolated staging
+  -> Production research service
+  -> Separate future Binance test assessment
+  -> Separate future real-capital assessment
+```
+
+Production research still uses simulated execution. No phase can be skipped because of favorable performance.
+
+## 11. Safety and Product Consistency
+
+The synchronized documents consistently require:
+
+- official name **The Daily Roast AI**;
+- tagline **Evidence-Driven Market Intelligence**;
+- evidence over hype;
+- simulation and paper labels;
+- analytical confidence distinct from probability of profit;
+- deterministic strategy and risk around probabilistic AI;
+- Decimal financial arithmetic and UTC timestamps;
+- immutable used inputs and configuration versions;
+- idempotent side effects;
+- deny-by-default browser access;
+- no secrets in source, prompts, bundles, logs, metrics, screenshots, or artifacts;
+- append-only ledger and reconciliation;
+- tested restore before backup claims;
+- human approval for material research, release, and behavior changes;
+- no guaranteed-return, urgency, or financial-advice language.
+
+## 12. Sprint 20 Changes
+
+Added:
+
+- `docs/IMPLEMENTATION_EXECUTION_PLAN.md`;
+- `SPRINT_20_TASKS.md`.
+
+Replaced or materially synchronized:
+
+- `TASKS.md`;
+- `AGENTS.md`;
+- `README.md`;
+- `ROADMAP.md`;
+- this audit;
+- `CHANGELOG.md`.
+
+## 13. Verified Sprint 20 Commits
+
+- `a952f8f3636abae96cd10135463f61adc35609fd` — implementation execution plan;
+- `2020ede10ce097d4c3b0fcd836bb0ff3b5a3d25c` — Sprint 20 task catalog;
+- `64d1b08e579499f3bc6833428172ca318de3dc49` — canonical `TASKS.md` backlog;
+- `10c5f252277e08f7d69d2657e85e057a68288b4d` — `AGENTS.md` workflow alignment;
+- `8de1c738454e8381e971e09c0da9e7e6f62a2f59` — README implementation entry point;
+- `47efdaae7d50b4ece42b6e5b1f08748d89474eb2` — ROADMAP master-task mapping;
+- `f7ee54fc28e42b52297d1ed267c91caafc5b55ca` — execution-plan catalog update.
+
+Each listed commit was fetched from GitHub after creation.
+
+## 14. Implementation-Dependent Artifacts
+
+The following remain intentionally absent or incomplete until their mapped master tasks are implemented:
+
+- backend and frontend source implementations;
+- dependency lock files;
+- stable command scripts;
+- Supabase local config, migrations, RLS policies, functions, and seeds;
+- exact GitHub Actions workflows;
+- generated OpenAPI and frontend types;
+- API, schema, error, event, permission, metric, and migration catalogs;
+- automated documentation-health output;
+- real cloud project identifiers and public deployment URLs;
 - provider smoke evidence;
-- backup/export and restore evidence;
+- experiment, incident, performance, cost, and strategy-review evidence;
+- export, backup, restore, and recovery artifacts;
 - staging and production infrastructure selections;
-- measured SLO, RPO, RTO, performance, and cost evidence;
-- production security and privacy review results.
+- measured SLO, RPO, RTO, capacity, and cost results;
+- security, privacy, accessibility, and operational review results.
 
-These are implementation deliverables, not missing prose. Their tasks require documentation to be updated in the same change.
+These are implementation deliverables assigned to M001–M036, not missing documentation decisions.
 
-## Audit Rules for Future Changes
+## 15. Rules for Future Changes
 
-1. Verify README links and inventory.
-2. Verify new work is placed in the correct task source.
-3. Verify local, CI, demo, paper, staging, and production credentials remain isolated.
-4. Verify normal CI does not require paid APIs or production data.
-5. Verify migrations, RLS, and frontend secret controls stay synchronized.
-6. Verify free-tier infrastructure is not represented as an SLA.
-7. Verify production research remains separate from private exchange and live trading.
-8. Verify backup claims include restore evidence.
-9. Verify financial side effects remain idempotent, risk-gated, and ledger-reconciled.
-10. Verify Gemini remains advisory and cost-bounded.
-11. Record material changes in `CHANGELOG.md`.
+1. Start work through one `TASKS.md` master task.
+2. Verify hard dependencies before editing.
+3. Use detailed cards only through their mapped master task.
+4. Update task status and evidence with implementation.
+5. Update affected specifications, OpenAPI, schema/database docs, runbooks, and changelog in the same change.
+6. Detect broken links, unknown IDs, deprecated architecture terms, and generated drift in CI.
+7. Never edit an applied migration.
+8. Never represent documentation creation, coverage percentage, or a passing score as implementation approval.
+9. Preserve environment and credential isolation.
+10. Keep Gemini advisory and all execution paper-only.
+11. Treat restore, reconciliation, security, privacy, and incident evidence as promotion gates.
+12. Process material behavior changes through governed staged rollout.
 
-## Conclusion
+## 16. Conclusion
 
-The documentation is coherent for beginning local implementation, constructing the free cloud demo, running the controlled paper experiment, and continuing afterward into staging and a production-grade research service.
+The repository is now documentation-ready for implementation from `M001` through `M036`.
 
-Recommended implementation order:
+The first developer action is:
 
-1. `T1.1-T1.2`;
-2. `L1.1-L1.4`;
-3. applicable shared domain tasks;
-4. `C1-C8`;
-5. `L2.1-L2.6` before the formal experiment;
-6. post-experiment review;
-7. `P1.1-P1.7` for staging and production research.
+```text
+Open TASKS.md
+Select M001
+Read AGENTS.md and docs/IMPLEMENTATION_EXECUTION_PLAN.md
+Implement and verify M001 before selecting dependent work
+```
+
+No remaining documentation conflict requires a developer to choose between competing MVP architectures or task entry points.
