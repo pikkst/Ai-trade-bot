@@ -39,4 +39,4 @@ strict = true
 testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
-where = ["backend"]
+where = ["."]
