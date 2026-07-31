@@ -4,6 +4,35 @@ All notable project changes are documented here.
 
 ## Unreleased
 
+### Sprint 21 — Task Catalog and Lifecycle Synchronization — 2026-08-01
+
+#### Added
+
+- `docs/TASK_CATALOG_INDEX.md` mapping legacy `T*`, UX, cloud, local/production, and Sprint 3–21 task IDs to M001–M036.
+- `SPRINT_21_TASKS.md` documenting residual task-catalog and environment-lifecycle synchronization.
+- Explicit classifications for mandatory, conditional, deferred, superseded, future-assessment, and documentation-complete work.
+
+#### Changed
+
+- Mapped `docs/TESTING.md` and `docs/TEST_ENVIRONMENTS.md` to Master Task promotion gates.
+- Mapped `docs/DEPLOYMENT.md` to M026–M036, including M027 restore/security prerequisites for M028.
+- Mapped `docs/FREE_CLOUD_ARCHITECTURE.md` and `docs/FREE_CLOUD_REQUIREMENTS.md` to M028 deployment and M029 controlled experiment.
+- Mapped `docs/PRODUCTION_DEVELOPMENT.md` to M030–M036, with M035 staging and M036 production research.
+- Updated README, AGENTS, ROADMAP, and the implementation execution plan to require the task catalog index when selecting detailed cards.
+- Updated the documentation audit with Sprint 21 mappings, environment gates, and verified commits.
+
+#### Fixed
+
+- Removed residual ambiguity between a detailed file marked “Ready for implementation” and an eligible Master Task.
+- Removed cloud tasks as a possible repository entry point; local/CI implementation and restore proof precede cloud provisioning.
+- Standardized the lifecycle as M026 local verification, M027 recovery/security, M028 cloud deployment, M029 experiment, M030–M034 hardening/governance, M035 staging, and M036 production research.
+- Classified historical Redis/ARQ, persistent-worker, WebSocket, and hosted-metrics tasks as deferred rather than mandatory.
+- Preserved Binance test/private credentials and live-capital execution as separate future assessments.
+
+#### Safety
+
+- Preserved paper-only execution, deterministic non-bypassable risk, append-only accounting, mandatory reconciliation, no-auto-spend, environment isolation, and no private/live exchange path.
+
 ### Sprint 20 — Canonical Implementation Plan — 2026-08-01
 
 #### Added
@@ -15,7 +44,7 @@ All notable project changes are documented here.
 #### Changed
 
 - Replaced the legacy root backlog with an authoritative `TASKS.md` master plan.
-- Updated `AGENTS.md` so coding agents begin at `M001` and use detailed task catalogs only through mapped master tasks.
+- Updated `AGENTS.md` so coding agents begin at `M001` and use detailed task catalogs only through mapped Master Tasks.
 - Updated README to expose one implementation entry point and the active paper-only architecture.
 - Updated ROADMAP so every implementation phase maps to Master Tasks rather than forming a competing backlog.
 - Updated `docs/DOCUMENTATION_AUDIT.md` to correct the prior incomplete consistency conclusion and record verified synchronization evidence.
@@ -25,7 +54,7 @@ All notable project changes are documented here.
 
 - Removed Redis, ARQ, persistent workers, Binance WebSocket ingestion, Prometheus, and Grafana from mandatory MVP task dependencies.
 - Removed the conflict between the active one-shot free-cloud architecture and the former root task backlog.
-- Removed ambiguous parallel task entry points across root, cloud, local/production, UX, and sprint task files.
+- Removed ambiguous parallel task entry points across root, cloud, local/production, UX, and Sprint task files.
 - Removed canonical local-to-cloud dependency cycles; local Supabase development no longer depends on creating a cloud project.
 - Integrated Sprint 3–19 workspace catalogs into the root implementation sequence.
 - Established that only `VERIFIED` implementation evidence marks a Master Task complete; documentation creation alone is not completion.
@@ -50,10 +79,10 @@ All notable project changes are documented here.
 - The official product name is now **The Daily Roast AI**.
 - The official tagline is **Evidence-Driven Market Intelligence**.
 - `thedailyroast.online` is the primary product domain, with approved `app`, `api`, `docs`, `status`, and future `admin` subdomains.
-- README now presents the repository as an evidence-driven market-intelligence platform rather than a generic trading bot.
-- Product requirements now include brand, content, trust, provenance, simulation-labeling, and future multi-market requirements.
-- `AGENTS.md` now requires brand-safe user-facing copy, approved naming, and explicit review of risk, uncertainty, freshness, and simulation labels.
-- Roadmap now includes brand governance, public custom-domain launch, product-interface modules, post-experiment product review, and future multi-market research expansion.
+- README presents the repository as an evidence-driven market-intelligence platform rather than a generic trading bot.
+- Product requirements include brand, content, trust, provenance, simulation-labeling, and future multi-market requirements.
+- `AGENTS.md` requires brand-safe user-facing copy, approved naming, and explicit review of risk, uncertainty, freshness, and simulation labels.
+- Roadmap includes brand governance, public custom-domain launch, product-interface modules, post-experiment product review, and future multi-market research expansion.
 
 #### Fixed
 
@@ -82,7 +111,7 @@ All notable project changes are documented here.
 
 #### Fixed
 
-- Removed ambiguity about how development continues after the free cloud example.
+- Removed ambiguity about how development continues after the free-cloud example.
 - Removed ambiguity between local database/Auth testing and cloud deployment.
 - Added explicit Windows 11 local-development requirements.
 - Added required migration, RLS, frontend-secret, export, restore, staging, and protected production deployment tests.
@@ -99,7 +128,7 @@ All notable project changes are documented here.
 
 #### Changed
 
-- The first 30-day experiment uses Cloudflare Pages, Render Free, a dedicated Supabase Free project, GitHub Actions, Gemini free allowance, and Binance Spot REST.
+- The first 30-day experiment uses Cloudflare Pages, Render Free, a dedicated Supabase Free project, GitHub Actions, Gemini bounded allowance, and Binance Spot REST.
 - Runtime execution uses a one-shot idempotent research-cycle CLI instead of a mandatory persistent queue worker.
 - PostgreSQL advisory locking or durable database leases replace Redis locking for the free-cloud profile.
 - Binance REST finalized-candle polling replaces mandatory persistent WebSocket ingestion for MVP.
@@ -126,7 +155,6 @@ All notable project changes are documented here.
 
 - Google Gemini API is the required V1 cloud AI provider.
 - Runtime AI remains advisory.
-- `TASKS.md` uses independently implementable task cards.
 - Live trading and private Binance execution remain outside MVP.
 
 ## 0.1.0 — Documentation Baseline
