@@ -21,6 +21,10 @@ jobs:
         run: |
           cd backend
           python -m pip install -e ".[dev]" -r requirements.txt
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
       - name: Format
         run: make format
       - name: Lint
@@ -39,6 +43,10 @@ jobs:
         run: |
           cd backend
           python -m pip install -e ".[dev]" -r requirements.txt
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
       - name: Run tests
         run: make test
 
