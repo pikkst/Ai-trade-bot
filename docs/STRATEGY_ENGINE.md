@@ -1,265 +1,397 @@
 # Strategy Engine
 
-Last reviewed: 2026-07-31
-Status: Authoritative MVP strategy specification
+Last reviewed: 2026-08-01  
+Status: Authoritative deterministic strategy, evidence, lifecycle, and promotion contract for `M010`, `M019`, `M032`, and `M034`
 
 ## 1. Purpose
 
-The strategy engine converts immutable market evidence into a typed advisory intent. It is deterministic, versioned, side-effect free, and separate from risk and execution.
+The strategy engine converts exact immutable research evidence into a typed advisory intent.
 
-The strategy engine does not place orders, write ledger entries, choose credentials, enable live trading, or override a risk decision.
+It is:
 
-## 2. Inputs
+- deterministic for identical inputs, versions, code, clock/replay context, and seed;
+- versioned and side-effect free;
+- separate from deterministic risk and paper execution;
+- auditable through exact evidence references and hashes;
+- compatible with both paper cycles and backtests.
+
+It does not:
+
+- place or cancel orders;
+- reserve cash/assets;
+- write ledger entries;
+- choose final position size;
+- access credentials or providers;
+- change risk, execution, accounting, experiments, releases, or configuration;
+- approve itself;
+- enable private Binance or live trading.
+
+## 2. Master-Task Ownership
+
+| Capability | Master Tasks |
+|---|---|
+| strategy domain and risk interaction | M010 |
+| API and Strategy/Risk workspace | M014, M019 |
+| cycle and backtest use | M012–M013 |
+| integrated test evidence | M026 |
+| formal paper observation | M029 |
+| research review and lifecycle | M032 |
+| behavior changes and staged rollout | M034 |
+
+## 3. Immutable Input Contract
 
 Every evaluation references:
 
-- workspace and experiment configuration version;
-- immutable market snapshot;
-- versioned feature calculation;
-- optional validated Google Gemini report;
-- strategy version and configuration hash;
-- portfolio-state version where the strategy requires current exposure;
-- evaluation timestamp and correlation ID.
+- workspace and environment;
+- exact immutable workspace configuration and behavior set;
+- market snapshot/dataset identity and hash;
+- quality/freshness outcome and policy version;
+- feature calculation identity/hash/version;
+- optional accepted validated Gemini report identity/hash/version;
+- strategy version/configuration hash;
+- exact portfolio-state version/hash where current exposure matters;
+- evaluation/replay timestamp supplied by the application clock;
+- code revision and relevant dependency/migration versions;
+- cycle/backtest/research context;
+- correlation/idempotency identity.
 
-Invalid, stale, incomplete, or unapproved inputs cause rejection or HOLD according to explicit policy.
+The strategy never reads hidden mutable database state, current wall clock, live provider data, environment defaults, or arbitrary frontend values.
 
-## 3. Intent Model
+Invalid, stale, incomplete, quarantined, invalidated, incompatible, or unauthorized input produces explicit rejection or HOLD according to the frozen strategy policy.
+
+## 4. Intent Contract
 
 Allowed actions:
 
-- `HOLD`: no new exposure change;
-- `ENTER`: request a new long exposure;
-- `EXIT`: request closure of an existing long exposure;
-- `REDUCE`: request lower existing exposure.
+- `HOLD` — no requested exposure change;
+- `ENTER` — request new or increased approved long exposure;
+- `EXIT` — request closure of existing long exposure;
+- `REDUCE` — request lower existing long exposure.
 
-Short selling is prohibited in MVP.
+Short selling is prohibited in M001–M036.
 
-A strategy intent contains:
+A strategy evaluation contains:
 
+- immutable evaluation ID;
 - action;
-- symbol;
-- direction;
-- requested target exposure or requested notional boundary;
+- normalized symbol;
+- direction (`long` or none according to action);
+- requested target exposure or requested notional boundary, not final size;
 - deterministic reason codes;
-- evidence references;
-- contradictions or blockers;
+- supporting and contradictory evidence references;
+- blockers/missing information;
 - invalidation condition;
-- strategy version;
-- configuration hash;
-- referenced input versions;
-- evaluation hash.
+- source and portfolio-state versions;
+- strategy/configuration/behavior-set references;
+- evaluation hash;
+- creation timestamp and context references.
 
-The requested amount is not final. The risk engine may reduce or reject it.
+A strategy intent is not a risk approval, order, fill, or financial effect.
 
-## 4. Determinism
+## 5. Determinism
 
-For identical input references, code version, configuration, and clock value, the strategy must produce the same intent and evaluation hash.
+For identical canonical inputs, strategy implementation/version, configuration, application clock/replay event, and explicit seed, output and evaluation hash are identical.
 
-Prohibited sources of nondeterminism:
+Prohibited nondeterminism:
 
-- current wall-clock reads inside calculation logic;
-- random values without an explicit seed;
+- wall-clock reads inside pure logic;
+- random values without an explicit persisted seed;
 - live external calls;
-- mutable global state;
+- mutable global/process state;
 - hidden database state;
-- unversioned Gemini requests;
-- implicit configuration defaults that are not persisted.
+- unversioned AI/provider requests;
+- locale/display values;
+- implicit defaults not represented in immutable configuration;
+- unordered iteration that changes results;
+- binary floating-point authoritative financial calculations.
 
-## 5. Google Gemini Relationship
+Canonical serialization and hashing are versioned and property tested.
 
-Gemini produces a validated advisory report. The strategy may use selected typed report fields as optional evidence.
+## 6. Gemini Relationship
+
+Gemini is optional typed advisory evidence according to the strategy version’s explicit dependency policy:
+
+- `required` — AI-dependent action is blocked/HOLD when no accepted compatible report exists;
+- `optional` — deterministic strategy continues and records missing/invalid AI reason;
+- `ignored` — Gemini is not an input.
 
 Rules:
 
-- a missing Gemini report must not crash the strategy;
-- an invalid or rejected report is treated as unavailable;
-- Gemini confidence is not probability of profit;
-- Gemini cannot determine final position size;
-- Gemini cannot change the strategy formula;
-- a strategy version must state whether Gemini evidence is required, optional, or ignored;
-- AI-dependent entry is blocked during provider outage unless the frozen strategy explicitly defines a safe deterministic alternative.
+- provider success without accepted application validation is unavailable evidence;
+- rejected, blocked, stale, unsupported, injected, invalid, or incompatible reports are unavailable;
+- analytical confidence is not profit probability or position-size authority;
+- AI cannot change formula, thresholds, feature requirements, exposure request logic, or fallback behavior;
+- strategy must preserve contradictions and missing information where material;
+- a provider outage cannot create a more permissive action;
+- same behavior applies in cycle and exact precomputed backtest modes.
 
-## 6. Initial Strategies
+## 7. Strategy Version Contract
 
-### 6.1 HOLD-Only Smoke Strategy
+A version includes:
 
-Purpose: validate orchestration without exposure.
-
-Behavior: always emits HOLD with reason `smoke_strategy_hold` after validating inputs.
-
-### 6.2 BTC/EUR Trend Baseline
-
-Purpose: provide a simple, explainable baseline rather than an optimized profit claim.
-
-Candidate inputs:
-
-- long and short EMA relationship;
-- price relative to long EMA;
-- RSI range;
-- volatility guard input;
-- volume confirmation;
-- optional validated Gemini regime agreement.
-
-Exact periods, thresholds, and logic must be explicit configuration and covered by reference tests. They must not be selected by Gemini or hidden in code.
-
-The baseline must support:
-
-- entry only for long exposure;
-- exit on explicit trend invalidation;
-- HOLD under insufficient or contradictory evidence;
-- no averaging down unless separately specified and approved;
-- no leverage or shorting.
-
-## 7. Evaluation Sequence
-
-1. Validate referenced versions and workspace scope.
-2. Validate market snapshot freshness and quality.
-3. Validate feature availability.
-4. Load strategy version and configuration.
-5. Load optional validated Gemini report according to strategy policy.
-6. Evaluate pure deterministic rules.
-7. Construct typed intent and reason codes.
-8. Calculate evaluation hash.
-9. Persist immutable evaluation.
-10. Submit non-HOLD intent to deterministic risk evaluation.
-
-## 8. Reason Codes
-
-Reason codes must be stable and machine-readable.
-
-Examples:
-
-- `insufficient_history`;
-- `stale_market_data`;
-- `feature_missing`;
-- `trend_not_confirmed`;
-- `trend_entry_confirmed`;
-- `trend_invalidation`;
-- `volatility_too_high`;
-- `gemini_unavailable`;
-- `gemini_report_invalid`;
-- `gemini_agrees_bullish`;
-- `gemini_contradicts_entry`;
-- `existing_position_hold`;
-- `exit_condition_met`.
-
-Human-readable explanations are derived from reason codes and evidence.
-
-## 9. Strategy Lifecycle
-
-States:
-
-1. Draft
-2. Unit tested
-3. Backtested
-4. Out-of-sample validated
-5. Observation mode
-6. Paper-trading candidate
-7. Active paper strategy
-8. Sandbox candidate
-9. Archived
-
-A strategy cannot skip required gates. Live approval is not part of this lifecycle and requires a separate future milestone.
-
-## 10. Promotion Criteria
-
-Before active paper trading:
-
-- complete unit and property tests;
-- no look-ahead;
-- reference calculations verified;
-- backtest includes fees and slippage;
-- cash and buy-and-hold benchmarks included;
-- out-of-sample result reported;
-- parameter selection documented;
-- risk policy compatibility verified;
-- failure behavior documented;
-- owner approves frozen version.
-
-Profit alone is not sufficient.
-
-## 11. Versioning
-
-A new strategy version is required for changes to:
-
-- rules or formula;
-- indicators or periods;
-- thresholds;
-- Gemini evidence policy;
-- requested exposure logic;
-- invalidation logic;
-- supported symbols or intervals;
-- reason-code semantics;
-- fallback behavior.
-
-Applied versions are immutable. Active experiments retain their frozen strategy version.
-
-## 12. Configuration
-
-Configuration must define:
-
-- supported symbols;
-- allowed intervals;
-- required history length;
-- indicator parameters;
-- thresholds;
-- exposure request boundary;
+- stable strategy ID and semantic/monotonic version;
+- implementation reference and code revision;
+- canonical configuration/schema/hash;
+- supported markets/intervals;
+- required feature set/history;
+- portfolio-state dependency;
 - Gemini dependency policy;
-- contradictory-evidence behavior;
-- cooldown-related signals if strategy-owned;
-- explicit defaults.
+- action and exposure-request rules;
+- contradiction/blocker behavior;
+- invalidation/exit logic;
+- reason-code version;
+- deterministic seed policy if applicable;
+- lifecycle state;
+- test/backtest/research/evaluation/approval references;
+- activation/archive timestamps;
+- limitations.
 
-Configuration is validated and hashed.
+Used versions are immutable. A material rule/default/meaning change creates a new version and behavior set.
 
-## 13. Tests
+## 8. Initial Strategies
+
+### 8.1 HOLD-Only Smoke Strategy
+
+Purpose: validate orchestration, persistence, audit, API, and workspace behavior without exposure.
+
+After validating inputs, always emits `HOLD` with stable reason `smoke_strategy_hold`.
+
+It remains available as a safe deterministic fallback/test strategy.
+
+### 8.2 BTC/EUR Trend Baseline
+
+Purpose: provide a simple explainable baseline, not an optimized profit claim.
+
+Candidate versioned evidence:
+
+- short/long EMA relationship;
+- price relative to trend EMA;
+- RSI range;
+- ATR/volatility guard;
+- volume confirmation;
+- data-quality/freshness guard;
+- current reconciled exposure;
+- optional accepted Gemini regime agreement/contradiction.
+
+Exact periods, thresholds, warm-up, Decimal precision, reason-code semantics, entry/exit/reduce behavior, and requested-exposure boundary belong in immutable configuration and reference tests.
+
+Baseline constraints:
+
+- long-only;
+- no leverage;
+- no averaging down unless separately specified/reviewed;
+- HOLD on insufficient, stale, invalid, contradictory, or incompatible evidence according to policy;
+- explicit trend invalidation/exit;
+- no hidden optimization or dynamic model-selected parameter.
+
+## 9. Evaluation Sequence
+
+1. verify actor/workspace/context eligibility;
+2. load exact immutable behavior/configuration/strategy versions;
+3. validate market snapshot/dataset quality, freshness, finalization, and compatibility;
+4. validate feature calculation and required history;
+5. validate exact portfolio-state version where required;
+6. load optional AI report only according to explicit dependency policy;
+7. evaluate pure deterministic rules;
+8. resolve contradictions/blockers/fallback;
+9. construct typed intent and stable reason codes;
+10. canonicalize and calculate evaluation hash;
+11. persist immutable strategy evaluation idempotently;
+12. publish/return typed result;
+13. submit non-HOLD intent to deterministic risk as a separate application step.
+
+No network call occurs inside this evaluation.
+
+## 10. Reason Codes
+
+Reason codes are stable, machine-readable, versioned, localized outside the domain, and linked to evidence.
+
+Baseline categories/examples:
+
+- input: `insufficient_history`, `stale_market_data`, `invalid_market_data`, `feature_missing`, `portfolio_state_stale`, `configuration_incompatible`;
+- trend: `trend_not_confirmed`, `trend_entry_confirmed`, `trend_invalidation`, `exit_condition_met`;
+- volatility/volume: `volatility_too_high`, `volume_not_confirmed`;
+- AI: `gemini_not_required`, `gemini_unavailable`, `gemini_report_invalid`, `gemini_agrees_bullish`, `gemini_contradicts_entry`;
+- portfolio: `existing_position_hold`, `no_position_to_exit`, `target_exposure_reached`;
+- safety/fallback: `strategy_policy_hold`, `unsupported_action`, `active_halt`.
+
+Changing a code’s meaning requires versioning. Human messages do not replace canonical codes.
+
+## 11. Failure Behavior
+
+Explicit outcomes include:
+
+- successful HOLD/non-HOLD intent;
+- invalid input rejection;
+- HOLD due to policy/blocker;
+- configuration/version incompatibility;
+- deterministic calculation error;
+- duplicate/idempotent replay returning canonical result;
+- cancelled/timed out application operation;
+- persistence conflict before side effects.
+
+A failure never creates an order or financial effect. Unknown/missing required evidence fails closed.
+
+## 12. Risk Boundary
+
+Every non-HOLD intent is evaluated by the exact deterministic risk policy against the exact portfolio state and market evidence.
+
+Strategy requested exposure/notional is only an upper request boundary. Risk may:
+
+- approve;
+- approve a reduced boundary;
+- reject;
+- halt portfolio;
+- halt workspace/experiment according to policy.
+
+Strategy cannot:
+
+- treat absence of risk as approval;
+- consume a stale/different risk result;
+- retry around a rejection;
+- issue a direct order;
+- weaken limit or halt rules.
+
+## 13. Shared Paper and Backtest Contract
+
+The same strategy implementation and project-owned input/output contracts are used in:
+
+- one-shot paper research cycles;
+- deterministic backtests;
+- repeated-run reproducibility checks;
+- research/evaluation datasets;
+- bounded paper canaries.
+
+Backtests provide a replay clock and only evidence available at each event. They do not call live providers or use future portfolio state.
+
+Any unavoidable environment adapter difference is explicit, versioned, tested, and included in compatibility/limitations.
+
+## 14. Lifecycle
+
+Canonical states:
+
+1. `draft`;
+2. `unit_tested`;
+3. `backtested`;
+4. `out_of_sample_validated`;
+5. `observation_mode`;
+6. `paper_candidate`;
+7. `active_paper`;
+8. `rolled_back`;
+9. `retired`;
+10. `archived`.
+
+No state authorizes private/test/live exchange execution.
+
+Transitions are append-only and require actor/source, reason, evidence snapshot, expected version, and audit.
+
+## 15. Research Review and Promotion
+
+Before future active-paper use, M032 requires:
+
+- explicit hypothesis and causal rationale;
+- approved test plan created before final evidence;
+- exact datasets and split-use declarations;
+- no-look-ahead and leakage checks;
+- cash and buy-and-hold benchmarks;
+- fees/spread/slippage/precision/minimum-notional assumptions;
+- all material selected, rejected, failed, cancelled, incomplete, and unfavorable variants;
+- final untouched-test result uncontaminated by parameter selection;
+- robustness and parameter sensitivity;
+- walk-forward evidence where data permits;
+- reproducibility verification;
+- turnover, costs, drawdown, tail, halt, and failure evidence;
+- risk/execution/accounting compatibility;
+- bounded paper observation/canary with stop conditions;
+- reviewer assignment/conflict disclosure;
+- immutable approval snapshot and owner decision;
+- rollback/retirement plan.
+
+Profit or a score alone cannot approve a strategy.
+
+## 16. Change Management
+
+Changes to formula, feature/period/threshold, Gemini policy, action meaning, exposure request, invalidation/exit, supported market/interval, reason codes, fallback, serialization/hash, or dependencies require:
+
+- new strategy/configuration/behavior-set versions;
+- M034 proposal and risk classification;
+- field-level and dependency diff;
+- compatibility/migration review;
+- pre-approved evidence plan;
+- security/privacy/cost/accessibility review as applicable;
+- staged paper rollout and stop conditions;
+- immutable approval snapshot;
+- rollback/forward-fix and deprecation evidence;
+- activation only for future configurations.
+
+Running experiments remain frozen. Tests, CI, AI, metrics, or browser state cannot auto-activate a strategy.
+
+## 17. Observability and Audit
+
+Persist/measure with bounded labels:
+
+- evaluations by strategy/version/action/status;
+- HOLD/rejection/blocker reason codes;
+- input/evaluation hashes;
+- source snapshot/features/AI/portfolio-state versions;
+- duration and deterministic error;
+- AI availability/agreement/contradiction when configured;
+- downstream risk result and lineage, without conflating stages;
+- cycle/backtest/research/canary context;
+- lifecycle/review/approval/rollback references.
+
+Do not use profit as strategy operational health. User-facing views preserve evidence, uncertainty, simulation, and risk authority.
+
+## 18. Testing
 
 Required tests:
 
-- each action outcome;
-- boundary values for every threshold;
-- insufficient history;
-- missing feature;
-- stale snapshot;
-- invalid Gemini report;
-- provider unavailable;
-- contradictory Gemini evidence;
-- identical-input determinism;
-- version isolation;
-- no side effects;
-- no direct order creation;
-- no short or leverage output;
-- reference dataset expected intents.
+- each action and policy-HOLD outcome;
+- every threshold and Decimal boundary;
+- insufficient history/missing feature/null input;
+- stale/invalid/invalidated snapshot;
+- portfolio-state exactness and staleness;
+- AI required/optional/ignored, invalid, unavailable, contradictory;
+- deterministic identical-input hash/output;
+- explicit seed behavior if any;
+- version/configuration isolation;
+- no wall clock/provider/global mutable state;
+- no order/ledger/side effect;
+- no short/leverage/unsupported action;
+- idempotent duplicate evaluation;
+- shared paper/backtest reference fixtures;
+- no-look-ahead and replay-clock isolation;
+- reason-code registry/localization coverage;
+- lifecycle/review/approval invalidation;
+- behavior-set freeze/change rollout.
 
-## 14. Metrics and Audit
+Property tests cover canonical hashing, ordering independence, Decimal boundaries, and action invariants.
 
-Record:
+## 19. Completion Gate
 
-- evaluations by strategy version;
-- intents by action;
-- HOLD reason codes;
-- Gemini agreement/disagreement when used;
-- evaluation duration;
-- rejection/error count;
-- input and evaluation hashes.
+M010 strategy work is verified only when:
 
-Every intent must be traceable to exact snapshot, features, optional Gemini report, strategy version, and configuration.
+- strategy versions/configurations/reason codes are implemented and immutable;
+- deterministic reference/property/failure tests pass;
+- market/feature/AI/portfolio-state contracts are exact;
+- no direct order or risk bypass exists;
+- shared paper/backtest behavior is demonstrated;
+- API/schema/workspace/audit/observability/docs are synchronized;
+- final commit is fetched and inspected.
 
-## 15. Anti-Overfitting Rules
+Promotion to active paper additionally requires M029 observation and M032/M034 evidence/approval.
 
-- Separate design, validation, and test periods.
-- Record every parameter trial used for selection where practical.
-- Avoid optimizing many parameters against a small dataset.
-- Report sensitivity to reasonable parameter changes.
-- Include turnover and cost impact.
-- Preserve rejected strategy experiments rather than cherry-picking only winners.
-- Do not promote based only on in-sample return.
+## 20. Related Documents
 
-## 16. Related Documents
-
-- `PRODUCT_REQUIREMENTS.md`
+- `/TASKS.md`
+- `IMPLEMENTATION_EXECUTION_PLAN.md`
+- `TASK_CATALOG_INDEX.md`
+- `MARKET_DATA.md`
 - `AI_ARCHITECTURE.md`
 - `GEMINI_INTEGRATION.md`
 - `RISK_ENGINE.md`
-- `BACKTEST_ENGINE.md`
 - `PAPER_TRADING.md`
+- `BACKTEST_ENGINE.md`
+- `RESEARCH_REVIEW_STRATEGY_LIFECYCLE_WORKSPACE_IMPLEMENTATION.md`
+- `CHANGE_MANAGEMENT_ROLLOUT_GOVERNANCE_WORKSPACE_IMPLEMENTATION.md`
 - `TESTING.md`
