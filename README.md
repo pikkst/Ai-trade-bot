@@ -239,8 +239,8 @@ Production research means production-quality research and paper trading. It does
 | `make lint` or `.\tasks.ps1 lint` | Run lint checks |
 | `make type-check` or `.\tasks.ps1 type-check` | Run static type checks |
 | `make test` or `.\tasks.ps1 test` | Run unit and property tests |
-| `make frontend-build` or `.\tasks.ps1 frontend-dev` | Build the frontend production bundle |
-| `make frontend-test` or `.\tasks.ps1 test` | Run frontend tests |
+| `make frontend-build` or `.\tasks.ps1 frontend-build` | Build the frontend production bundle |
+| `make frontend-test` or `.\tasks.ps1 frontend-test` | Run frontend tests |
 | `make local-up` or `.\tasks.ps1 local-up` | Start local Supabase and dependencies |
 | `make local-down` or `.\tasks.ps1 local-down` | Stop local services |
 | `make local-reset` or `.\tasks.ps1 local-reset` | Recreate database, migrations, and seed data |

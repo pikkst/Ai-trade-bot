@@ -38,6 +38,8 @@ Commands:
   lint              Run lint checks
   type-check        Run static type checks
   test              Run unit and property tests
+  frontend-build   Build the frontend production bundle
+  frontend-test     Run frontend tests
   local-up          Start local Supabase and application dependencies
   local-down        Stop local services
   local-reset       Recreate database, migrations, and seed data
@@ -142,6 +144,14 @@ switch ($Command) {
     "frontend-dev" {
         Write-Host "==> Starting Vite dev server..." -ForegroundColor Cyan
         try { Push-Location frontend; Invoke-Native npm run dev } finally { Pop-Location }
+    }
+    "frontend-build" {
+        Write-Host "==> Building frontend..." -ForegroundColor Cyan
+        try { Push-Location frontend; Invoke-Native npm run build } finally { Pop-Location }
+    }
+    "frontend-test" {
+        Write-Host "==> Running frontend tests..." -ForegroundColor Cyan
+        try { Push-Location frontend; Invoke-Native npm test } finally { Pop-Location }
     }
     "research-cycle" {
         Write-Host "==> Running research cycle..." -ForegroundColor Cyan
