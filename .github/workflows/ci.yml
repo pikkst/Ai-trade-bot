@@ -27,8 +27,13 @@ jobs:
       - name: Lock drift check
         run: |
           cd backend
-          python -m piptools compile --extra=dev --output-file=/tmp/requirements_check.txt pyproject.toml
-          diff <(grep "^[a-z]" requirements.txt | sort) <(grep "^[a-z]" /tmp/requirements_check.txt | sort) || { echo "ERROR: requirements.txt is not up to date. Run make lock under Python 3.12."; exit 1; }
+          cp requirements.txt /tmp/requirements_original.txt
+          trap 'cp /tmp/requirements_original.txt requirements.txt' EXIT
+          python -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml
+          if ! git diff --exit-code -- backend/requirements.txt; then
+            echo "ERROR: requirements.txt is not up to date. Run make lock under Python 3.12."
+            exit 1
+          fi
       - name: Install backend dependencies
         run: |
           cd backend
