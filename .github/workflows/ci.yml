@@ -69,10 +69,12 @@ jobs:
           } catch {
             $failedAsExpected = $true
             Write-Host "Expected failure propagated: $($_.Exception.Message)"
+            $global:LASTEXITCODE = 0
           }
           if (-not $failedAsExpected) {
             throw "Expected self-test to fail"
           }
+          Write-Host "Native failure propagation verified."
 
   security:
     name: Static and dependency security
