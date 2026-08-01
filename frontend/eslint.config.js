@@ -6,7 +6,7 @@ export default [
   },
   js.configs.recommended,
   {
-    files: ['scripts/**/*.js'],
+    files: ['scripts/**/*.mjs'],
     languageOptions: {
       globals: {
         console: 'readonly',

@@ -1,8 +1,9 @@
-#!/usr/bin/env node
-// eslint-env node
-const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+import { execSync } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const exceptionsFile = path.join(__dirname, 'npm-audit-exceptions.md');
 const exceptions = fs.readFileSync(exceptionsFile, 'utf8');
