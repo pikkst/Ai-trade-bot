@@ -126,6 +126,10 @@ pluggy==1.6.0
     #   pytest-cov
 polars==1.33.1
     # via the-daily-roast-ai (pyproject.toml)
+psycopg[binary]==3.3.4
+    # via the-daily-roast-ai (pyproject.toml)
+psycopg-binary==3.3.4
+    # via psycopg
 py-serializable==2.1.0
     # via cyclonedx-python-lib
 pyasn1==0.6.4
@@ -205,6 +209,7 @@ typing-extensions==4.16.0
     #   mypy
     #   pydantic
     #   pydantic-core
+    #   psycopg
     #   sqlalchemy
     #   starlette
     #   typing-inspection
