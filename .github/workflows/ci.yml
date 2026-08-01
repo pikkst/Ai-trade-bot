@@ -159,8 +159,11 @@ jobs:
       - name: Verify failure propagation (intentional failing command)
         shell: bash
         run: |
+          set +e
           pwsh -NoProfile -ExecutionPolicy Bypass -File ".\tasks.ps1" self-test 2>&1
-          if [ $? -ne 0 ]; then echo "PASS: Non-zero exit code propagated through Invoke-Native"; else echo "FAIL: Non-zero exit code not propagated"; exit 1; fi
+          status=$?
+          set -e
+          if [ $status -ne 0 ]; then echo "PASS: Non-zero exit code propagated through Invoke-Native"; else echo "FAIL: Non-zero exit code not propagated"; exit 1; fi
 
   windows-commands:
     runs-on: windows-latest
@@ -216,4 +219,4 @@ jobs:
       - name: Run frontend dependency audit
         run: |
           cd frontend
-          npm audit --audit-level=high
+          node scripts/check-audit.js

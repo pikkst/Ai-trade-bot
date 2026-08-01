@@ -40,12 +40,6 @@ click==8.4.2
     # via
     #   pip-tools
     #   uvicorn
-colorama==0.4.6
-    # via
-    #   bandit
-    #   build
-    #   click
-    #   pytest
 cryptography==50.0.0
     # via google-auth
 cyclonedx-python-lib==11.11.0
