@@ -14,7 +14,6 @@ from sqlalchemy.exc import DBAPIError
 from alembic import command
 from app.authorization import WorkspaceRole, resolve_auth_context
 from app.database import (
-    DEFAULT_DATABASE_URL,
     build_engine,
     build_session_factory,
     transactional_session,
@@ -458,8 +457,15 @@ def test_trusted_role_graph_is_narrow(
 
 
 @pytest.mark.parametrize("trusted_role", ["app_workflow", "app_migration"])
-def test_request_runtime_cannot_assume_trusted_roles(trusted_role: str) -> None:
-    runtime_engine = build_engine(DEFAULT_DATABASE_URL)
+def test_request_runtime_cannot_assume_trusted_roles(
+    database_engine: Engine,
+    trusted_role: str,
+) -> None:
+    runtime_url = database_engine.url.set(
+        username="app_runtime",
+        password="app-runtime-local-only",
+    )
+    runtime_engine = build_engine(runtime_url.render_as_string(hide_password=False))
     try:
         with runtime_engine.connect() as connection:
             with pytest.raises(DBAPIError) as exc_info:
