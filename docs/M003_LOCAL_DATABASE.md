@@ -61,11 +61,12 @@ Supabase migrations:
 1. `20260801144500_m003_foundation.sql` — identity, workspace, membership, configuration, audit, market-data, and virtual-portfolio relations; private authorization helpers; forced RLS; initial policies and read views.
 2. `20260801150000_m003_data_api_grants.sql` — RLS-backed browser reads, approved views, service/workflow grants, and explicit browser-write denial.
 3. `20260801151000_m003_workflow_rls.sql` — workflow audit-read policy and service helper grants.
+4. `20260801170000_m003_local_admin_role_membership.sql` — permits only the local PostgreSQL administrator to assume the trusted workflow and migration roles for verification.
 
 Alembic compatibility head:
 
 ```text
-20260801151000
+20260801170000
 ```
 
 Alembic stores its version table in the non-Data-API `private` schema. Alembic revisions do not re-run the Supabase DDL. They fail closed when the expected Supabase schema or security configuration is missing.
@@ -114,6 +115,8 @@ Database execution roles covered by the verification matrix:
 - `app_workflow` — policy-controlled service workflow access;
 - `service_role` — trusted Supabase backend role;
 - `app_migration` — local migration/verification role with RLS bypass.
+
+The trusted application roles remain `NOLOGIN` and `NOINHERIT`. Only `app_migration` has `BYPASSRLS`, and only the local `postgres` administrator is granted membership in `app_workflow` and `app_migration`; browser and Data API roles cannot assume either role.
 
 ## Browser-write boundary
 

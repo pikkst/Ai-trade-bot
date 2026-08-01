@@ -4,6 +4,21 @@ All notable project changes are documented here.
 
 ## Unreleased
 
+### M003 — Local Supabase, Auth, Migrations, and RLS — 2026-08-01
+
+#### Added
+
+- Additive Supabase/Alembic migration chain, deterministic local seed, SQLAlchemy transaction boundary, Auth subject mapping, and owner/operator/viewer authorization foundation.
+- Forced-RLS browser read model, trusted workflow/migration roles, and migration, role-matrix, write-denial, workspace-isolation, and rollback verification.
+
+#### Fixed
+
+- Granted only the local PostgreSQL administrator membership in the trusted workflow and migration roles so the documented local verification path can exercise those roles without widening browser access.
+
+#### Safety
+
+- The foundation remains local-first and paper-only; browser identities cannot write financial, configuration, membership, audit, or market-data tables.
+
 ### M002 — Locked Toolchains and Baseline CI — 2026-08-01
 
 #### Added

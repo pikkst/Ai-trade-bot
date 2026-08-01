@@ -102,12 +102,13 @@ def test_supabase_migrations_seed_and_alembic_head(database_engine: Engine) -> N
                 where version in (
                     '20260801144500',
                     '20260801150000',
-                    '20260801151000'
+                    '20260801151000',
+                    '20260801170000'
                 )
                 """
             )
         ).scalar_one()
-        assert migration_count == 3
+        assert migration_count == 4
         assert (
             connection.execute(text("select count(*) from public.users")).scalar_one()
             == 3
@@ -138,7 +139,7 @@ def test_supabase_migrations_seed_and_alembic_head(database_engine: Engine) -> N
             connection.execute(
                 text("select version_num from private.alembic_version")
             ).scalar_one()
-            == "20260801151000"
+            == "20260801170000"
         )
 
 
@@ -413,3 +414,44 @@ def test_every_public_table_forces_rls_and_views_hide_raw_config(
         )
         assert "configuration" not in config_columns
         assert {"configuration_hash", "version", "workspace_id"} <= config_columns
+
+
+@pytest.mark.parametrize(
+    ("role", "expected_attributes"),
+    [
+        ("app_workflow", (False, False, False)),
+        ("app_migration", (False, False, True)),
+    ],
+)
+def test_trusted_role_graph_is_narrow(
+    database_engine: Engine,
+    role: str,
+    expected_attributes: tuple[bool, bool, bool],
+) -> None:
+    with database_engine.connect() as connection:
+        attributes = connection.execute(
+            text(
+                """
+                select rolcanlogin, rolinherit, rolbypassrls
+                from pg_roles
+                where rolname = :role
+                """
+            ),
+            {"role": role},
+        ).one()
+        members = list(
+            connection.execute(
+                text(
+                    """
+                    select pg_get_userbyid(member)
+                    from pg_auth_members
+                    where roleid = (select oid from pg_roles where rolname = :role)
+                    order by 1
+                    """
+                ),
+                {"role": role},
+            ).scalars()
+        )
+
+    assert tuple(attributes) == expected_attributes
+    assert members == ["postgres"]
