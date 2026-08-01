@@ -216,4 +216,4 @@ jobs:
       - name: Run frontend dependency audit
         run: |
           cd frontend
-          npm audit --audit-level=moderate
+          npm audit --audit-level=high
