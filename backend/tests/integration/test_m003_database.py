@@ -76,12 +76,20 @@ def test_supabase_migrations_seed_and_alembic_head(database_engine: Engine) -> N
             )
         ).scalar_one()
         assert migration_count == 3
-        assert connection.execute(text("select count(*) from public.users")).scalar_one() == 3
         assert (
-            connection.execute(text("select count(*) from public.workspaces")).scalar_one()
+            connection.execute(text("select count(*) from public.users")).scalar_one()
+            == 3
+        )
+        assert (
+            connection.execute(
+                text("select count(*) from public.workspaces")
+            ).scalar_one()
             == 1
         )
-        assert connection.execute(text("select count(*) from public.candles")).scalar_one() == 2
+        assert (
+            connection.execute(text("select count(*) from public.candles")).scalar_one()
+            == 2
+        )
         assert (
             connection.execute(
                 text("select cash_balance from public.virtual_portfolios")
@@ -94,9 +102,12 @@ def test_supabase_migrations_seed_and_alembic_head(database_engine: Engine) -> N
     command.upgrade(config, "head")
 
     with database_engine.connect() as connection:
-        assert connection.execute(
-            text("select version_num from private.alembic_version")
-        ).scalar_one() == "20260801151000"
+        assert (
+            connection.execute(
+                text("select version_num from private.alembic_version")
+            ).scalar_one()
+            == "20260801151000"
+        )
 
 
 @pytest.mark.parametrize(
@@ -129,36 +140,50 @@ def test_rls_role_matrix(
     with role_connection(
         database_engine, role=role, auth_subject=subject
     ) as connection:
-        assert connection.execute(
-            text("select count(*) from public.workspace_overview")
-        ).scalar_one() == workspace_count
-        assert connection.execute(
-            text("select count(*) from public.workspace_audit_read")
-        ).scalar_one() == audit_count
-        assert connection.execute(
-            text("select count(*) from public.current_workspace_memberships")
-        ).scalar_one() == membership_count
-        assert connection.execute(
-            text("select count(*) from public.current_user_profile")
-        ).scalar_one() == profile_count
+        assert (
+            connection.execute(
+                text("select count(*) from public.workspace_overview")
+            ).scalar_one()
+            == workspace_count
+        )
+        assert (
+            connection.execute(
+                text("select count(*) from public.workspace_audit_read")
+            ).scalar_one()
+            == audit_count
+        )
+        assert (
+            connection.execute(
+                text("select count(*) from public.current_workspace_memberships")
+            ).scalar_one()
+            == membership_count
+        )
+        assert (
+            connection.execute(
+                text("select count(*) from public.current_user_profile")
+            ).scalar_one()
+            == profile_count
+        )
 
 
 def test_anonymous_role_is_denied(database_engine: Engine) -> None:
-    with pytest.raises(DBAPIError), role_connection(
-        database_engine, role="anon", auth_subject=None
-    ) as connection:
+    with (
+        pytest.raises(DBAPIError),
+        role_connection(database_engine, role="anon", auth_subject=None) as connection,
+    ):
         connection.execute(text("select * from public.workspace_overview")).all()
 
 
-@pytest.mark.parametrize(
-    "subject", [OWNER_SUBJECT, OPERATOR_SUBJECT, VIEWER_SUBJECT]
-)
+@pytest.mark.parametrize("subject", [OWNER_SUBJECT, OPERATOR_SUBJECT, VIEWER_SUBJECT])
 def test_browser_roles_cannot_write_financial_state(
     database_engine: Engine, subject: UUID
 ) -> None:
-    with pytest.raises(DBAPIError), role_connection(
-        database_engine, role="authenticated", auth_subject=subject
-    ) as connection:
+    with (
+        pytest.raises(DBAPIError),
+        role_connection(
+            database_engine, role="authenticated", auth_subject=subject
+        ) as connection,
+    ):
         connection.execute(
             text(
                 """
@@ -244,7 +269,9 @@ def test_transaction_commit_and_rollback(database_engine: Engine) -> None:
 
     with database_engine.begin() as connection:
         connection.execute(
-            text("delete from public.audit_events where id in (:committed, :rolled_back)"),
+            text(
+                "delete from public.audit_events where id in (:committed, :rolled_back)"
+            ),
             {"committed": committed_id, "rolled_back": rolled_back_id},
         )
 
@@ -281,14 +308,20 @@ def test_transaction_commit_and_rollback(database_engine: Engine) -> None:
             raise RuntimeError("rollback test")
 
     with database_engine.begin() as connection:
-        assert connection.execute(
-            text("select count(*) from public.audit_events where id = :id"),
-            {"id": committed_id},
-        ).scalar_one() == 1
-        assert connection.execute(
-            text("select count(*) from public.audit_events where id = :id"),
-            {"id": rolled_back_id},
-        ).scalar_one() == 0
+        assert (
+            connection.execute(
+                text("select count(*) from public.audit_events where id = :id"),
+                {"id": committed_id},
+            ).scalar_one()
+            == 1
+        )
+        assert (
+            connection.execute(
+                text("select count(*) from public.audit_events where id = :id"),
+                {"id": rolled_back_id},
+            ).scalar_one()
+            == 0
+        )
         connection.execute(
             text("delete from public.audit_events where id = :id"),
             {"id": committed_id},
