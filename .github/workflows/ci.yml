@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
@@ -40,6 +39,34 @@ jobs:
         run: make lock-check
       - name: Run repository quality gate
         run: make quality
+
+  database:
+    name: Local Supabase migrations, Auth, and RLS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - uses: supabase/setup-cli@fddb7422b02b03c9cd4d91251bcd4b5438773777
+        with:
+          version: 2.101.0
+      - name: Install locked backend dependencies
+        run: |
+          make toolchain-bootstrap
+          python -m pip install -r backend/requirements.txt
+      - name: Start local Supabase
+        run: supabase start
+      - name: Reset, migrate, and seed local database
+        run: make local-reset
+      - name: Verify Alembic compatibility head
+        run: make alembic-upgrade
+      - name: Run migration, transaction, workspace, and RLS tests
+        run: make database-test
+      - name: Stop local Supabase
+        if: always()
+        run: supabase stop --no-backup
 
   windows-quality:
     name: Windows command parity
