@@ -105,8 +105,16 @@ jobs:
         run: |
           test -f .env.local || { echo "FAIL: .env.local not created"; exit 1; }
           test -f .env.test || { echo "FAIL: .env.test not created"; exit 1; }
-      - name: Verify bootstrap is idempotent (second run)
-        run: make bootstrap
+      - name: Verify bootstrap preserves existing env files (idempotent)
+        run: |
+          hash1=$(md5sum .env.local | awk '{print $1}')
+          hash2=$(md5sum .env.test | awk '{print $1}')
+          make bootstrap
+          hash1b=$(md5sum .env.local | awk '{print $1}')
+          hash2b=$(md5sum .env.test | awk '{print $1}')
+          if [ "$hash1" != "$hash1b" ]; then echo "FAIL: .env.local was overwritten"; exit 1; fi
+          if [ "$hash2" != "$hash2b" ]; then echo "FAIL: .env.test was overwritten"; exit 1; fi
+          echo "PASS: .env.local and .env.test preserved"
       - name: Run all-checks
         run: make all-checks
 
