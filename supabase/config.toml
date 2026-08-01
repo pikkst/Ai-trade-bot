@@ -1,0 +1,21 @@
+# Supabase local configuration for The Daily Roast AI
+# Local development uses Supabase CLI / PostgreSQL / Auth without a cloud project.
+
+[project]
+ref = "local-dev"
+organization_id = "local"
+
+[api]
+enabled = true
+port = 5432
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+
+[db]
+port = 5432
+
+[studio]
+enabled = true
+port = 54323
