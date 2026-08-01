@@ -30,7 +30,7 @@ jobs:
           cp requirements.txt /tmp/requirements_original.txt
           trap 'cp /tmp/requirements_original.txt requirements.txt' EXIT
           python -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml
-          if ! git diff --exit-code -- backend/requirements.txt; then
+          if ! git diff --exit-code -- requirements.txt; then
             echo "ERROR: requirements.txt is not up to date. Run make lock under Python 3.12."
             exit 1
           fi
@@ -53,6 +53,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: "lts/*"
@@ -156,19 +159,8 @@ jobs:
       - name: Verify failure propagation (intentional failing command)
         shell: bash
         run: |
-          pwsh -NoProfile -Command '$ErrorActionPreference = "Stop"
-          function Invoke-Native {
-              param([string]$Name, [Parameter(ValueFromRemainingArguments = $true)] [string[]]$Arguments)
-              try {
-                  & $Name @Arguments
-                  if ($LASTEXITCODE -ne 0) { throw "Command failed with exit code $LASTEXITCODE" }
-              } finally {}
-          }
-          $caught = $false
-          try { Invoke-Native cmd /c exit 1 } catch { $caught = $true }
-          if (-not $caught) { Write-Host "FAIL: Invoke-Native did not throw on failure"; exit 1 }
-          Write-Host "PASS: Non-zero exit code propagated"'
-          if [ $? -eq 0 ]; then echo "PASS: Non-zero exit code propagated"; else echo "FAIL: Non-zero exit code not propagated"; exit 1; fi
+          pwsh -NoProfile -ExecutionPolicy Bypass -File ".\tasks.ps1" self-test 2>&1
+          if [ $? -ne 0 ]; then echo "PASS: Non-zero exit code propagated through Invoke-Native"; else echo "FAIL: Non-zero exit code not propagated"; exit 1; fi
 
   windows-commands:
     runs-on: windows-latest
@@ -221,3 +213,7 @@ jobs:
           python -m pip install -r requirements.txt
       - name: Run security tests
         run: make security-test
+      - name: Run frontend dependency audit
+        run: |
+          cd frontend
+          npm audit --audit-level=moderate

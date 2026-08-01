@@ -243,6 +243,9 @@ switch ($Command) {
         }
         Write-Host "==> README structure matches implementation. Docs check passed." -ForegroundColor Green
     }
+    "self-test" {
+        Invoke-Native cmd /c exit 1
+    }
     "export-test" {
         Write-Host "ERROR: Export test not yet implemented. See M002+ for test infrastructure." -ForegroundColor Red
         exit 1
