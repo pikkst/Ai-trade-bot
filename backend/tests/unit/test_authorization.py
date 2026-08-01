@@ -35,9 +35,7 @@ class FakeSession:
         self.row = row
         self.parameters: dict[str, object] | None = None
 
-    def execute(
-        self, statement: object, parameters: dict[str, object]
-    ) -> FakeResult:
+    def execute(self, statement: object, parameters: dict[str, object]) -> FakeResult:
         assert "workspace_memberships" in str(statement)
         self.parameters = parameters
         return FakeResult(self.row)
