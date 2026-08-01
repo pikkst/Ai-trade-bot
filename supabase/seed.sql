@@ -74,8 +74,8 @@ set email = excluded.email,
 
 -- The Supabase CLI applies seed data against the bootstrap Auth schema before
 -- the Auth service finishes its own later schema migrations. At this stage,
--- identities use the legacy composite key (provider, id) and do not yet expose
--- provider_id. The Auth service upgrades these rows after startup.
+-- identities use UUID keys and do not yet expose provider_id. The Auth service
+-- upgrades these rows after startup.
 insert into auth.identities (
     id,
     user_id,
@@ -104,8 +104,10 @@ where user_row.id in (
     '00000000-0000-0000-0000-000000000102',
     '00000000-0000-0000-0000-000000000103'
 )
-on conflict (provider, id) do update
-set identity_data = excluded.identity_data,
+on conflict (id) do update
+set user_id = excluded.user_id,
+    identity_data = excluded.identity_data,
+    provider = excluded.provider,
     updated_at = excluded.updated_at;
 
 insert into public.users (id, auth_subject, email, display_name, account_state, created_at, updated_at)
