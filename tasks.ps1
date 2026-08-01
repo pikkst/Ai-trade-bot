@@ -12,7 +12,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$NODE_LTS_MIN = 20
+$NODE_LTS_ACCEPTED = @(20, 22)
 
 function Invoke-Native {
     param(
@@ -83,8 +83,9 @@ switch ($Command) {
         Fail-IfMissing "node" "Node.js LTS is required. See docs/LOCAL_DEVELOPMENT.md"
         $nodeVersion = node --version 2>&1
         $nodeMajor = [int]($nodeVersion -replace "v(\d+).*", '$1')
-        if ($nodeMajor -lt $NODE_LTS_MIN) {
-            Write-Host "ERROR: Node.js LTS ($NODE_LTS_MIN+) is required. Found: $nodeVersion" -ForegroundColor Red
+        $nodeAccepted = $NODE_LTS_ACCEPTED -contains $nodeMajor
+        if (-not $nodeAccepted) {
+            Write-Host "ERROR: Node.js LTS ($($NODE_LTS_ACCEPTED -join ', ')) is required. Found: $nodeVersion" -ForegroundColor Red
             exit 1
         }
         Fail-IfMissing "npm" "npm is required. See docs/LOCAL_DEVELOPMENT.md"

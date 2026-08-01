@@ -3,7 +3,7 @@
 PYTHON := python3
 PIP := $(PYTHON) -m pip
 FRONTEND := frontend
-NODE_LTS_MIN := 20
+NODE_LTS_ACCEPTED := 20 22
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'
@@ -17,7 +17,7 @@ bootstrap: ## Install dependencies and verify tools (L1.1)
 	@$(PYTHON) --version 2>&1 | grep -q "Python 3.12" || { echo "ERROR: Python 3.12 is required. See docs/LOCAL_DEVELOPMENT.md"; exit 1; }
 	@$(PYTHON) -m pip --version >/dev/null 2>&1 || { echo "ERROR: pip is not available. Install Python 3.12 with pip."; exit 1; }
 	@node --version >/dev/null 2>&1 || { echo "ERROR: Node.js is not installed. See docs/LOCAL_DEVELOPMENT.md"; exit 1; }
-	@node_major=$$(node -p "process.versions.node.split('.')[0]"); if [ "$$node_major" -lt $(NODE_LTS_MIN) ]; then echo "ERROR: Node.js LTS ($(NODE_LTS_MIN)+) is required. Found: $$(node --version)"; exit 1; fi
+	@node_major=$$(node -p "process.versions.node.split('.')[0]"); accepted=0; for v in $(NODE_LTS_ACCEPTED); do if [ "$$node_major" = "$$v" ]; then accepted=1; fi; done; if [ "$$accepted" -ne 1 ]; then echo "ERROR: Node.js LTS ($(NODE_LTS_ACCEPTED)) is required. Found: $$(node --version) (major: $$node_major)"; exit 1; fi
 	@npm --version >/dev/null 2>&1 || { echo "ERROR: npm is not installed. See docs/LOCAL_DEVELOPMENT.md"; exit 1; }
 	@docker compose version >/dev/null 2>&1 || { echo "ERROR: Docker Compose v2 is not installed. See docs/LOCAL_DEVELOPMENT.md"; exit 1; }
 	@supabase --version >/dev/null 2>&1 || { echo "ERROR: Supabase CLI is not installed. See docs/LOCAL_DEVELOPMENT.md"; exit 1; }
