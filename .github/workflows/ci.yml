@@ -1,4 +1,4 @@
-name: CI
+name: Baseline CI
 
 on:
   push:
@@ -9,224 +9,119 @@ on:
 permissions:
   contents: read
 
+env:
+  AI_PROVIDER: fake
+  GEMINI_ENABLED: "false"
+  ALLOW_PAID_PROVIDER_USAGE: "false"
+  LIVE_TRADING_ENABLED: "false"
+  PRIVATE_BINANCE_API_ENABLED: "false"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
 jobs:
-  format-lint-type-check:
-    runs-on: ubuntu-latest
+  quality:
+    name: Format, lint, type, unit, build
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v4
+          python-version-file: .python-version
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "lts/*"
-      - name: Install pip-tools for lock check
+          node-version-file: .nvmrc
+      - name: Install locked dependencies
         run: |
-          cd backend
-          python -m pip install -r requirements.txt
-      - name: Lock drift check
-        run: |
-          cd backend
-          cp requirements.txt /tmp/requirements_original.txt
-          trap 'cp /tmp/requirements_original.txt requirements.txt' EXIT
-          python -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml
-          python ../infrastructure/scripts/normalize_python_lock.py requirements.txt
-          if ! git diff --exit-code -- requirements.txt; then
-            echo "ERROR: requirements.txt is not up to date. Run make lock under Python 3.12."
-            exit 1
-          fi
-      - name: Install backend dependencies
-        run: |
-          cd backend
-          python -m pip install -r requirements.txt
-      - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm ci
-      - name: Format check
-        run: make format-check
-      - name: Lint
-        run: make lint
-      - name: Type check
-        run: make type-check
+          python -m pip install -r backend/requirements.txt
+          npm ci --prefix frontend
+      - name: Check dependency lock drift
+        run: make lock-check
+      - name: Run repository quality gate
+        run: make quality
 
-  test:
-    runs-on: ubuntu-latest
+  windows-quality:
+    name: Windows command parity
+    runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v4
+          python-version-file: .python-version
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "lts/*"
-      - name: Install frontend dependencies
+          node-version-file: .nvmrc
+      - name: Install locked dependencies
         run: |
-          cd frontend
-          npm ci
-      - name: Install backend dependencies
+          python -m pip install -r backend/requirements.txt
+          npm.cmd ci --prefix frontend
+      - name: Run repository quality gate
+        run: .\tasks.ps1 quality
+      - name: Verify native failure propagation
+        shell: pwsh
         run: |
-          cd backend
-          python -m pip install -r requirements.txt
-      - name: Run tests
-        run: make test
-
-  frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "lts/*"
-      - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm ci
-      - name: Lint
-        run: cd frontend && npm run lint
-      - name: Build
-        run: make frontend-build
-      - name: Frontend test
-        run: make frontend-test
-
-  docs-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check README structure matches implementation
-        run: make docs-check
-
-  bootstrap-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "lts/*"
-      - name: Install Supabase CLI
-        run: npm install -g supabase
-      - name: Run bootstrap
-        run: make bootstrap
-      - name: Verify .env files created
-        run: |
-          test -f .env.local || { echo "FAIL: .env.local not created"; exit 1; }
-          test -f .env.test || { echo "FAIL: .env.test not created"; exit 1; }
-      - name: Verify bootstrap preserves existing env files (idempotent)
-        run: |
-          hash1=$(md5sum .env.local | awk '{print $1}')
-          hash2=$(md5sum .env.test | awk '{print $1}')
-          make bootstrap
-          hash1b=$(md5sum .env.local | awk '{print $1}')
-          hash2b=$(md5sum .env.test | awk '{print $1}')
-          if [ "$hash1" != "$hash1b" ]; then echo "FAIL: .env.local was overwritten"; exit 1; fi
-          if [ "$hash2" != "$hash2b" ]; then echo "FAIL: .env.test was overwritten"; exit 1; fi
-          echo "PASS: .env.local and .env.test preserved"
-      - name: Run all-checks
-        run: make all-checks
-
-  bootstrap-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "lts/*"
-      - name: Install Supabase CLI
-        run: npm install -g supabase
-      - name: Run bootstrap
-        run: .\tasks.ps1 bootstrap
-      - name: Verify .env files created
-        run: |
-          if (-not (Test-Path ".env.local")) { Write-Host "FAIL: .env.local not created" -ForegroundColor Red; exit 1 }
-          if (-not (Test-Path ".env.test")) { Write-Host "FAIL: .env.test not created" -ForegroundColor Red; exit 1 }
-      - name: Verify bootstrap preserves existing env files (idempotent)
-        run: |
-          $hash1 = Get-FileHash ".env.local"
-          $hash2 = Get-FileHash ".env.test"
-          .\tasks.ps1 bootstrap
-          $hash1b = Get-FileHash ".env.local"
-          $hash2b = Get-FileHash ".env.test"
-          if ($hash1.Hash -ne $hash1b.Hash) { Write-Host "FAIL: .env.local was overwritten" -ForegroundColor Red; exit 1 }
-          if ($hash2.Hash -ne $hash2b.Hash) { Write-Host "FAIL: .env.test was overwritten" -ForegroundColor Red; exit 1 }
-          Write-Host "PASS: .env.local and .env.test preserved" -ForegroundColor Green
-      - name: Run all-checks
-        run: .\tasks.ps1 all-checks
-      - name: Verify failure propagation (intentional failing command)
-        shell: bash
-        run: |
-          set +e
-          pwsh -NoProfile -ExecutionPolicy Bypass -File ".\tasks.ps1" self-test 2>&1
-          status=$?
-          set -e
-          if [ $status -ne 0 ]; then echo "PASS: Non-zero exit code propagated through Invoke-Native"; else echo "FAIL: Non-zero exit code not propagated"; exit 1; fi
-
-  windows-commands:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "lts/*"
-      - name: Install backend dependencies
-        run: |
-          cd backend
-          python -m pip install -r requirements.txt
-      - name: Windows lock drift check
-        run: |
-          Copy-Item backend/requirements.txt "$env:RUNNER_TEMP/requirements-original.txt"
+          $failedAsExpected = $false
           try {
-            .\tasks.ps1 lock
-            git diff --exit-code -- backend/requirements.txt
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "ERROR: requirements.txt is not up to date for Windows. Run .\tasks.ps1 lock under Python 3.12." -ForegroundColor Red
-              exit 1
-            }
-          } finally {
-            Copy-Item "$env:RUNNER_TEMP/requirements-original.txt" backend/requirements.txt -Force
+            .\tasks.ps1 self-test
+          } catch {
+            $failedAsExpected = $true
+            Write-Host "Expected failure propagated: $($_.Exception.Message)"
           }
-      - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm ci
-      - name: Command help
-        run: .\tasks.ps1 help
-      - name: Lint
-        run: .\tasks.ps1 lint
-      - name: Type check
-        run: .\tasks.ps1 type-check
-      - name: Frontend test
-        run: .\tasks.ps1 frontend-test
-      - name: Research cycle smoke
-        run: .\tasks.ps1 research-cycle
-      - name: Docs check
-        run: .\tasks.ps1 docs-check
+          if (-not $failedAsExpected) {
+            throw "Expected self-test to fail"
+          }
 
   security:
-    runs-on: ubuntu-latest
+    name: Static and dependency security
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v4
+          python-version-file: .python-version
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "lts/*"
-      - name: Install backend dependencies
+          node-version-file: .nvmrc
+      - name: Install locked dependencies
         run: |
-          cd backend
-          python -m pip install -r requirements.txt
-      - name: Run security tests
-        run: make security-test
-      - name: Run frontend dependency audit
+          python -m pip install -r backend/requirements.txt
+          npm ci --prefix frontend
+      - name: Run repository security commands
         run: |
-          cd frontend
-          npm audit --audit-level=moderate
+          make security-test
+          make frontend-audit
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_SUMMARY: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+          GITLEAKS_VERSION: 8.30.1
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+
+  documentation:
+    name: Documentation links and task consistency
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Run repository documentation checks
+        run: make docs-check

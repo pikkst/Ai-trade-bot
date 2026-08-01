@@ -239,6 +239,12 @@ The project maintains repository-owned workflow classes for:
 
 Normal pull requests never access production data, production credentials, paid-provider keys, or private Binance APIs.
 
+### M002 Baseline
+
+The baseline pipeline installs Python with `backend/requirements.txt` and the frontend with `npm ci`, using the exact interpreter versions in `.python-version` and `.nvmrc`. The shared `quality` command enforces Ruff formatting/lint, MyPy strict, Pytest/Hypothesis with branch coverage, frontend lint/type/test/build, and deterministic documentation checks on Linux and Windows. Separate fail-closed jobs run Bandit, Python and frontend dependency audits, full-history secret scanning, and pull-request dependency review. CI actions use immutable commit SHAs and CI sets fake/disabled provider and live-trading flags explicitly.
+
+Until safety-critical domain modules exist, the baseline enforces 80% aggregate backend branch coverage. The documented 85% core-domain and 90% risk/execution/accounting thresholds become mandatory as those modules are introduced; a later task may raise thresholds but may not lower these targets to make a change pass.
+
 ## 13. Reliability and Recovery Tests
 
 Test interrupted cycles, duplicate delivery, GitHub scheduling delay, Render cold start, Supabase outage/pause, Gemini quota exhaustion, Binance timeout, partial transaction failure, export/restore, projection rebuild, reconciliation halt, failed migration/deployment, secret rotation, incident response, and rollback/forward fix.

@@ -279,15 +279,14 @@ Each listed commit was fetched from GitHub after creation.
 
 ## 16. Implementation-Dependent Artifacts
 
+M002 adds an automated `docs-check` procedure that validates local Markdown targets, the README authoritative-document inventory, and required sections in the classic detailed task catalogs. Unit tests deliberately exercise broken-link and malformed-card failures without committing invalid documentation.
+
 The following remain intentionally absent or incomplete until their mapped Master Tasks are implemented:
 
 - backend and frontend source;
-- dependency lock files and stable commands;
 - Supabase config, migrations, RLS, functions, and seed data;
-- GitHub Actions workflows;
 - generated OpenAPI and frontend types;
 - API, schema, error, event, permission, metric, migration, and test catalogs;
-- automated documentation-health output;
 - real cloud identifiers and public deployment URLs;
 - provider smoke evidence;
 - experiment, incident, performance, cost, data, and research-review evidence;

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 NORMALIZER = (
     Path(__file__).parents[3]
@@ -38,3 +41,18 @@ def test_lock_normalizer_produces_one_cross_platform_result(
     subprocess.run([sys.executable, NORMALIZER, lock_file], check=True)
 
     assert lock_file.read_text(encoding="utf-8") == EXPECTED
+
+
+@given(
+    st.sampled_from([EXPECTED, EXPECTED.replace("colorama==0.4.6", "colorama==9.9")])
+)
+def test_lock_normalizer_is_idempotent(compiled_lock: str) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        lock_file = Path(directory) / "requirements.txt"
+        lock_file.write_text(compiled_lock, encoding="utf-8")
+        subprocess.run([sys.executable, NORMALIZER, lock_file], check=True)
+        first_result = lock_file.read_text(encoding="utf-8")
+
+        subprocess.run([sys.executable, NORMALIZER, lock_file], check=True)
+
+        assert lock_file.read_text(encoding="utf-8") == first_result

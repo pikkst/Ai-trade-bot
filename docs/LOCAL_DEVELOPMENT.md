@@ -14,9 +14,9 @@ Implementation starts with `M001` in `/TASKS.md`. This document defines local be
 ## 2. Required Tooling
 
 - Git;
-- Python 3.12;
+- Python 3.12.12, selected by `/.python-version`;
 - the repository-selected Python package manager and committed lock file;
-- Node.js LTS and the committed frontend lock file;
+- Node.js 22.17.1, selected by `/.nvmrc`, and npm 10.9.2;
 - Docker Engine with Docker Compose v2 where required by Supabase CLI;
 - Supabase CLI;
 - PostgreSQL client tools where useful;
@@ -24,7 +24,7 @@ Implementation starts with `M001` in `/TASKS.md`. This document defines local be
 
 Tool versions must be pinned or documented. Repository commands must work on Windows 11 and at least one Unix-like environment. Platform-specific exceptions must be explicit and tested where practical.
 
-`backend/requirements.txt` is the shared Python 3.12 lock. Its direct `colorama==0.4.6 ; sys_platform == "win32"` entry makes the Windows-only tooling dependency deterministic without installing it on Linux. The `lock` command normalizes that marker after `pip-compile`, and CI checks the resulting file on both operating systems.
+`backend/requirements.txt` is the shared Python 3.12 lock. Its direct `colorama==0.4.6 ; sys_platform == "win32"` entry makes the Windows-only tooling dependency deterministic without installing it on Linux. The `lock` command normalizes that marker after `pip-compile`, and `lock-check` detects drift without retaining a generated local change. Frontend installation uses only `npm ci` and the committed lock.
 
 ## 3. Local Architecture
 
@@ -164,11 +164,13 @@ unit-test           run unit and property tests
 integration-test    run database, Auth, RLS, and integration tests
 contract-test       run provider and API contract tests
 e2e-test            run critical end-to-end flows
-security-test       run static, dependency, secret, and artifact checks
+security-test       run backend static and locked dependency checks
+frontend-audit      fail on moderate-or-higher frontend dependency findings
 docs-check          run documentation and generated-artifact checks
 export-test         create a test logical export
 restore-test        restore and reconcile in isolation
 all-checks          run the local pre-push quality gate
+quality             run the deterministic baseline quality gate
 ```
 
 Exact syntax may use `make`, `task`, package scripts, or repository scripts, but adopted command names and behavior must remain stable or be migrated through documentation and CI together.
