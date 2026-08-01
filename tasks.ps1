@@ -15,6 +15,11 @@ $ErrorActionPreference = "Stop"
 $NODE_LTS_ACCEPTED = @(20, 22, 24)
 $PIP_VERSION = "25.3"
 $PIP_TOOLS_VERSION = "7.6.0"
+$LOCAL_DATABASE_URL = if ($env:LOCAL_DATABASE_URL) {
+    $env:LOCAL_DATABASE_URL
+} else {
+    "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
+}
 
 function Invoke-Native {
     param(
@@ -49,9 +54,13 @@ Commands:
   integration-test      Run backend integration tests
   contract-test         Run backend contract tests
   e2e-test              Run E2E tests (not implemented in M001)
-  local-up              Start local Supabase and application dependencies
-  local-down            Stop local services
-  local-reset           Recreate database, migrations, and seed data
+  local-up              Start local Supabase and apply migrations/seed
+  local-down            Stop local Supabase while preserving state
+  local-migrate         Apply pending local Supabase migrations
+  local-reset           Recreate database, migrations, and deterministic seed
+  local-seed            Reapply deterministic seed from an empty database
+  alembic-upgrade       Upgrade PostgreSQL to the Alembic migration head
+  database-test         Run M003 transaction, workspace, and RLS tests
   api-dev               Run FastAPI with reload
   frontend-dev          Run Vite development server
   frontend-build        Build the frontend production bundle
@@ -206,12 +215,44 @@ switch ($Command) {
         Invoke-Native supabase stop
         Write-Host "==> Local services stopped." -ForegroundColor Green
     }
+    "local-migrate" {
+        Write-Host "==> Applying pending local Supabase migrations..." -ForegroundColor Cyan
+        Invoke-Native supabase migration up --local
+        Write-Host "==> Local migrations applied." -ForegroundColor Green
+    }
     "local-reset" {
-        Write-Host "==> Resetting local Supabase..." -ForegroundColor Cyan
-        Invoke-Native supabase stop
-        Invoke-Native supabase start
-        Invoke-Native supabase db reset
+        Write-Host "==> Resetting local Supabase and applying deterministic seed..." -ForegroundColor Cyan
+        Invoke-Native supabase db reset --local
         Write-Host "==> Local reset complete." -ForegroundColor Green
+    }
+    "local-seed" {
+        .\tasks.ps1 local-reset
+    }
+    "alembic-upgrade" {
+        Write-Host "==> Upgrading PostgreSQL to Alembic head..." -ForegroundColor Cyan
+        $previousDatabaseUrl = $env:DATABASE_URL
+        try {
+            $env:DATABASE_URL = $LOCAL_DATABASE_URL
+            Push-Location backend
+            Invoke-Native python -m alembic -c alembic.ini upgrade head
+        } finally {
+            Pop-Location
+            $env:DATABASE_URL = $previousDatabaseUrl
+        }
+        Write-Host "==> Alembic migration head applied." -ForegroundColor Green
+    }
+    "database-test" {
+        Write-Host "==> Running M003 database and RLS integration tests..." -ForegroundColor Cyan
+        $previousTestDatabaseUrl = $env:TEST_DATABASE_URL
+        try {
+            $env:TEST_DATABASE_URL = $LOCAL_DATABASE_URL
+            Push-Location backend
+            Invoke-Native python -m pytest --no-cov -m database tests/integration/ -v
+        } finally {
+            Pop-Location
+            $env:TEST_DATABASE_URL = $previousTestDatabaseUrl
+        }
+        Write-Host "==> Database tests complete." -ForegroundColor Green
     }
     "api-dev" {
         Write-Host "==> Starting FastAPI dev server..." -ForegroundColor Cyan
