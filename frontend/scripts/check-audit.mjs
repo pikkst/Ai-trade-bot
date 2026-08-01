@@ -17,12 +17,17 @@ try {
   });
   auditData = JSON.parse(output);
 } catch (e) {
+  const stdout = e.stdout || '';
   const stderr = e.stderr || '';
   try {
-    auditData = JSON.parse(stderr);
+    auditData = JSON.parse(stdout);
   } catch {
-    console.error('Failed to parse npm audit output');
-    process.exit(1);
+    try {
+      auditData = JSON.parse(stderr);
+    } catch {
+      console.error('Failed to parse npm audit output');
+      process.exit(1);
+    }
   }
 }
 
