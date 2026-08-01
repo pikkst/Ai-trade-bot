@@ -35,7 +35,9 @@ def fake_factory(session: FakeSession) -> sessionmaker[Any]:
     return cast(sessionmaker[Any], lambda: session)
 
 
-def test_database_url_defaults_and_allows_override(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_database_url_defaults_and_allows_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     assert database.database_url() == database.DEFAULT_DATABASE_URL
 
