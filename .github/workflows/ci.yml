@@ -151,21 +151,18 @@ jobs:
       - name: Verify failure propagation (intentional failing command)
         shell: pwsh
         run: |
-          $testScript = @"
-`$ErrorActionPreference = 'Stop'
-function Invoke-Native {
-    param([string]`$Name, [Parameter(ValueFromRemainingArguments = `$true)] [string[]]`$Arguments)
-    try {
-        & `$Name @Arguments
-        if (`$LASTEXITCODE -ne 0) { throw "Command failed with exit code `$LASTEXITCODE" }
-    } finally {}
-}
-Invoke-Native cmd /c exit 1
-"@
-          $testScript | Set-Content -Path "test_invoke_native.ps1"
-          powershell -NoProfile -ExecutionPolicy Bypass -File ".\test_invoke_native.ps1"
-          if ($LASTEXITCODE -ne 0) { Write-Host "PASS: Non-zero exit code propagated" -ForegroundColor Green }
-          else { Write-Host "FAIL: Non-zero exit code not propagated" -ForegroundColor Red; exit 1 }
+          $ErrorActionPreference = 'Stop'
+          function Invoke-Native {
+              param([string]$Name, [Parameter(ValueFromRemainingArguments = $true)] [string[]]$Arguments)
+              try {
+                  & $Name @Arguments
+                  if ($LASTEXITCODE -ne 0) { throw "Command failed with exit code $LASTEXITCODE" }
+              } finally {}
+          }
+          $caught = $false
+          try { Invoke-Native cmd /c exit 1 } catch { $caught = $true }
+          if (-not $caught) { Write-Host "FAIL: Invoke-Native did not throw on failure" -ForegroundColor Red; exit 1 }
+          Write-Host "PASS: Non-zero exit code propagated" -ForegroundColor Green
 
   windows-commands:
     runs-on: windows-latest
