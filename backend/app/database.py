@@ -11,9 +11,7 @@ from uuid import UUID
 from sqlalchemy import Engine, TextClause, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
-DEFAULT_DATABASE_URL = (
-    "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
-)
+DEFAULT_DATABASE_URL = "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
 DatabaseRole = Literal[
     "anon",
     "authenticated",
