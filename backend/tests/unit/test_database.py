@@ -69,9 +69,11 @@ def test_transactional_session_commits_and_closes() -> None:
 def test_transactional_session_rolls_back_and_closes() -> None:
     fake = FakeSession()
 
-    with pytest.raises(RuntimeError, match="boom"):
-        with database.transactional_session(fake_factory(fake)):
-            raise RuntimeError("boom")
+    with (
+        pytest.raises(RuntimeError, match="boom"),
+        database.transactional_session(fake_factory(fake)),
+    ):
+        raise RuntimeError("boom")
 
     assert not fake.committed
     assert fake.rolled_back
