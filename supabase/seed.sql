@@ -86,7 +86,7 @@ insert into auth.identities (
     updated_at
 )
 select
-    user_row.id::text,
+    user_row.id,
     user_row.id,
     jsonb_build_object(
         'sub', user_row.id::text,
