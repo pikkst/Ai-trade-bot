@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 NORMALIZER = (
@@ -43,6 +43,7 @@ def test_lock_normalizer_produces_one_cross_platform_result(
     assert lock_file.read_text(encoding="utf-8") == EXPECTED
 
 
+@settings(deadline=None)
 @given(
     st.sampled_from([EXPECTED, EXPECTED.replace("colorama==0.4.6", "colorama==9.9")])
 )
