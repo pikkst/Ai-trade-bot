@@ -122,7 +122,7 @@ switch ($Command) {
         Write-Host "==> Checking backend formatting..." -ForegroundColor Cyan
         try { Push-Location backend; Invoke-Native ruff format --check . } finally { Pop-Location }
         Write-Host "==> Checking frontend formatting..." -ForegroundColor Cyan
-        try { Push-Location frontend; Invoke-Native npx prettier --check . } finally { Pop-Location }
+        try { Push-Location frontend; Invoke-Native npm run format-check } finally { Pop-Location }
         Write-Host "==> Format check complete." -ForegroundColor Green
     }
     "lint" {
