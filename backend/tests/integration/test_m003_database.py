@@ -47,17 +47,21 @@ def role_connection(
     role: str,
     auth_subject: UUID | None,
 ) -> Iterator[Connection]:
-    with engine.connect() as connection, connection.begin():
-        connection.exec_driver_sql(f"set local role {role}")
-        connection.execute(
-            text("select set_config('request.jwt.claim.role', :role, true)"),
-            {"role": role},
-        )
-        connection.execute(
-            text("select set_config('request.jwt.claim.sub', :subject, true)"),
-            {"subject": "" if auth_subject is None else str(auth_subject)},
-        )
-        yield connection
+    with engine.connect() as connection:
+        transaction = connection.begin()
+        try:
+            connection.exec_driver_sql(f"set local role {role}")
+            connection.execute(
+                text("select set_config('request.jwt.claim.role', :role, true)"),
+                {"role": role},
+            )
+            connection.execute(
+                text("select set_config('request.jwt.claim.sub', :subject, true)"),
+                {"subject": "" if auth_subject is None else str(auth_subject)},
+            )
+            yield connection
+        finally:
+            transaction.rollback()
 
 
 def test_supabase_migrations_seed_and_alembic_head(database_engine: Engine) -> None:
