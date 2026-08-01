@@ -72,10 +72,13 @@ set email = excluded.email,
     raw_user_meta_data = excluded.raw_user_meta_data,
     updated_at = excluded.updated_at;
 
+-- The Supabase CLI applies seed data against the bootstrap Auth schema before
+-- the Auth service finishes its own later schema migrations. At this stage,
+-- identities use the legacy composite key (provider, id) and do not yet expose
+-- provider_id. The Auth service upgrades these rows after startup.
 insert into auth.identities (
     id,
     user_id,
-    provider_id,
     identity_data,
     provider,
     last_sign_in_at,
@@ -83,9 +86,8 @@ insert into auth.identities (
     updated_at
 )
 select
+    user_row.id::text,
     user_row.id,
-    user_row.id,
-    user_row.email,
     jsonb_build_object(
         'sub', user_row.id::text,
         'email', user_row.email,
@@ -102,7 +104,7 @@ where user_row.id in (
     '00000000-0000-0000-0000-000000000102',
     '00000000-0000-0000-0000-000000000103'
 )
-on conflict (provider_id, provider) do update
+on conflict (provider, id) do update
 set identity_data = excluded.identity_data,
     updated_at = excluded.updated_at;
 
