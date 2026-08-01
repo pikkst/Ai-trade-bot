@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// eslint-env node
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -8,7 +9,11 @@ const exceptions = fs.readFileSync(exceptionsFile, 'utf8');
 
 let auditData;
 try {
-  const output = execSync('npm audit --json', { cwd: __dirname, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  const output = execSync('npm audit --json', {
+    cwd: __dirname,
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
   auditData = JSON.parse(output);
 } catch (e) {
   const stderr = e.stderr || '';
@@ -24,10 +29,10 @@ const vulns = auditData.vulnerabilities || {};
 const allowlisted = new Set();
 
 const ghsaMatches = exceptions.match(/GHSA-[a-zA-Z0-9]+/g) || [];
-ghsaMatches.forEach(id => allowlisted.add(id));
+ghsaMatches.forEach((id) => allowlisted.add(id));
 
 const packageMatches = exceptions.match(/\*\*Package\*\*:\s*\S+/g) || [];
-packageMatches.forEach(m => {
+packageMatches.forEach((m) => {
   const pkg = m.replace(/\*\*Package\*\*:\s*/, '');
   allowlisted.add(pkg);
 });
@@ -35,7 +40,7 @@ packageMatches.forEach(m => {
 const nonAllowlisted = [];
 for (const [name, info] of Object.entries(vulns)) {
   const advisories = info.via || [];
-  const hasAllowlistedAdvisory = advisories.some(a => {
+  const hasAllowlistedAdvisory = advisories.some((a) => {
     if (typeof a === 'string' && a.startsWith('GHSA-')) return allowlisted.has(a);
     if (typeof a === 'object' && a.url && a.url.includes('GHSA-')) {
       const ghsaId = a.url.match(/GHSA-[a-zA-Z0-9]+/);
@@ -51,7 +56,7 @@ for (const [name, info] of Object.entries(vulns)) {
 
 if (nonAllowlisted.length > 0) {
   console.error('Non-allowlisted vulnerabilities found:');
-  nonAllowlisted.forEach(v => {
+  nonAllowlisted.forEach((v) => {
     console.error(`  ${v.name} (${v.severity}): ${JSON.stringify(v.via)}`);
   });
   process.exit(1);
