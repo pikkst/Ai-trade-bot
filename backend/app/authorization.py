@@ -76,6 +76,8 @@ def require_role(context: AuthContext, *allowed: WorkspaceRole) -> None:
     """Fail closed unless the resolved role is explicitly allowed."""
     if context.role not in allowed:
         allowed_values = ", ".join(role.value for role in allowed)
-        raise AuthorizationError(
-            f"Role {context.role.value} is not allowed; expected one of: {allowed_values}"
+        message = (
+            f"Role {context.role.value} is not allowed; "
+            f"expected one of: {allowed_values}"
         )
+        raise AuthorizationError(message)
