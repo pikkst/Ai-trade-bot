@@ -110,7 +110,7 @@ Every completed task records:
 
 # Stage A — Repository and Local Foundation
 
-## [ ] Master Task 1 — M001 Repository Scaffold and Shared Commands
+## [x] Master Task 1 — M001 Repository Scaffold and Shared Commands
 
 ### Outcome
 
@@ -145,7 +145,13 @@ Create the minimal backend/frontend repository structure and one cross-platform 
 
 A clean checkout can bootstrap the empty application skeleton with one documented command.
 
-## [i] Master Task 2 — M002 Locked Toolchains and Baseline CI
+### Verification Evidence
+
+- PR #1 was merged to `main` as `ff92f73`; its current head passed all eight repository CI jobs.
+- The merged scaffold, shared commands, Windows/Unix bootstrap paths, safe environment examples, backend smoke tests, frontend tests/build, and documentation checks were fetched and inspected before dependency advancement.
+- Cloud/database/provider credentials and live trading are not required by the scaffold.
+
+## [x] Master Task 2 — M002 Locked Toolchains and Baseline CI
 
 ### Outcome
 
@@ -187,7 +193,8 @@ Every pull request runs a deterministic baseline quality pipeline using reposito
 - Environment: normal CI explicitly uses the fake AI provider and disables Gemini, paid-provider usage, private Binance access, and live trading; no cache or artifact upload is configured.
 - Local verification: Python 3.12.12 locked install; Ruff format/lint; MyPy strict; 13 Pytest/Hypothesis tests with 90.91% branch coverage; Bandit; locked `pip-audit`; frontend format/lint/type/test/build; zero-finding `npm audit`; documentation consistency; workflow YAML/pin scan; and Gitleaks 8.30.1 over 245 commits with no leaks.
 - Failure proof: temporary lint, test, and broken-link probes returned non-zero status and were removed; the permanent regression tests retain broken-link, malformed-task, and command failure-propagation coverage.
-- Status remains `IMPLEMENTED_NOT_VERIFIED` until the draft PR checks pass and the fetched PR/commit is inspected.
+- PR #2 was merged to `main` as `242ff72`; the Windows Hypothesis timing regression was corrected separately in PR #4 and merged as `369f71b` after all repository CI jobs passed.
+- The merged commits were fetched and inspected; the local Windows `quality` gate passed with backend/frontend tests, lint, type checks, build, and documentation checks.
 - Deferred to mapped later tasks: database/Auth/RLS integration (`M003`/`M026`), frontend accessibility/E2E and bundle inspection (`M015`/`M024`/`M026`), provider contracts (`M006`), and release-stage Semgrep/Trivy/SBOM/provenance gates (`M026`/`M027`/`M036`).
 
 ## [i] Master Task 3 — M003 Local Supabase, Migrations, Auth, and RLS Foundation
