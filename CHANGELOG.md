@@ -4,6 +4,24 @@ All notable project changes are documented here.
 
 ## Unreleased
 
+### M002 — Locked Toolchains and Baseline CI — 2026-08-01
+
+#### Added
+
+- Exact Python, Node, and npm selectors plus reproducible Python/frontend lock installation.
+- Repository-owned baseline quality, dependency-audit, and documentation consistency commands for PowerShell and Make.
+- Pytest branch coverage enforcement and Hypothesis coverage for deterministic lock normalization.
+- Pull-request secret scanning, dependency review, and local Markdown/task-card validation.
+
+#### Changed
+
+- Pinned every GitHub Action to an immutable commit and every CI runner/tool selector to a non-floating version.
+- Made normal CI explicitly fake-provider, paid-provider-disabled, private-exchange-disabled, and live-trading-disabled.
+
+#### Safety
+
+- CI creates no caches or artifacts containing environment files, logs, scan output, provider data, or credentials.
+
 ### M001 Review Fixes — 2026-08-01
 
 #### Changed

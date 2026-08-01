@@ -364,6 +364,8 @@ Required controls:
 
 No release proceeds with unresolved critical findings or high findings outside a permitted time-limited exception with compensating controls and expiry.
 
+For M002, normal pull requests use read-only repository permissions, immutable action SHAs, exact Python/Node selectors, locked dependency installation, Bandit, `pip-audit`, `npm audit`, Gitleaks history scanning, and GitHub dependency review. Workflows do not cache or upload environment files, logs, scan reports, or dependency artifacts, and receive no production data, paid-provider credentials, Gemini keys, or private Binance credentials. Semgrep, bundle inspection, Trivy, SBOM, and release provenance remain enforced by their mapped later implementation/release gates when applicable; their absence from the scaffold is not an exception for a release that requires them.
+
 ## 18. Incident Response
 
 Incident states are distinct:

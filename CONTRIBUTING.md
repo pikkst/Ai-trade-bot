@@ -104,6 +104,8 @@ Run the repository commands required by the selected Master Task for:
 
 Do not claim a command passed unless it was executed and its result recorded.
 
+For the M002 baseline, run `make quality` on Unix-like systems or `.\tasks.ps1 quality` on Windows. Run the separate `security-test` and `frontend-audit` commands before requesting review. Dependency locks are authoritative installation inputs; regenerate them only with the pinned Python/Node toolchains and verify drift with `lock-check`.
+
 ## 8. Pull Request Evidence
 
 Every pull request should include:

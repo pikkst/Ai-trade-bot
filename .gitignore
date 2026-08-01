@@ -12,6 +12,11 @@
 __pycache__/
 *.pyc
 *.pyo
+.coverage
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
 .venv/
 venv/
 
@@ -19,6 +24,7 @@ venv/
 node_modules/
 dist/
 build/
+*.tsbuildinfo
 
 # IDE
 .idea/

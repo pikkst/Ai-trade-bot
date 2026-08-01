@@ -1,18 +1,32 @@
-.PHONY: bootstrap format lint type-check test local-up local-down local-reset api-dev frontend-dev frontend-build frontend-test research-cycle all-checks help export-test restore-test security-test docs-check unit-test integration-test contract-test e2e-test lock format-check
+.PHONY: bootstrap toolchain-bootstrap format lint type-check test local-up local-down local-reset api-dev frontend-dev frontend-build frontend-test research-cycle all-checks quality help export-test restore-test security-test frontend-audit docs-check unit-test integration-test contract-test e2e-test lock lock-check format-check
 
 PYTHON := python3
 PIP := $(PYTHON) -m pip
+PIP_VERSION := 25.3
+PIP_TOOLS_VERSION := 7.6.0
 FRONTEND := frontend
 NODE_LTS_ACCEPTED := 20 22 24
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'
 
+toolchain-bootstrap: ## Install the pinned Python packaging toolchain
+	$(PIP) install --upgrade "pip==$(PIP_VERSION)"
+	$(PIP) install "pip-tools==$(PIP_TOOLS_VERSION)"
+
 lock: ## Regenerate the Python lock file under Python 3.12
 	@$(PYTHON) --version 2>&1 | grep -q "Python 3.12" || { echo "ERROR: Python 3.12 is required to regenerate the lock file."; exit 1; }
+	$(MAKE) toolchain-bootstrap
 	cd backend && $(PYTHON) -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml
 	$(PYTHON) infrastructure/scripts/normalize_python_lock.py backend/requirements.txt
 	@echo "==> Python lock file regenerated under Python 3.12."
+
+lock-check: ## Fail when either dependency lock is stale
+	@backup=$$(mktemp); cp backend/requirements.txt "$$backup"; \
+	set -e; trap 'cp "$$backup" backend/requirements.txt; rm -f "$$backup"' EXIT; \
+	$(MAKE) lock; \
+	git diff --exit-code -- backend/requirements.txt
+	cd $(FRONTEND) && npm ci
 
 bootstrap: ## Install dependencies and verify tools (L1.1)
 	@echo "==> Verifying prerequisites..."
@@ -28,6 +42,8 @@ bootstrap: ## Install dependencies and verify tools (L1.1)
 	@echo "==> Creating local environment files from examples..."
 	@if [ ! -f .env.local ]; then cp .env.example .env.local; echo "Created .env.local"; else echo ".env.local already exists, skipping"; fi
 	@if [ ! -f .env.test ]; then cp .env.example .env.test; echo "Created .env.test"; else echo ".env.test already exists, skipping"; fi
+	@echo "==> Installing pinned Python packaging tools..."
+	$(MAKE) toolchain-bootstrap
 	@echo "==> Installing backend dependencies..."
 	cd backend && $(PIP) install -r requirements.txt
 	@echo "==> Installing frontend dependencies..."
@@ -35,19 +51,19 @@ bootstrap: ## Install dependencies and verify tools (L1.1)
 	@echo "==> Bootstrap complete."
 
 format: ## Format supported languages
-	cd backend && ruff format .
+	cd backend && ruff format app tests ../infrastructure/scripts
 	cd $(FRONTEND) && npx prettier --write .
 
 format-check: ## Check formatting without modifying files
-	cd backend && ruff format --check .
+	cd backend && ruff format --check app tests ../infrastructure/scripts
 	cd $(FRONTEND) && npx prettier --check .
 
 lint: ## Run lint checks
-	cd backend && ruff check .
+	cd backend && ruff check app tests ../infrastructure/scripts
 	cd $(FRONTEND) && npm run lint
 
 type-check: ## Run static type checks
-	cd backend && mypy app
+	cd backend && mypy app ../infrastructure/scripts
 	cd $(FRONTEND) && npm run type-check
 
 test: ## Run unit and property tests
@@ -58,10 +74,10 @@ unit-test: ## Run backend unit tests
 	cd backend && $(PYTHON) -m pytest tests/unit/ -v
 
 integration-test: ## Run backend integration tests
-	cd backend && $(PYTHON) -m pytest tests/integration/ -v
+	cd backend && $(PYTHON) -m pytest --no-cov tests/integration/ -v
 
 contract-test: ## Run backend contract tests
-	cd backend && $(PYTHON) -m pytest tests/contract/ -v
+	cd backend && $(PYTHON) -m pytest --no-cov tests/contract/ -v
 
 e2e-test: ## Run E2E tests (not implemented in M001)
 	@echo "ERROR: E2E tests not yet implemented. See M002+ for test infrastructure."
@@ -98,26 +114,19 @@ frontend-test: ## Run frontend tests
 research-cycle: ## Run one deterministic research cycle
 	cd backend && $(PYTHON) -m app.cli.run_research_cycle --experiment-id dummy --occurrence 2026-01-01T00:00:00Z
 
-all-checks: format-check lint type-check test frontend-build frontend-test ## Run the local pre-push quality gate
+quality: format-check lint type-check test frontend-build docs-check ## Run the deterministic baseline quality gate
+
+all-checks: quality ## Run the local pre-push quality gate
 
 security-test: ## Run static analysis and Python dependency audit
-	cd backend && bandit -r app/
-	cd backend && pip-audit
+	cd backend && bandit -r app/ ../infrastructure/scripts/
+	cd backend && pip-audit --requirement requirements.txt
+
+frontend-audit: ## Fail on moderate-or-higher frontend dependency findings
+	cd $(FRONTEND) && npm audit --audit-level=moderate
 
 docs-check: ## Run documentation and generated-artifact checks
-	@echo "==> Checking README structure matches implementation..."
-	@errors=0; \
-	for f in backend/app/main.py frontend/src/App.tsx supabase/config.toml Makefile tasks.ps1 .env.example .gitignore backend/requirements.txt frontend/package-lock.json frontend/public supabase/migrations tests generated-artifacts cloudflare-pages.toml frontend/.prettierrc frontend/vitest.config.ts backend/app/cli/run_research_cycle.py backend/tests/unit/test_main.py infrastructure/scripts/normalize_python_lock.py; do \
-		if [ ! -e "$$f" ]; then \
-			echo "FAIL: $$f missing"; \
-			errors=$$((errors + 1)); \
-		fi; \
-	done; \
-	if [ $$errors -gt 0 ]; then \
-		echo "Docs check failed: $$errors path(s) missing"; \
-		exit 1; \
-	fi; \
-	echo "==> README structure matches implementation. Docs check passed."
+	$(PYTHON) infrastructure/scripts/check_docs.py
 
 export-test: ## Create a test logical export
 	@echo "ERROR: Export test not yet implemented. See M002+ for test infrastructure."

@@ -246,10 +246,13 @@ Production research means production-quality research and paper trading. It does
 | `make local-reset` or `.\tasks.ps1 local-reset` | Recreate database, migrations, and seed data |
 | `make api-dev` or `.\tasks.ps1 api-dev` | Run FastAPI with reload |
 | `make research-cycle` or `.\tasks.ps1 research-cycle` | Run one deterministic research cycle |
+| `make quality` or `.\tasks.ps1 quality` | Run format, lint, strict types, tests, build, and documentation checks |
+| `make security-test` or `.\tasks.ps1 security-test` | Run Bandit and the locked Python dependency audit |
+| `make frontend-audit` or `.\tasks.ps1 frontend-audit` | Fail on moderate-or-higher frontend dependency findings |
 | `make all-checks` or `.\tasks.ps1 all-checks` | Run the local pre-push quality gate |
-| `make docs-check` or `.\tasks.ps1 docs-check` | Validate repository structure matches README |
+| `make docs-check` or `.\tasks.ps1 docs-check` | Validate local links, authoritative inventory, and detailed task-card structure |
 
-All commands work on Windows PowerShell and Unix-like shells. No database, Gemini, Binance, or cloud credential is required for the default local profile.
+Python and Node versions are selected by `.python-version` and `.nvmrc`; Python and frontend installations use `backend/requirements.txt` and `frontend/package-lock.json`. All commands work on Windows PowerShell and Unix-like shells. No database, Gemini, Binance, or cloud credential is required for the default local or CI profile.
 
 ## Authoritative Documentation
 

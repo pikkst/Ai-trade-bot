@@ -145,7 +145,7 @@ Create the minimal backend/frontend repository structure and one cross-platform 
 
 A clean checkout can bootstrap the empty application skeleton with one documented command.
 
-## [ ] Master Task 2 — M002 Locked Toolchains and Baseline CI
+## [i] Master Task 2 — M002 Locked Toolchains and Baseline CI
 
 ### Outcome
 
@@ -177,6 +177,18 @@ Establish reproducible Python and Node dependency installation plus baseline qua
 ### Completion Gate
 
 Every pull request runs a deterministic baseline quality pipeline using repository-owned commands.
+
+### Implementation Evidence
+
+- Selected detailed cards: `L1.3` command extensions, `L2.1` baseline tooling/coverage, and `L2.5` documentation consistency.
+- Toolchains and locks: `.python-version`, `.nvmrc`, `backend/requirements.txt`, and `frontend/package-lock.json`.
+- Shared commands: `Makefile` and `tasks.ps1` expose `quality`, `lock-check`, `security-test`, `frontend-audit`, and `docs-check` with non-zero failure propagation.
+- CI/security: immutable action SHAs, fixed runner/tool selectors, read-only default permissions, Ruff, MyPy strict, Pytest/Hypothesis/coverage, Bandit, dependency audits/review, Gitleaks, frontend test/build, and deterministic documentation checks.
+- Environment: normal CI explicitly uses the fake AI provider and disables Gemini, paid-provider usage, private Binance access, and live trading; no cache or artifact upload is configured.
+- Local verification: Python 3.12.12 locked install; Ruff format/lint; MyPy strict; 13 Pytest/Hypothesis tests with 90.91% branch coverage; Bandit; locked `pip-audit`; frontend format/lint/type/test/build; zero-finding `npm audit`; documentation consistency; workflow YAML/pin scan; and Gitleaks 8.30.1 over 245 commits with no leaks.
+- Failure proof: temporary lint, test, and broken-link probes returned non-zero status and were removed; the permanent regression tests retain broken-link, malformed-task, and command failure-propagation coverage.
+- Status remains `IMPLEMENTED_NOT_VERIFIED` until the draft PR checks pass and the fetched PR/commit is inspected.
+- Deferred to mapped later tasks: database/Auth/RLS integration (`M003`/`M026`), frontend accessibility/E2E and bundle inspection (`M015`/`M024`/`M026`), provider contracts (`M006`), and release-stage Semgrep/Trivy/SBOM/provenance gates (`M026`/`M027`/`M036`).
 
 ## [ ] Master Task 3 — M003 Local Supabase, Migrations, Auth, and RLS Foundation
 

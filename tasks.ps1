@@ -13,6 +13,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $NODE_LTS_ACCEPTED = @(20, 22, 24)
+$PIP_VERSION = "25.3"
+$PIP_TOOLS_VERSION = "7.6.0"
 
 function Invoke-Native {
     param(
@@ -34,31 +36,35 @@ function Show-Help {
 Usage: .\tasks.ps1 <command>
 
 Commands:
-  bootstrap         Install dependencies and verify tools (L1.1)
-  lock              Regenerate the Python lock file under Python 3.12
-  format            Format supported languages
-  format-check      Check formatting without modifying files
-  lint              Run lint checks
-  type-check        Run static type checks
-  test              Run unit and property tests
-  unit-test         Run backend unit tests
-  integration-test  Run backend integration tests
-  contract-test     Run backend contract tests
-  e2e-test          Run E2E tests (not implemented in M001)
-  local-up          Start local Supabase and application dependencies
-  local-down        Stop local services
-  local-reset       Recreate database, migrations, and seed data
-  api-dev           Run FastAPI with reload
-  frontend-dev      Run Vite development server
-  frontend-build    Build the frontend production bundle
-  frontend-test     Run frontend tests
-  research-cycle    Run one deterministic research cycle
-  all-checks        Run the local pre-push quality gate
-  security-test     Run static analysis and Python dependency audit
-  docs-check        Run documentation and generated-artifact checks
-  export-test       Create a test logical export (not implemented in M001)
-  restore-test      Restore and reconcile in isolation (not implemented in M001)
-  help              Show this help
+  bootstrap             Install dependencies and verify tools (L1.1)
+  toolchain-bootstrap   Install the pinned Python packaging toolchain
+  lock                  Regenerate the Python lock file under Python 3.12
+  lock-check            Fail when either dependency lock is stale
+  format                Format supported languages
+  format-check          Check formatting without modifying files
+  lint                  Run lint checks
+  type-check            Run static type checks
+  test                  Run unit and property tests
+  unit-test             Run backend unit tests
+  integration-test      Run backend integration tests
+  contract-test         Run backend contract tests
+  e2e-test              Run E2E tests (not implemented in M001)
+  local-up              Start local Supabase and application dependencies
+  local-down            Stop local services
+  local-reset           Recreate database, migrations, and seed data
+  api-dev               Run FastAPI with reload
+  frontend-dev          Run Vite development server
+  frontend-build        Build the frontend production bundle
+  frontend-test         Run frontend tests
+  research-cycle        Run one deterministic research cycle
+  all-checks            Run the local pre-push quality gate
+  quality               Run the deterministic baseline quality gate
+  security-test         Run static analysis and Python dependency audit
+  frontend-audit        Run the frontend dependency audit
+  docs-check            Run documentation and generated-artifact checks
+  export-test           Create a test logical export (not implemented in M001)
+  restore-test          Restore and reconcile in isolation (not implemented in M001)
+  help                  Show this help
 "@
 }
 
@@ -100,11 +106,19 @@ switch ($Command) {
         Write-Host "==> Creating local environment files from examples..." -ForegroundColor Cyan
         if (-not (Test-Path ".env.local")) { Copy-Item .env.example .env.local; Write-Host "Created .env.local" } else { Write-Host ".env.local already exists, skipping" }
         if (-not (Test-Path ".env.test")) { Copy-Item .env.example .env.test; Write-Host "Created .env.test" } else { Write-Host ".env.test already exists, skipping" }
+        Write-Host "==> Installing pinned Python packaging tools..." -ForegroundColor Cyan
+        .\tasks.ps1 toolchain-bootstrap
         Write-Host "==> Installing backend dependencies..." -ForegroundColor Cyan
         try { Push-Location backend; Invoke-Native python -m pip install -r requirements.txt } finally { Pop-Location }
         Write-Host "==> Installing frontend dependencies..." -ForegroundColor Cyan
         try { Push-Location frontend; Invoke-Native npm ci } finally { Pop-Location }
         Write-Host "==> Bootstrap complete." -ForegroundColor Green
+    }
+    "toolchain-bootstrap" {
+        Write-Host "==> Installing pinned Python packaging toolchain..." -ForegroundColor Cyan
+        Invoke-Native python -m pip install --upgrade "pip==$PIP_VERSION"
+        Invoke-Native python -m pip install "pip-tools==$PIP_TOOLS_VERSION"
+        Write-Host "==> Python packaging toolchain ready." -ForegroundColor Green
     }
     "lock" {
         Write-Host "==> Regenerating Python lock file..." -ForegroundColor Cyan
@@ -113,34 +127,48 @@ switch ($Command) {
             Write-Host "ERROR: Python 3.12 is required. Found: $pyVersion" -ForegroundColor Red
             exit 1
         }
+        .\tasks.ps1 toolchain-bootstrap
         try { Push-Location backend; Invoke-Native python -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml } finally { Pop-Location }
         Invoke-Native python infrastructure/scripts/normalize_python_lock.py backend/requirements.txt
         Write-Host "==> Lock file regenerated." -ForegroundColor Green
     }
+    "lock-check" {
+        $backup = Join-Path $env:TEMP "daily-roast-requirements-$PID.txt"
+        Copy-Item backend/requirements.txt $backup
+        try {
+            .\tasks.ps1 lock
+            Invoke-Native git diff --exit-code -- backend/requirements.txt
+        } finally {
+            Copy-Item $backup backend/requirements.txt -Force
+            Remove-Item $backup -Force
+        }
+        try { Push-Location frontend; Invoke-Native npm ci } finally { Pop-Location }
+        Write-Host "==> Dependency locks are current." -ForegroundColor Green
+    }
     "format" {
         Write-Host "==> Formatting backend..." -ForegroundColor Cyan
-        try { Push-Location backend; Invoke-Native ruff format . } finally { Pop-Location }
+        try { Push-Location backend; Invoke-Native ruff format app tests ../infrastructure/scripts } finally { Pop-Location }
         Write-Host "==> Formatting frontend..." -ForegroundColor Cyan
         try { Push-Location frontend; Invoke-Native npx prettier --write . } finally { Pop-Location }
         Write-Host "==> Format complete." -ForegroundColor Green
     }
     "format-check" {
         Write-Host "==> Checking backend formatting..." -ForegroundColor Cyan
-        try { Push-Location backend; Invoke-Native ruff format --check . } finally { Pop-Location }
+        try { Push-Location backend; Invoke-Native ruff format --check app tests ../infrastructure/scripts } finally { Pop-Location }
         Write-Host "==> Checking frontend formatting..." -ForegroundColor Cyan
         try { Push-Location frontend; Invoke-Native npm run format-check } finally { Pop-Location }
         Write-Host "==> Format check complete." -ForegroundColor Green
     }
     "lint" {
         Write-Host "==> Linting backend..." -ForegroundColor Cyan
-        try { Push-Location backend; Invoke-Native ruff check . } finally { Pop-Location }
+        try { Push-Location backend; Invoke-Native ruff check app tests ../infrastructure/scripts } finally { Pop-Location }
         Write-Host "==> Linting frontend..." -ForegroundColor Cyan
         try { Push-Location frontend; Invoke-Native npm run lint } finally { Pop-Location }
         Write-Host "==> Lint complete." -ForegroundColor Green
     }
     "type-check" {
         Write-Host "==> Type-checking backend..." -ForegroundColor Cyan
-        try { Push-Location backend; Invoke-Native mypy app } finally { Pop-Location }
+        try { Push-Location backend; Invoke-Native mypy app ../infrastructure/scripts } finally { Pop-Location }
         Write-Host "==> Type-checking frontend..." -ForegroundColor Cyan
         try { Push-Location frontend; Invoke-Native npm run type-check } finally { Pop-Location }
         Write-Host "==> Type-check complete." -ForegroundColor Green
@@ -158,11 +186,11 @@ switch ($Command) {
     }
     "integration-test" {
         Write-Host "==> Running backend integration tests..." -ForegroundColor Cyan
-        try { Push-Location backend; Invoke-Native python -m pytest tests/integration/ -v } finally { Pop-Location }
+        try { Push-Location backend; Invoke-Native python -m pytest --no-cov tests/integration/ -v } finally { Pop-Location }
     }
     "contract-test" {
         Write-Host "==> Running backend contract tests..." -ForegroundColor Cyan
-        try { Push-Location backend; Invoke-Native python -m pytest tests/contract/ -v } finally { Pop-Location }
+        try { Push-Location backend; Invoke-Native python -m pytest --no-cov tests/contract/ -v } finally { Pop-Location }
     }
     "e2e-test" {
         Write-Host "ERROR: E2E tests not yet implemented. See M002+ for test infrastructure." -ForegroundColor Red
@@ -206,44 +234,26 @@ switch ($Command) {
         try { Push-Location backend; Invoke-Native python -m app.cli.run_research_cycle --experiment-id dummy --occurrence 2026-01-01T00:00:00Z } finally { Pop-Location }
     }
     "all-checks" {
+        .\tasks.ps1 quality
+    }
+    "quality" {
         .\tasks.ps1 format-check
         .\tasks.ps1 lint
         .\tasks.ps1 type-check
         .\tasks.ps1 test
         .\tasks.ps1 frontend-build
-        .\tasks.ps1 frontend-test
+        .\tasks.ps1 docs-check
     }
     "security-test" {
         Write-Host "==> Running security tests..." -ForegroundColor Cyan
-        try { Push-Location backend; Invoke-Native bandit -r app/; Invoke-Native pip-audit } finally { Pop-Location }
+        try { Push-Location backend; Invoke-Native bandit -r app/ ../infrastructure/scripts/; Invoke-Native pip-audit --requirement requirements.txt } finally { Pop-Location }
+    }
+    "frontend-audit" {
+        Write-Host "==> Auditing frontend dependencies..." -ForegroundColor Cyan
+        try { Push-Location frontend; Invoke-Native npm audit --audit-level=moderate } finally { Pop-Location }
     }
     "docs-check" {
-        Write-Host "==> Checking README structure matches implementation..." -ForegroundColor Cyan
-        $errors = @()
-        if (-not (Test-Path "backend/app/main.py")) { $errors += "backend/app/main.py missing" }
-        if (-not (Test-Path "frontend/src/App.tsx")) { $errors += "frontend/src/App.tsx missing" }
-        if (-not (Test-Path "supabase/config.toml")) { $errors += "supabase/config.toml missing" }
-        if (-not (Test-Path "Makefile")) { $errors += "Makefile missing" }
-        if (-not (Test-Path "tasks.ps1")) { $errors += "tasks.ps1 missing" }
-        if (-not (Test-Path ".env.example")) { $errors += ".env.example missing" }
-        if (-not (Test-Path ".gitignore")) { $errors += ".gitignore missing" }
-        if (-not (Test-Path "backend/requirements.txt")) { $errors += "backend/requirements.txt missing" }
-        if (-not (Test-Path "frontend/package-lock.json")) { $errors += "frontend/package-lock.json missing" }
-        if (-not (Test-Path "frontend/public")) { $errors += "frontend/public/ missing" }
-        if (-not (Test-Path "supabase/migrations")) { $errors += "supabase/migrations/ missing" }
-        if (-not (Test-Path "tests")) { $errors += "tests/ missing" }
-        if (-not (Test-Path "generated-artifacts")) { $errors += "generated-artifacts/ missing" }
-        if (-not (Test-Path "cloudflare-pages.toml")) { $errors += "cloudflare-pages.toml missing" }
-        if (-not (Test-Path "frontend/.prettierrc")) { $errors += "frontend/.prettierrc missing" }
-        if (-not (Test-Path "frontend/vitest.config.ts")) { $errors += "frontend/vitest.config.ts missing" }
-        if (-not (Test-Path "backend/app/cli/run_research_cycle.py")) { $errors += "backend/app/cli/run_research_cycle.py missing" }
-        if (-not (Test-Path "backend/tests/unit/test_main.py")) { $errors += "backend/tests/unit/test_main.py missing" }
-        if (-not (Test-Path "infrastructure/scripts/normalize_python_lock.py")) { $errors += "infrastructure/scripts/normalize_python_lock.py missing" }
-        if ($errors.Count -gt 0) {
-            foreach ($e in $errors) { Write-Host "FAIL: $e" -ForegroundColor Red }
-            exit 1
-        }
-        Write-Host "==> README structure matches implementation. Docs check passed." -ForegroundColor Green
+        Invoke-Native python infrastructure/scripts/check_docs.py
     }
     "self-test" {
         Invoke-Native cmd /c exit 1
