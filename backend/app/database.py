@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, TextClause, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 DEFAULT_DATABASE_URL = (
@@ -21,9 +21,13 @@ DatabaseRole = Literal[
     "app_workflow",
     "app_migration",
 ]
-_ALLOWED_DATABASE_ROLES: frozenset[str] = frozenset(
-    {"anon", "authenticated", "service_role", "app_workflow", "app_migration"}
-)
+_ROLE_STATEMENTS: dict[DatabaseRole, TextClause] = {
+    "anon": text("set local role anon"),
+    "authenticated": text("set local role authenticated"),
+    "service_role": text("set local role service_role"),
+    "app_workflow": text("set local role app_workflow"),
+    "app_migration": text("set local role app_migration"),
+}
 
 _engine: Engine | None = None
 _session_factory: sessionmaker[Session] | None = None
@@ -83,14 +87,15 @@ def apply_request_context(
 ) -> None:
     """Apply the same role/JWT context used by Supabase Data API requests.
 
-    The database role is selected from a closed allowlist before interpolation.
-    JWT values use bound parameters. The settings are transaction-local and are
-    removed automatically on commit or rollback.
+    Database roles resolve through a closed statement map. JWT values use bound
+    parameters. Settings are transaction-local and disappear on commit/rollback.
     """
-    if role not in _ALLOWED_DATABASE_ROLES:
-        raise ValueError(f"Unsupported database role: {role}")
+    try:
+        role_statement = _ROLE_STATEMENTS[role]
+    except KeyError as error:
+        raise ValueError(f"Unsupported database role: {role}") from error
 
-    session.execute(text(f"set local role {role}"))
+    session.execute(role_statement)
     session.execute(
         text("select set_config('request.jwt.claim.role', :role, true)"),
         {"role": role},
