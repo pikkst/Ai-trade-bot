@@ -64,6 +64,34 @@ def role_connection(
             transaction.rollback()
 
 
+def assert_permission_denied(
+    engine: Engine,
+    *,
+    role: str,
+    auth_subject: UUID | None,
+    statement: str,
+    parameters: dict[str, object] | None = None,
+) -> None:
+    """Assert a database permission denial without leaking an aborted transaction."""
+    with engine.connect() as connection:
+        transaction = connection.begin()
+        try:
+            connection.exec_driver_sql(f"set local role {role}")
+            connection.execute(
+                text("select set_config('request.jwt.claim.role', :role, true)"),
+                {"role": role},
+            )
+            connection.execute(
+                text("select set_config('request.jwt.claim.sub', :subject, true)"),
+                {"subject": "" if auth_subject is None else str(auth_subject)},
+            )
+            with pytest.raises(DBAPIError) as exc_info:
+                connection.execute(text(statement), parameters or {})
+            assert "permission denied" in str(exc_info.value.orig).lower()
+        finally:
+            transaction.rollback()
+
+
 def test_supabase_migrations_seed_and_alembic_head(database_engine: Engine) -> None:
     with database_engine.connect() as connection:
         migration_count = connection.execute(
@@ -171,39 +199,35 @@ def test_rls_role_matrix(
 
 
 def test_anonymous_role_is_denied(database_engine: Engine) -> None:
-    with (
-        pytest.raises(DBAPIError),
-        role_connection(database_engine, role="anon", auth_subject=None) as connection,
-    ):
-        connection.execute(text("select * from public.workspace_overview")).all()
+    assert_permission_denied(
+        database_engine,
+        role="anon",
+        auth_subject=None,
+        statement="select * from public.workspace_overview",
+    )
 
 
 @pytest.mark.parametrize("subject", [OWNER_SUBJECT, OPERATOR_SUBJECT, VIEWER_SUBJECT])
 def test_browser_roles_cannot_write_financial_state(
     database_engine: Engine, subject: UUID
 ) -> None:
-    with (
-        pytest.raises(DBAPIError),
-        role_connection(
-            database_engine, role="authenticated", auth_subject=subject
-        ) as connection,
-    ):
-        connection.execute(
-            text(
-                """
-                insert into public.virtual_portfolios (
-                    id, workspace_id, name, base_currency, cash_balance
-                ) values (
-                    '50000000-0000-0000-0000-000000000999',
-                    :workspace_id,
-                    'Forbidden Browser Portfolio',
-                    'EUR',
-                    1
-                )
-                """
-            ),
-            {"workspace_id": WORKSPACE_ID},
-        )
+    assert_permission_denied(
+        database_engine,
+        role="authenticated",
+        auth_subject=subject,
+        statement="""
+            insert into public.virtual_portfolios (
+                id, workspace_id, name, base_currency, cash_balance
+            ) values (
+                '50000000-0000-0000-0000-000000000999',
+                :workspace_id,
+                'Forbidden Browser Portfolio',
+                'EUR',
+                1
+            )
+        """,
+        parameters={"workspace_id": WORKSPACE_ID},
+    )
 
 
 def test_workspace_isolation(database_engine: Engine) -> None:
