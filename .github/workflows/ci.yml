@@ -30,8 +30,10 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
+          package-manager-cache: false
       - name: Install locked dependencies
         run: |
+          make toolchain-bootstrap
           python -m pip install -r backend/requirements.txt
           npm ci --prefix frontend
       - name: Check dependency lock drift
@@ -50,8 +52,10 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
+          package-manager-cache: false
       - name: Install locked dependencies
         run: |
+          .\tasks.ps1 toolchain-bootstrap
           python -m pip install -r backend/requirements.txt
           npm.cmd ci --prefix frontend
       - name: Run repository quality gate
@@ -81,8 +85,10 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
+          package-manager-cache: false
       - name: Install locked dependencies
         run: |
+          make toolchain-bootstrap
           python -m pip install -r backend/requirements.txt
           npm ci --prefix frontend
       - name: Run repository security commands
@@ -111,9 +117,28 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Review dependency changes
+        id: dependency-review
+        continue-on-error: true
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
+      - name: Run deterministic fallback dependency audits
+        if: steps.dependency-review.outcome == 'failure'
+        run: |
+          echo "::warning::GitHub dependency review was unavailable or failed; running full locked dependency audits."
+          make toolchain-bootstrap
+          python -m pip install -r backend/requirements.txt
+          npm ci --prefix frontend
+          make security-test
+          make frontend-audit
 
   documentation:
     name: Documentation links and task consistency
