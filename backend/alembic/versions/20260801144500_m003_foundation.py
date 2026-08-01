@@ -1,4 +1,4 @@
-"""M003 foundational schema, Auth mapping, and RLS.
+"""M003 foundational schema compatibility head.
 
 Revision ID: 20260801144500
 Revises: None
@@ -7,34 +7,48 @@ Create Date: 2026-08-01 14:45:00 UTC
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, cast
-
 from alembic import op
+from sqlalchemy import text
 
 revision = "20260801144500"
 down_revision: str | None = None
 branch_labels: tuple[str, ...] | None = ("m003",)
 depends_on: tuple[str, ...] | None = None
 
-
-def _supabase_migration_sql() -> str:
-    repository_root = Path(__file__).resolve().parents[3]
-    migration_path = (
-        repository_root
-        / "supabase"
-        / "migrations"
-        / "20260801144500_m003_foundation.sql"
-    )
-    return migration_path.read_text(encoding="utf-8")
+_REQUIRED_RELATIONS = (
+    "public.users",
+    "public.workspaces",
+    "public.workspace_memberships",
+    "public.workspace_config_versions",
+    "public.audit_events",
+    "public.exchanges",
+    "public.exchange_symbol_versions",
+    "public.candles",
+    "public.virtual_portfolios",
+)
 
 
 def upgrade() -> None:
-    """Apply the exact SQL used by the Supabase CLI migration workflow."""
+    """Verify the Supabase migration schema before recording Alembic state.
+
+    Supabase SQL migrations are the executable DDL source of truth because they
+    also provision Auth-aware roles and RLS. Alembic records the application
+    compatibility head only after every required relation exists.
+    """
     bind = op.get_bind()
-    driver_connection = cast(Any, bind.connection.driver_connection)
-    with driver_connection.cursor() as cursor:
-        cursor.execute(_supabase_migration_sql(), prepare=False)
+    missing = [
+        relation
+        for relation in _REQUIRED_RELATIONS
+        if bind.execute(
+            text("select to_regclass(:relation)"), {"relation": relation}
+        ).scalar_one()
+        is None
+    ]
+    if missing:
+        raise RuntimeError(
+            "Apply Supabase migrations before Alembic upgrade; missing: "
+            + ", ".join(missing)
+        )
 
 
 def downgrade() -> None:
