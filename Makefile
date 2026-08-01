@@ -1,15 +1,22 @@
-.PHONY: bootstrap format lint type-check test local-up local-down local-reset api-dev frontend-dev frontend-build frontend-test research-cycle all-checks quality help export-test restore-test security-test frontend-audit docs-check unit-test integration-test contract-test e2e-test lock lock-check format-check
+.PHONY: bootstrap toolchain-bootstrap format lint type-check test local-up local-down local-reset api-dev frontend-dev frontend-build frontend-test research-cycle all-checks quality help export-test restore-test security-test frontend-audit docs-check unit-test integration-test contract-test e2e-test lock lock-check format-check
 
 PYTHON := python3
 PIP := $(PYTHON) -m pip
+PIP_VERSION := 25.3
+PIP_TOOLS_VERSION := 7.6.0
 FRONTEND := frontend
 NODE_LTS_ACCEPTED := 20 22 24
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'
 
+toolchain-bootstrap: ## Install the pinned Python packaging toolchain
+	$(PIP) install --upgrade "pip==$(PIP_VERSION)"
+	$(PIP) install "pip-tools==$(PIP_TOOLS_VERSION)"
+
 lock: ## Regenerate the Python lock file under Python 3.12
 	@$(PYTHON) --version 2>&1 | grep -q "Python 3.12" || { echo "ERROR: Python 3.12 is required to regenerate the lock file."; exit 1; }
+	$(MAKE) toolchain-bootstrap
 	cd backend && $(PYTHON) -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml
 	$(PYTHON) infrastructure/scripts/normalize_python_lock.py backend/requirements.txt
 	@echo "==> Python lock file regenerated under Python 3.12."
@@ -35,6 +42,8 @@ bootstrap: ## Install dependencies and verify tools (L1.1)
 	@echo "==> Creating local environment files from examples..."
 	@if [ ! -f .env.local ]; then cp .env.example .env.local; echo "Created .env.local"; else echo ".env.local already exists, skipping"; fi
 	@if [ ! -f .env.test ]; then cp .env.example .env.test; echo "Created .env.test"; else echo ".env.test already exists, skipping"; fi
+	@echo "==> Installing pinned Python packaging tools..."
+	$(MAKE) toolchain-bootstrap
 	@echo "==> Installing backend dependencies..."
 	cd backend && $(PIP) install -r requirements.txt
 	@echo "==> Installing frontend dependencies..."
