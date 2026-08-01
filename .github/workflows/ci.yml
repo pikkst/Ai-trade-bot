@@ -23,12 +23,11 @@ jobs:
       - name: Install pip-tools for lock check
         run: |
           cd backend
-          python -m pip install pip-tools
+          python -m pip install -r requirements.txt
       - name: Lock drift check
         run: |
           cd backend
-          python -m piptools compile --extra=dev --output-file=/tmp/requirements_check.txt pyproject.toml 2>/dev/null
-          # Strip comment lines (header) before comparing
+          python -m piptools compile --extra=dev --output-file=/tmp/requirements_check.txt pyproject.toml --quiet
           grep -v "^#" requirements.txt | grep -v "^$" > /tmp/req_committed.txt || true
           grep -v "^#" /tmp/requirements_check.txt | grep -v "^$" > /tmp/req_generated.txt || true
           diff /tmp/req_committed.txt /tmp/req_generated.txt || { echo "ERROR: requirements.txt is not up to date. Run make lock under Python 3.12."; exit 1; }
