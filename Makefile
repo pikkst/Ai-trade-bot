@@ -3,7 +3,7 @@
 PYTHON := python3
 PIP := $(PYTHON) -m pip
 FRONTEND := frontend
-NODE_LTS_ACCEPTED := 20 22
+NODE_LTS_ACCEPTED := 20 22 24
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'

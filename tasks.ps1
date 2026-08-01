@@ -12,7 +12,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$NODE_LTS_ACCEPTED = @(20, 22)
+$NODE_LTS_ACCEPTED = @(20, 22, 24)
 
 function Invoke-Native {
     param(
