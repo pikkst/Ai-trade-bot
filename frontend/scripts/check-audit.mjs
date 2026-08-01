@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const exceptionsFile = path.join(__dirname, 'npm-audit-exceptions.md');
+const exceptionsFile = path.join(__dirname, '..', 'npm-audit-exceptions.md');
 const exceptions = fs.readFileSync(exceptionsFile, 'utf8');
 
 let auditData;
