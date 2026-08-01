@@ -28,8 +28,9 @@ jobs:
         run: |
           cd backend
           python -m piptools compile --extra=dev --output-file=/tmp/requirements_check.txt pyproject.toml --quiet
-          grep -v "^#" requirements.txt | grep -v "^$" > /tmp/req_committed.txt || true
-          grep -v "^#" /tmp/requirements_check.txt | grep -v "^$" > /tmp/req_generated.txt || true
+          # Compare only package==version lines (sorted, ignoring comments and blanks)
+          grep -E "^[a-z]" requirements.txt | sort > /tmp/req_committed.txt
+          grep -E "^[a-z]" /tmp/requirements_check.txt | sort > /tmp/req_generated.txt
           diff /tmp/req_committed.txt /tmp/req_generated.txt || { echo "ERROR: requirements.txt is not up to date. Run make lock under Python 3.12."; exit 1; }
       - name: Install backend dependencies
         run: |
