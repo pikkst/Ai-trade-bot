@@ -72,13 +72,12 @@ set email = excluded.email,
     raw_user_meta_data = excluded.raw_user_meta_data,
     updated_at = excluded.updated_at;
 
--- The Supabase CLI applies seed data against the bootstrap Auth schema before
--- the Auth service finishes its own later schema migrations. At this stage,
--- identities use UUID keys and do not yet expose provider_id. The Auth service
--- upgrades these rows after startup.
+-- Supabase Auth requires provider_id for email identities. Keep the stable
+-- UUID identity key while using the deterministic email as provider_id.
 insert into auth.identities (
     id,
     user_id,
+    provider_id,
     identity_data,
     provider,
     last_sign_in_at,
@@ -88,6 +87,7 @@ insert into auth.identities (
 select
     user_row.id,
     user_row.id,
+    user_row.email,
     jsonb_build_object(
         'sub', user_row.id::text,
         'email', user_row.email,
@@ -106,6 +106,7 @@ where user_row.id in (
 )
 on conflict (id) do update
 set user_id = excluded.user_id,
+    provider_id = excluded.provider_id,
     identity_data = excluded.identity_data,
     provider = excluded.provider,
     updated_at = excluded.updated_at;
