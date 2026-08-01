@@ -197,7 +197,7 @@ Every pull request runs a deterministic baseline quality pipeline using reposito
 - The merged commits were fetched and inspected; the local Windows `quality` gate passed with backend/frontend tests, lint, type checks, build, and documentation checks.
 - Deferred to mapped later tasks: database/Auth/RLS integration (`M003`/`M026`), frontend accessibility/E2E and bundle inspection (`M015`/`M024`/`M026`), provider contracts (`M006`), and release-stage Semgrep/Trivy/SBOM/provenance gates (`M026`/`M027`/`M036`).
 
-## [x] Master Task 3 — M003 Local Supabase, Migrations, Auth, and RLS Foundation
+## [i] Master Task 3 — M003 Local Supabase, Migrations, Auth, and RLS Foundation
 
 ### Outcome
 
@@ -238,11 +238,9 @@ Local database, Auth, migrations, RLS, and seed workflows are reproducible in lo
 ### Implementation Evidence
 
 - PR #3 implemented the M003 foundation but was merged into the stale M002 feature branch instead of `main`; this corrective integration branch isolates the M003 diff against current `main`.
-- A fourth additive migration grants only the local `postgres` administrator membership in `app_workflow` and `app_migration`, allowing the documented trusted-role verification without widening browser permissions.
-- Clean local Supabase reset applied all four migrations and deterministic seed data; the Alembic compatibility head is `20260801170000`.
-- The complete M003 database suite passed: 17 migration, trusted-role-graph, Auth/RLS-role, browser-write-denial, workspace-isolation, and transaction tests.
-- The repository `quality` gate passed with 22 backend tests, 17 database tests skipped outside the local service profile, one frontend test, 92% backend coverage, lint, type checks, build, and documentation checks.
-- Corrective PR #7 passed all seven repository CI jobs, including the clean local Supabase migration/Auth/RLS job; its final focused diff and commit were inspected, and the independent M003 QA review plus Guardian gate passed. The unrelated external Cloudflare Pages preview failure does not exercise this database task.
+- PR #7 review identified that local administrator membership must not be embedded in the deployable migration chain. The correction moves cluster-role bootstrap to local-only `supabase/roles.sql`, removes the unmerged membership migration, and gives request-facing code a dedicated least-privilege `app_runtime` login.
+- Alembic verifies durable trusted-role attributes and rejects browser/runtime membership without hard-coding a valid deployment principal list.
+- M003 is `IMPLEMENTED_NOT_VERIFIED` while the corrected clean reset, runtime-denial tests, quality gate, and PR checks are pending.
 
 ## [ ] Master Task 4 — M004 Frontend Foundation and Design Tokens
 

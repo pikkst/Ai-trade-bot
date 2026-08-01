@@ -1,7 +1,7 @@
 # M003 Local Supabase, Auth, Migrations, and RLS
 
 Last reviewed: 2026-08-01  
-Status: Implementation and verification in progress
+Status: Review correction and verification in progress
 
 ## Purpose
 
@@ -18,13 +18,13 @@ Supabase SQL migrations are the executable schema and security source of truth. 
 | Supabase Studio | `http://127.0.0.1:54323` |
 | Inbucket | `http://127.0.0.1:54324` |
 
-The default local SQLAlchemy URL is:
+The default request-facing local SQLAlchemy URL is:
 
 ```text
-postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres
+postgresql+psycopg://app_runtime:app-runtime-local-only@127.0.0.1:54322/postgres
 ```
 
-This value is local development infrastructure, not a production credential.
+This value is local development infrastructure, not a production credential. Administrative migration and database-test commands use the local `postgres` connection explicitly; request-facing code does not.
 
 ## Commands
 
@@ -56,12 +56,13 @@ Windows PowerShell:
 
 ## Migration chain
 
-Supabase migrations:
+Supabase deployable migrations:
 
 1. `20260801144500_m003_foundation.sql` — identity, workspace, membership, configuration, audit, market-data, and virtual-portfolio relations; private authorization helpers; forced RLS; initial policies and read views.
 2. `20260801150000_m003_data_api_grants.sql` — RLS-backed browser reads, approved views, service/workflow grants, and explicit browser-write denial.
 3. `20260801151000_m003_workflow_rls.sql` — workflow audit-read policy and service helper grants.
-4. `20260801170000_m003_local_admin_role_membership.sql` — permits only the local PostgreSQL administrator to assume the trusted workflow and migration roles for verification.
+
+Local cluster roles are configured separately in `supabase/roles.sql`, which the Supabase CLI applies before migrations. It creates the least-privilege `app_runtime` login and grants the local `postgres` administrator permission to assume the trusted verification roles. Normal `supabase db push` does not include this file. Never pass `--include-roles` when targeting a hosted, staging, or production project.
 
 Alembic compatibility head:
 
@@ -116,7 +117,18 @@ Database execution roles covered by the verification matrix:
 - `service_role` — trusted Supabase backend role;
 - `app_migration` — local migration/verification role with RLS bypass.
 
-The trusted application roles remain `NOLOGIN` and `NOINHERIT`. Only `app_migration` has `BYPASSRLS`, and only the local `postgres` administrator is granted membership in `app_workflow` and `app_migration`; browser and Data API roles cannot assume either role.
+The trusted application roles remain `NOLOGIN` and `NOINHERIT`. Only `app_migration` has `BYPASSRLS`. In the local CLI stack, `postgres` is granted membership for migration and verification, while `app_runtime`, browser, Data API, and service roles cannot assume either trusted role. Hosted environments must provision dedicated least-privilege workflow and migration login principals outside the schema migration chain.
+
+## Local role recovery
+
+If the local role bootstrap is applied to an unintended database, revoke its memberships immediately using an administrative connection:
+
+```sql
+revoke app_workflow, app_migration from postgres;
+revoke anon, authenticated from app_runtime;
+```
+
+Then inspect `pg_auth_members`, rotate or disable the `app_runtime` login as appropriate, and create a reviewed forward recovery change for that environment. Do not edit an already deployed migration. For the disposable local stack, `local-down` followed by a clean local reset recreates the documented state.
 
 ## Browser-write boundary
 
@@ -158,9 +170,9 @@ The seed contains no production identifier, cloud project reference, private exc
 - one commit or rollback boundary per `transactional_session`;
 - a FastAPI session dependency;
 - transaction-local database role and JWT-claim context;
-- a closed allowlist of permitted database roles.
+- a closed allowlist containing only browser-equivalent `anon` and `authenticated` roles.
 
-Raised exceptions roll back the transaction and always close the session. Role context disappears when the transaction finishes.
+Raised exceptions roll back the transaction and always close the session. Role context disappears when the transaction finishes. Workflow, service, migration, and administrator roles are rejected by the request-context helper and require separately scoped connections.
 
 ## Verification
 
@@ -168,10 +180,10 @@ The local database CI job performs:
 
 1. install the pinned Supabase CLI and locked Python dependencies;
 2. start the local Supabase stack;
-3. reset from an empty database and apply all migrations and seed data;
+3. reset from an empty database, apply the local role bootstrap, all deployable migrations, and seed data;
 4. verify the Alembic compatibility head;
 5. run migration-count and deterministic-seed assertions;
-6. run anonymous/viewer/operator/owner/workflow/service/migration RLS checks;
+6. run anonymous/viewer/operator/owner/workflow/service/migration RLS checks and prove `app_runtime` cannot assume either trusted role;
 7. prove browser financial writes are denied;
 8. prove workspace isolation;
 9. prove transaction commit and rollback behavior;

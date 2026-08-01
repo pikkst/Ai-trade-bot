@@ -14,7 +14,7 @@ from sqlalchemy.exc import DBAPIError
 from alembic import command
 from app.authorization import WorkspaceRole, resolve_auth_context
 from app.database import (
-    apply_request_context,
+    DEFAULT_DATABASE_URL,
     build_engine,
     build_session_factory,
     transactional_session,
@@ -102,13 +102,12 @@ def test_supabase_migrations_seed_and_alembic_head(database_engine: Engine) -> N
                 where version in (
                     '20260801144500',
                     '20260801150000',
-                    '20260801151000',
-                    '20260801170000'
+                    '20260801151000'
                 )
                 """
             )
         ).scalar_one()
-        assert migration_count == 4
+        assert migration_count == 3
         assert (
             connection.execute(text("select count(*) from public.users")).scalar_one()
             == 3
@@ -305,7 +304,6 @@ def test_transaction_commit_and_rollback(database_engine: Engine) -> None:
         )
 
     with transactional_session(factory) as session:
-        apply_request_context(session, role="app_workflow", auth_subject=None)
         session.execute(
             text(
                 """
@@ -323,7 +321,6 @@ def test_transaction_commit_and_rollback(database_engine: Engine) -> None:
         pytest.raises(RuntimeError, match="rollback test"),
         transactional_session(factory) as session,
     ):
-        apply_request_context(session, role="app_workflow", auth_subject=None)
         session.execute(
             text(
                 """
@@ -439,7 +436,7 @@ def test_trusted_role_graph_is_narrow(
             ),
             {"role": role},
         ).one()
-        members = list(
+        members = set(
             connection.execute(
                 text(
                     """
@@ -454,4 +451,19 @@ def test_trusted_role_graph_is_narrow(
         )
 
     assert tuple(attributes) == expected_attributes
-    assert members == ["postgres"]
+    assert "postgres" in members
+    assert not members.intersection(
+        {"anon", "authenticated", "service_role", "app_runtime"}
+    )
+
+
+@pytest.mark.parametrize("trusted_role", ["app_workflow", "app_migration"])
+def test_request_runtime_cannot_assume_trusted_roles(trusted_role: str) -> None:
+    runtime_engine = build_engine(DEFAULT_DATABASE_URL)
+    try:
+        with runtime_engine.connect() as connection:
+            with pytest.raises(DBAPIError) as exc_info:
+                connection.exec_driver_sql(f"set role {trusted_role}")
+            assert "permission denied" in str(exc_info.value.orig).lower()
+    finally:
+        runtime_engine.dispose()

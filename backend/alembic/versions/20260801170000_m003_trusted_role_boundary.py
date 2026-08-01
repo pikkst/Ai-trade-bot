@@ -1,4 +1,4 @@
-"""M003 local administrator role-membership compatibility head.
+"""M003 trusted-role boundary compatibility head.
 
 Revision ID: 20260801170000
 Revises: 20260801151000
@@ -17,7 +17,7 @@ depends_on: tuple[str, ...] | None = None
 
 
 def upgrade() -> None:
-    """Verify the narrow trusted-role graph used by local M003 checks."""
+    """Verify trusted attributes without prescribing deployment principals."""
     bind = op.get_bind()
     expected_attributes = {
         "app_workflow": (False, False, False),
@@ -35,14 +35,24 @@ def upgrade() -> None:
             ),
             {"role": role},
         ).one_or_none()
-        members = list(
+        prohibited_members = list(
             bind.execute(
                 text(
                     """
-                    select pg_get_userbyid(member)
-                    from pg_auth_members
-                    where roleid = (select oid from pg_roles where rolname = :role)
-                    order by 1
+                    select member_role.rolname
+                    from pg_auth_members membership
+                    join pg_roles trusted_role
+                      on trusted_role.oid = membership.roleid
+                    join pg_roles member_role
+                      on member_role.oid = membership.member
+                    where trusted_role.rolname = :role
+                      and member_role.rolname in (
+                          'anon',
+                          'authenticated',
+                          'service_role',
+                          'app_runtime'
+                      )
+                    order by member_role.rolname
                     """
                 ),
                 {"role": role},
@@ -50,14 +60,17 @@ def upgrade() -> None:
         )
         if attributes != expected:
             failures.append(f"{role} attributes differ from {expected}")
-        if members != ["postgres"]:
-            failures.append(f"{role} members differ from ['postgres']")
+        if prohibited_members:
+            failures.append(
+                f"{role} has prohibited runtime/browser members: "
+                f"{prohibited_members}"
+            )
     if failures:
         raise RuntimeError("Invalid trusted-role graph: " + "; ".join(failures))
 
 
 def downgrade() -> None:
-    """Prevent destructive rollback of security role history."""
+    """Prevent destructive rollback of trusted-role security history."""
     raise RuntimeError(
         "M003 is additive-only; create a forward migration instead of downgrading"
     )

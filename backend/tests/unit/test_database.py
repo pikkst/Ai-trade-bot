@@ -107,7 +107,15 @@ def test_apply_request_context_uses_allowlist_and_bound_claims() -> None:
     assert fake.executions[1][1] == {"role": "authenticated"}
     assert fake.executions[2][1] == {"subject": str(subject)}
 
-    with pytest.raises(ValueError, match="Unsupported database role"):
-        database.apply_request_context(
-            cast(Any, fake), role=cast(Any, "postgres"), auth_subject=None
-        )
+    for prohibited_role in (
+        "postgres",
+        "service_role",
+        "app_workflow",
+        "app_migration",
+    ):
+        with pytest.raises(ValueError, match="Unsupported database role"):
+            database.apply_request_context(
+                cast(Any, fake),
+                role=cast(Any, prohibited_role),
+                auth_subject=None,
+            )

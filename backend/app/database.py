@@ -11,20 +11,16 @@ from uuid import UUID
 from sqlalchemy import Engine, TextClause, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
-DEFAULT_DATABASE_URL = "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
+DEFAULT_DATABASE_URL = (
+    "postgresql+psycopg://app_runtime:app-runtime-local-only@127.0.0.1:54322/postgres"
+)
 DatabaseRole = Literal[
     "anon",
     "authenticated",
-    "service_role",
-    "app_workflow",
-    "app_migration",
 ]
 _ROLE_STATEMENTS: dict[DatabaseRole, TextClause] = {
     "anon": text("set local role anon"),
     "authenticated": text("set local role authenticated"),
-    "service_role": text("set local role service_role"),
-    "app_workflow": text("set local role app_workflow"),
-    "app_migration": text("set local role app_migration"),
 }
 
 _engine: Engine | None = None
@@ -85,7 +81,9 @@ def apply_request_context(
 ) -> None:
     """Apply the same role/JWT context used by Supabase Data API requests.
 
-    Database roles resolve through a closed statement map. JWT values use bound
+    Only browser-equivalent roles resolve through the closed statement map.
+    Trusted workflow and migration identities require separate connections and
+    cannot be selected by the request-facing runtime. JWT values use bound
     parameters. Settings are transaction-local and disappear on commit/rollback.
     """
     try:

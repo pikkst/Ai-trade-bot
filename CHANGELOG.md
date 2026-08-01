@@ -13,11 +13,13 @@ All notable project changes are documented here.
 
 #### Fixed
 
-- Granted only the local PostgreSQL administrator membership in the trusted workflow and migration roles so the documented local verification path can exercise those roles without widening browser access.
+- Moved local administrator membership out of the deployable migration chain and into the Supabase CLI's local-only `roles.sql` bootstrap.
+- Replaced the request-facing `postgres` default with a dedicated `app_runtime` login that may assume only browser-equivalent roles and cannot assume workflow, migration, or service roles.
+- Made Alembic trusted-role verification reject prohibited runtime/browser members without hard-coding a deployment-specific administrator name.
 
 #### Safety
 
-- The foundation remains local-first and paper-only; browser identities cannot write financial, configuration, membership, audit, or market-data tables.
+- The foundation remains local-first and paper-only; browser identities cannot write financial, configuration, membership, audit, or market-data tables, and hosted environments must provision dedicated principals outside the migration chain.
 
 ### M002 — Locked Toolchains and Baseline CI — 2026-08-01
 
