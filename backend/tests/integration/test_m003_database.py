@@ -7,11 +7,11 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from alembic import command
 from alembic.config import Config
 from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import DBAPIError
 
+from alembic import command
 from app.authorization import WorkspaceRole, resolve_auth_context
 from app.database import (
     apply_request_context,
@@ -290,22 +290,24 @@ def test_transaction_commit_and_rollback(database_engine: Engine) -> None:
             {"id": committed_id, "workspace_id": WORKSPACE_ID},
         )
 
-    with pytest.raises(RuntimeError, match="rollback test"):
-        with transactional_session(factory) as session:
-            apply_request_context(session, role="app_workflow", auth_subject=None)
-            session.execute(
-                text(
-                    """
-                    insert into public.audit_events (
-                        id, workspace_id, actor_kind, action, resource_type, reason
-                    ) values (
-                        :id, :workspace_id, 'workflow', 'rollback_test', 'test', 'M003'
-                    )
-                    """
-                ),
-                {"id": rolled_back_id, "workspace_id": WORKSPACE_ID},
-            )
-            raise RuntimeError("rollback test")
+    with (
+        pytest.raises(RuntimeError, match="rollback test"),
+        transactional_session(factory) as session,
+    ):
+        apply_request_context(session, role="app_workflow", auth_subject=None)
+        session.execute(
+            text(
+                """
+                insert into public.audit_events (
+                    id, workspace_id, actor_kind, action, resource_type, reason
+                ) values (
+                    :id, :workspace_id, 'workflow', 'rollback_test', 'test', 'M003'
+                )
+                """
+            ),
+            {"id": rolled_back_id, "workspace_id": WORKSPACE_ID},
+        )
+        raise RuntimeError("rollback test")
 
     with database_engine.begin() as connection:
         assert (
