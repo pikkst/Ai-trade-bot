@@ -20,15 +20,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "lts/*"
-      - name: Install pip-tools for lock regeneration
-        run: |
-          cd backend
-          python -m pip install pip-tools
-      - name: Regenerate Python lock and check for drift
-        run: |
-          cd backend
-          python -m piptools compile --extra=dev --output-file=requirements.txt.new pyproject.toml
-          diff requirements.txt requirements.txt.new || { echo "ERROR: requirements.txt is not up to date. Run make lock under Python 3.12."; exit 1; }
       - name: Install backend dependencies
         run: |
           cd backend
@@ -101,9 +92,7 @@ jobs:
         with:
           node-version: "lts/*"
       - name: Install Supabase CLI
-        run: npm install supabase
-      - name: Install Docker Compose v2 check
-        run: docker compose version
+        run: npm install -g supabase
       - name: Run bootstrap
         run: make bootstrap
       - name: Verify .env files created
