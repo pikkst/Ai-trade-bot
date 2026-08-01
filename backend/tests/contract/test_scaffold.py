@@ -1,6 +1,6 @@
-import pytest
+"""Minimal scaffold test for M001 contract tests."""
 
 
 def test_contract_scaffold():
-    """Minimal scaffold test for M001. Contract tests will be implemented in later Master Tasks."""
+    """Contract tests will be implemented in later Master Tasks."""
     assert True
