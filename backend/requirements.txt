@@ -207,9 +207,9 @@ typing-extensions==4.16.0
     #   fastapi
     #   google-genai
     #   mypy
+    #   psycopg
     #   pydantic
     #   pydantic-core
-    #   psycopg
     #   sqlalchemy
     #   starlette
     #   typing-inspection
