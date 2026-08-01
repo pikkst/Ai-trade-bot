@@ -13,6 +13,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $NODE_LTS_ACCEPTED = @(20, 22, 24)
+$PIP_VERSION = "25.3"
+$PIP_TOOLS_VERSION = "7.6.0"
 
 function Invoke-Native {
     param(
@@ -34,34 +36,35 @@ function Show-Help {
 Usage: .\tasks.ps1 <command>
 
 Commands:
-  bootstrap         Install dependencies and verify tools (L1.1)
-  lock              Regenerate the Python lock file under Python 3.12
-  lock-check        Fail when either dependency lock is stale
-  format            Format supported languages
-  format-check      Check formatting without modifying files
-  lint              Run lint checks
-  type-check        Run static type checks
-  test              Run unit and property tests
-  unit-test         Run backend unit tests
-  integration-test  Run backend integration tests
-  contract-test     Run backend contract tests
-  e2e-test          Run E2E tests (not implemented in M001)
-  local-up          Start local Supabase and application dependencies
-  local-down        Stop local services
-  local-reset       Recreate database, migrations, and seed data
-  api-dev           Run FastAPI with reload
-  frontend-dev      Run Vite development server
-  frontend-build    Build the frontend production bundle
-  frontend-test     Run frontend tests
-  research-cycle    Run one deterministic research cycle
-  all-checks        Run the local pre-push quality gate
-  quality           Run the deterministic baseline quality gate
-  security-test     Run static analysis and Python dependency audit
-  frontend-audit    Run the frontend dependency audit
-  docs-check        Run documentation and generated-artifact checks
-  export-test       Create a test logical export (not implemented in M001)
-  restore-test      Restore and reconcile in isolation (not implemented in M001)
-  help              Show this help
+  bootstrap             Install dependencies and verify tools (L1.1)
+  toolchain-bootstrap   Install the pinned Python packaging toolchain
+  lock                  Regenerate the Python lock file under Python 3.12
+  lock-check            Fail when either dependency lock is stale
+  format                Format supported languages
+  format-check          Check formatting without modifying files
+  lint                  Run lint checks
+  type-check            Run static type checks
+  test                  Run unit and property tests
+  unit-test             Run backend unit tests
+  integration-test      Run backend integration tests
+  contract-test         Run backend contract tests
+  e2e-test              Run E2E tests (not implemented in M001)
+  local-up              Start local Supabase and application dependencies
+  local-down            Stop local services
+  local-reset           Recreate database, migrations, and seed data
+  api-dev               Run FastAPI with reload
+  frontend-dev          Run Vite development server
+  frontend-build        Build the frontend production bundle
+  frontend-test         Run frontend tests
+  research-cycle        Run one deterministic research cycle
+  all-checks            Run the local pre-push quality gate
+  quality               Run the deterministic baseline quality gate
+  security-test         Run static analysis and Python dependency audit
+  frontend-audit        Run the frontend dependency audit
+  docs-check            Run documentation and generated-artifact checks
+  export-test           Create a test logical export (not implemented in M001)
+  restore-test          Restore and reconcile in isolation (not implemented in M001)
+  help                  Show this help
 "@
 }
 
@@ -103,11 +106,19 @@ switch ($Command) {
         Write-Host "==> Creating local environment files from examples..." -ForegroundColor Cyan
         if (-not (Test-Path ".env.local")) { Copy-Item .env.example .env.local; Write-Host "Created .env.local" } else { Write-Host ".env.local already exists, skipping" }
         if (-not (Test-Path ".env.test")) { Copy-Item .env.example .env.test; Write-Host "Created .env.test" } else { Write-Host ".env.test already exists, skipping" }
+        Write-Host "==> Installing pinned Python packaging tools..." -ForegroundColor Cyan
+        .\tasks.ps1 toolchain-bootstrap
         Write-Host "==> Installing backend dependencies..." -ForegroundColor Cyan
         try { Push-Location backend; Invoke-Native python -m pip install -r requirements.txt } finally { Pop-Location }
         Write-Host "==> Installing frontend dependencies..." -ForegroundColor Cyan
         try { Push-Location frontend; Invoke-Native npm ci } finally { Pop-Location }
         Write-Host "==> Bootstrap complete." -ForegroundColor Green
+    }
+    "toolchain-bootstrap" {
+        Write-Host "==> Installing pinned Python packaging toolchain..." -ForegroundColor Cyan
+        Invoke-Native python -m pip install --upgrade "pip==$PIP_VERSION"
+        Invoke-Native python -m pip install "pip-tools==$PIP_TOOLS_VERSION"
+        Write-Host "==> Python packaging toolchain ready." -ForegroundColor Green
     }
     "lock" {
         Write-Host "==> Regenerating Python lock file..." -ForegroundColor Cyan
@@ -116,6 +127,7 @@ switch ($Command) {
             Write-Host "ERROR: Python 3.12 is required. Found: $pyVersion" -ForegroundColor Red
             exit 1
         }
+        .\tasks.ps1 toolchain-bootstrap
         try { Push-Location backend; Invoke-Native python -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml } finally { Pop-Location }
         Invoke-Native python infrastructure/scripts/normalize_python_lock.py backend/requirements.txt
         Write-Host "==> Lock file regenerated." -ForegroundColor Green
