@@ -24,6 +24,8 @@ Implementation starts with `M001` in `/TASKS.md`. This document defines local be
 
 Tool versions must be pinned or documented. Repository commands must work on Windows 11 and at least one Unix-like environment. Platform-specific exceptions must be explicit and tested where practical.
 
+`backend/requirements.txt` is the shared Python 3.12 lock. Its direct `colorama==0.4.6 ; sys_platform == "win32"` entry makes the Windows-only tooling dependency deterministic without installing it on Linux. The `lock` command normalizes that marker after `pip-compile`, and CI checks the resulting file on both operating systems.
+
 ## 3. Local Architecture
 
 ```mermaid
@@ -278,6 +280,7 @@ The project must account for Windows 11:
 - Docker Desktop, WSL2, and Supabase CLI setup notes are documented where applicable;
 - PowerShell examples are provided for environment setup;
 - scripts fail with actionable messages when prerequisites are missing;
+- the shared Python lock pins Windows-only dependencies with explicit platform markers;
 - path quoting, executable discovery, and environment-file behavior are tested.
 
 ## 15. Master-Task Mapping

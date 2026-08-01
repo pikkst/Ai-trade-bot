@@ -4,6 +4,19 @@ All notable project changes are documented here.
 
 ## Unreleased
 
+### M001 Review Fixes — 2026-08-01
+
+#### Changed
+
+- Upgraded Vite and its React plugin to versions that clear the enforced frontend dependency audit.
+- Removed the unused React Router wrapper from the single-screen M001 scaffold; routing remains scheduled for M004 and will require a non-vulnerable release.
+- Added an explicit Windows-only `colorama==0.4.6` lock input and cross-platform lock normalization.
+
+#### Fixed
+
+- Restored the fail-closed `npm audit --audit-level=moderate` security gate with zero accepted exceptions.
+- Added Linux and Windows lock-drift verification for the same deterministic Python lock.
+
 ### Sprint 22 — Runtime Contract Synchronization — 2026-08-01
 
 #### Added

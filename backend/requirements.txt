@@ -40,6 +40,8 @@ click==8.4.2
     # via
     #   pip-tools
     #   uvicorn
+colorama==0.4.6 ; sys_platform == "win32"
+    # via the-daily-roast-ai (pyproject.toml)
 cryptography==50.0.0
     # via google-auth
 cyclonedx-python-lib==11.11.0

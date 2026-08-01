@@ -11,6 +11,7 @@ help: ## Show this help
 lock: ## Regenerate the Python lock file under Python 3.12
 	@$(PYTHON) --version 2>&1 | grep -q "Python 3.12" || { echo "ERROR: Python 3.12 is required to regenerate the lock file."; exit 1; }
 	cd backend && $(PYTHON) -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml
+	$(PYTHON) infrastructure/scripts/normalize_python_lock.py backend/requirements.txt
 	@echo "==> Python lock file regenerated under Python 3.12."
 
 bootstrap: ## Install dependencies and verify tools (L1.1)
@@ -106,7 +107,7 @@ security-test: ## Run static analysis and Python dependency audit
 docs-check: ## Run documentation and generated-artifact checks
 	@echo "==> Checking README structure matches implementation..."
 	@errors=0; \
-	for f in backend/app/main.py frontend/src/App.tsx supabase/config.toml Makefile tasks.ps1 .env.example .gitignore backend/requirements.txt frontend/package-lock.json frontend/public supabase/migrations tests generated-artifacts cloudflare-pages.toml frontend/.prettierrc frontend/vitest.config.ts backend/app/cli/run_research_cycle.py backend/tests/unit/test_main.py; do \
+	for f in backend/app/main.py frontend/src/App.tsx supabase/config.toml Makefile tasks.ps1 .env.example .gitignore backend/requirements.txt frontend/package-lock.json frontend/public supabase/migrations tests generated-artifacts cloudflare-pages.toml frontend/.prettierrc frontend/vitest.config.ts backend/app/cli/run_research_cycle.py backend/tests/unit/test_main.py infrastructure/scripts/normalize_python_lock.py; do \
 		if [ ! -e "$$f" ]; then \
 			echo "FAIL: $$f missing"; \
 			errors=$$((errors + 1)); \

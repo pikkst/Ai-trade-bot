@@ -30,6 +30,7 @@ jobs:
           cp requirements.txt /tmp/requirements_original.txt
           trap 'cp /tmp/requirements_original.txt requirements.txt' EXIT
           python -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml
+          python ../infrastructure/scripts/normalize_python_lock.py requirements.txt
           if ! git diff --exit-code -- requirements.txt; then
             echo "ERROR: requirements.txt is not up to date. Run make lock under Python 3.12."
             exit 1
@@ -175,14 +176,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "lts/*"
-      - name: Install pip-tools for lock generation
-        run: |
-          cd backend
-          python -m pip install pip-tools
       - name: Install backend dependencies
         run: |
           cd backend
           python -m pip install -r requirements.txt
+      - name: Windows lock drift check
+        run: |
+          Copy-Item backend/requirements.txt "$env:RUNNER_TEMP/requirements-original.txt"
+          try {
+            .\tasks.ps1 lock
+            git diff --exit-code -- backend/requirements.txt
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "ERROR: requirements.txt is not up to date for Windows. Run .\tasks.ps1 lock under Python 3.12." -ForegroundColor Red
+              exit 1
+            }
+          } finally {
+            Copy-Item "$env:RUNNER_TEMP/requirements-original.txt" backend/requirements.txt -Force
+          }
       - name: Install frontend dependencies
         run: |
           cd frontend

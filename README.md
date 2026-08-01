@@ -202,7 +202,7 @@ Production research means production-quality research and paper trading. It does
 │   │   └── infrastructure/ Provider adapters (Supabase, Binance, Gemini)
 │   ├── tests/            Unit, integration, contract, and E2E tests
 │   ├── pyproject.toml    Python project configuration
-│   └── requirements.txt  Pinned Python dependencies
+│   └── requirements.txt  Pinned cross-platform Python dependencies
 ├── frontend/             React/TypeScript/Vite product and public demo
 │   ├── src/              React application source
 │   │   ├── tests/        Frontend test files

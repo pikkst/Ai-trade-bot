@@ -114,6 +114,7 @@ switch ($Command) {
             exit 1
         }
         try { Push-Location backend; Invoke-Native python -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml } finally { Pop-Location }
+        Invoke-Native python infrastructure/scripts/normalize_python_lock.py backend/requirements.txt
         Write-Host "==> Lock file regenerated." -ForegroundColor Green
     }
     "format" {
@@ -237,6 +238,7 @@ switch ($Command) {
         if (-not (Test-Path "frontend/vitest.config.ts")) { $errors += "frontend/vitest.config.ts missing" }
         if (-not (Test-Path "backend/app/cli/run_research_cycle.py")) { $errors += "backend/app/cli/run_research_cycle.py missing" }
         if (-not (Test-Path "backend/tests/unit/test_main.py")) { $errors += "backend/tests/unit/test_main.py missing" }
+        if (-not (Test-Path "infrastructure/scripts/normalize_python_lock.py")) { $errors += "infrastructure/scripts/normalize_python_lock.py missing" }
         if ($errors.Count -gt 0) {
             foreach ($e in $errors) { Write-Host "FAIL: $e" -ForegroundColor Red }
             exit 1

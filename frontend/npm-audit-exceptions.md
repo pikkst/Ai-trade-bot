@@ -1,39 +1,5 @@
-# Frontend npm Audit Exceptions
+# Frontend npm Audit Policy
 
-This document records known frontend dependency vulnerabilities that are accepted for the MVP phase.
+No frontend vulnerability exceptions are currently approved.
 
-## Accepted Exceptions
-
-### esbuild (moderate)
-
-- **Package**: esbuild <=0.24.2
-- **Advisory**: GHSA-67mh-4wv8-2f99
-- **Exploitability**: Enables websites to send requests to the dev server and read responses
-- **Remediation**: Upgrade vite to >=8.2.0 (breaking change; tracked for M002+)
-
-### react-router (moderate)
-
-- **Package**: react-router 6.0.0 - 7.17.0
-- **Advisory**: GHSA-wrjc-x8rr-h8h6 (open redirect via backslash), GHSA-337j-9hxr-rhxg (arbitrary constructor injection)
-- **Exploitability**: Requires user interaction with crafted links or SSR hydration
-- **Remediation**: Upgrade react-router to >=7.18.0 (tracked for M002+)
-
-### react-router-dom (moderate)
-
-- **Package**: react-router-dom 6.0.0-alpha.0 - 7.17.0
-- **Advisory**: Depends on vulnerable react-router versions
-- **Exploitability**: Inherited from react-router
-- **Remediation**: Resolved by upgrading react-router to >=7.18.0
-
-### vite (high)
-
-- **Package**: vite <=6.4.2
-- **Advisory**: Depends on vulnerable esbuild versions
-- **Exploitability**: Inherited from esbuild; requires dev server interaction
-- **Remediation**: Upgrade vite to >=8.2.0 (breaking change; tracked for M002+)
-
-## Policy
-
-- Severity threshold for CI: moderate and above
-- Exceptions are time-bounded and reviewed quarterly
-- New vulnerabilities must be assessed within 7 days of discovery
+CI runs `npm audit --audit-level=moderate` without unconditional success handling, so any new advisory at moderate severity or above fails the security job. A future exception requires a machine-readable policy keyed by advisory and package, with an owner, justification, approval date, and expiry date, plus CI enforcement that rejects unknown or expired advisories.

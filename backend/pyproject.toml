@@ -21,6 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "colorama==0.4.6; sys_platform == 'win32'",
     "ruff>=0.4.0",
     "mypy>=1.10.0",
     "pytest>=8.0.0",
