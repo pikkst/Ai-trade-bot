@@ -27,9 +27,11 @@ jobs:
       - name: Lock drift check
         run: |
           cd backend
-          python -m piptools compile --extra=dev --output-file=/tmp/requirements_check.txt pyproject.toml
-          # Strip the 7-line header comment before comparing (output path differs)
-          diff <(tail -n +8 requirements.txt) <(tail -n +8 /tmp/requirements_check.txt) || { echo "ERROR: requirements.txt is not up to date. Run make lock under Python 3.12."; exit 1; }
+          python -m piptools compile --extra=dev --output-file=/tmp/requirements_check.txt pyproject.toml 2>/dev/null
+          # Strip comment lines (header) before comparing
+          grep -v "^#" requirements.txt | grep -v "^$" > /tmp/req_committed.txt || true
+          grep -v "^#" /tmp/requirements_check.txt | grep -v "^$" > /tmp/req_generated.txt || true
+          diff /tmp/req_committed.txt /tmp/req_generated.txt || { echo "ERROR: requirements.txt is not up to date. Run make lock under Python 3.12."; exit 1; }
       - name: Install backend dependencies
         run: |
           cd backend
@@ -150,9 +152,9 @@ jobs:
       - name: Run all-checks
         run: .\tasks.ps1 all-checks
       - name: Verify failure propagation (intentional failing command)
-        shell: pwsh
+        shell: bash
         run: |
-          $ErrorActionPreference = 'Stop'
+          pwsh -NoProfile -Command '$ErrorActionPreference = "Stop"
           function Invoke-Native {
               param([string]$Name, [Parameter(ValueFromRemainingArguments = $true)] [string[]]$Arguments)
               try {
@@ -162,8 +164,9 @@ jobs:
           }
           $caught = $false
           try { Invoke-Native cmd /c exit 1 } catch { $caught = $true }
-          if (-not $caught) { Write-Host "FAIL: Invoke-Native did not throw on failure" -ForegroundColor Red; exit 1 }
-          Write-Host "PASS: Non-zero exit code propagated" -ForegroundColor Green
+          if (-not $caught) { Write-Host "FAIL: Invoke-Native did not throw on failure"; exit 1 }
+          Write-Host "PASS: Non-zero exit code propagated"'
+          if [ $? -eq 0 ]; then echo "PASS: Non-zero exit code propagated"; else echo "FAIL: Non-zero exit code not propagated"; exit 1; fi
 
   windows-commands:
     runs-on: windows-latest
