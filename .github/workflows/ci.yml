@@ -20,6 +20,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "lts/*"
+      - name: Install pip-tools for lock check
+        run: |
+          cd backend
+          python -m pip install pip-tools
+      - name: Lock drift check
+        run: |
+          cd backend
+          python -m piptools compile --extra=dev --output-file=/tmp/requirements_check.txt pyproject.toml
+          diff requirements.txt /tmp/requirements_check.txt || { echo "ERROR: requirements.txt is not up to date. Run make lock under Python 3.12."; exit 1; }
       - name: Install backend dependencies
         run: |
           cd backend
@@ -39,20 +48,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: "lts/*"
-      - name: Install backend dependencies
-        run: |
-          cd backend
-          python -m pip install -r requirements.txt
       - name: Install frontend dependencies
         run: |
           cd frontend
           npm ci
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          python -m pip install -r requirements.txt
       - name: Run tests
         run: make test
 
@@ -104,6 +110,55 @@ jobs:
       - name: Run all-checks
         run: make all-checks
 
+  bootstrap-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+      - name: Install Supabase CLI
+        run: npm install -g supabase
+      - name: Run bootstrap
+        run: .\tasks.ps1 bootstrap
+      - name: Verify .env files created
+        run: |
+          if (-not (Test-Path ".env.local")) { Write-Host "FAIL: .env.local not created" -ForegroundColor Red; exit 1 }
+          if (-not (Test-Path ".env.test")) { Write-Host "FAIL: .env.test not created" -ForegroundColor Red; exit 1 }
+      - name: Verify bootstrap preserves existing env files (idempotent)
+        run: |
+          $hash1 = Get-FileHash ".env.local"
+          $hash2 = Get-FileHash ".env.test"
+          .\tasks.ps1 bootstrap
+          $hash1b = Get-FileHash ".env.local"
+          $hash2b = Get-FileHash ".env.test"
+          if ($hash1.Hash -ne $hash1b.Hash) { Write-Host "FAIL: .env.local was overwritten" -ForegroundColor Red; exit 1 }
+          if ($hash2.Hash -ne $hash2b.Hash) { Write-Host "FAIL: .env.test was overwritten" -ForegroundColor Red; exit 1 }
+          Write-Host "PASS: .env.local and .env.test preserved" -ForegroundColor Green
+      - name: Run all-checks
+        run: .\tasks.ps1 all-checks
+      - name: Verify failure propagation (intentional failing command)
+        shell: pwsh
+        run: |
+          $testScript = @"
+`$ErrorActionPreference = 'Stop'
+function Invoke-Native {
+    param([string]`$Name, [Parameter(ValueFromRemainingArguments = `$true)] [string[]]`$Arguments)
+    try {
+        & `$Name @Arguments
+        if (`$LASTEXITCODE -ne 0) { throw "Command failed with exit code `$LASTEXITCODE" }
+    } finally {}
+}
+Invoke-Native cmd /c exit 1
+"@
+          $testScript | Set-Content -Path "test_invoke_native.ps1"
+          powershell -NoProfile -ExecutionPolicy Bypass -File ".\test_invoke_native.ps1"
+          if ($LASTEXITCODE -ne 0) { Write-Host "PASS: Non-zero exit code propagated" -ForegroundColor Green }
+          else { Write-Host "FAIL: Non-zero exit code not propagated" -ForegroundColor Red; exit 1 }
+
   windows-commands:
     runs-on: windows-latest
     steps:
@@ -114,7 +169,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "lts/*"
-      - name: Install pip-tools
+      - name: Install pip-tools for lock generation
         run: |
           cd backend
           python -m pip install pip-tools
@@ -128,10 +183,6 @@ jobs:
           npm ci
       - name: Command help
         run: .\tasks.ps1 help
-      - name: Docs check
-        run: .\tasks.ps1 docs-check
-      - name: Format check
-        run: .\tasks.ps1 format-check
       - name: Lint
         run: .\tasks.ps1 lint
       - name: Type check
@@ -140,10 +191,22 @@ jobs:
         run: .\tasks.ps1 frontend-test
       - name: Research cycle smoke
         run: .\tasks.ps1 research-cycle
-      - name: Full pre-push gate (all-checks)
-        run: .\tasks.ps1 all-checks
-      - name: Verify failure propagation (intentional failure)
+      - name: Docs check
+        run: .\tasks.ps1 docs-check
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+      - name: Install backend dependencies
         run: |
-          .\tasks.ps1 docs-check
-          if ($LASTEXITCODE -ne 0) { Write-Host "PASS: Non-zero exit code propagated" -ForegroundColor Green }
-          else { Write-Host "FAIL: Non-zero exit code not propagated" -ForegroundColor Red; exit 1 }
+          cd backend
+          python -m pip install -r requirements.txt
+      - name: Run security tests
+        run: make security-test

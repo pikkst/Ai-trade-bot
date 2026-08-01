@@ -1,4 +1,4 @@
-.PHONY: bootstrap format lint type-check test local-up local-down local-reset api-dev frontend-dev frontend-build frontend-test research-cycle all-checks help export-test restore-test security-test docs-check unit-test integration-test contract-test e2e-test lock
+.PHONY: bootstrap format lint type-check test local-up local-down local-reset api-dev frontend-dev frontend-build frontend-test research-cycle all-checks help export-test restore-test security-test docs-check unit-test integration-test contract-test e2e-test lock format-check
 
 PYTHON := python3
 PIP := $(PYTHON) -m pip
@@ -9,7 +9,9 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'
 
 lock: ## Regenerate the Python lock file under Python 3.12
+	@$(PYTHON) --version 2>&1 | grep -q "Python 3.12" || { echo "ERROR: Python 3.12 is required to regenerate the lock file."; exit 1; }
 	cd backend && $(PYTHON) -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml
+	@echo "==> Python lock file regenerated under Python 3.12."
 
 bootstrap: ## Install dependencies and verify tools (L1.1)
 	@echo "==> Verifying prerequisites..."
@@ -97,7 +99,7 @@ research-cycle: ## Run one deterministic research cycle
 
 all-checks: format-check lint type-check test frontend-build frontend-test ## Run the local pre-push quality gate
 
-security-test: ## Run static, dependency, secret, and artifact checks
+security-test: ## Run static analysis and Python dependency audit
 	cd backend && bandit -r app/
 	cd backend && pip-audit
 

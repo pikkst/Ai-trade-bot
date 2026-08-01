@@ -54,7 +54,7 @@ Commands:
   frontend-test     Run frontend tests
   research-cycle    Run one deterministic research cycle
   all-checks        Run the local pre-push quality gate
-  security-test     Run static, dependency, secret, and artifact checks
+  security-test     Run static analysis and Python dependency audit
   docs-check        Run documentation and generated-artifact checks
   export-test       Create a test logical export (not implemented in M001)
   restore-test      Restore and reconcile in isolation (not implemented in M001)
@@ -108,6 +108,11 @@ switch ($Command) {
     }
     "lock" {
         Write-Host "==> Regenerating Python lock file..." -ForegroundColor Cyan
+        $pyVersion = python --version 2>&1
+        if ($pyVersion -notmatch "Python 3\.12") {
+            Write-Host "ERROR: Python 3.12 is required. Found: $pyVersion" -ForegroundColor Red
+            exit 1
+        }
         try { Push-Location backend; Invoke-Native python -m piptools compile --extra=dev --output-file=requirements.txt pyproject.toml } finally { Pop-Location }
         Write-Host "==> Lock file regenerated." -ForegroundColor Green
     }
