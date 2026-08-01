@@ -197,7 +197,7 @@ Every pull request runs a deterministic baseline quality pipeline using reposito
 - The merged commits were fetched and inspected; the local Windows `quality` gate passed with backend/frontend tests, lint, type checks, build, and documentation checks.
 - Deferred to mapped later tasks: database/Auth/RLS integration (`M003`/`M026`), frontend accessibility/E2E and bundle inspection (`M015`/`M024`/`M026`), provider contracts (`M006`), and release-stage Semgrep/Trivy/SBOM/provenance gates (`M026`/`M027`/`M036`).
 
-## [i] Master Task 3 — M003 Local Supabase, Migrations, Auth, and RLS Foundation
+## [x] Master Task 3 — M003 Local Supabase, Migrations, Auth, and RLS Foundation
 
 ### Outcome
 
@@ -241,8 +241,8 @@ Local database, Auth, migrations, RLS, and seed workflows are reproducible in lo
 - A fourth additive migration grants only the local `postgres` administrator membership in `app_workflow` and `app_migration`, allowing the documented trusted-role verification without widening browser permissions.
 - Clean local Supabase reset applied all four migrations and deterministic seed data; the Alembic compatibility head is `20260801170000`.
 - The complete M003 database suite passed: 17 migration, trusted-role-graph, Auth/RLS-role, browser-write-denial, workspace-isolation, and transaction tests.
-- The repository `quality` gate passed with 22 backend tests, 15 database tests skipped outside the local service profile, one frontend test, 92% backend coverage, lint, type checks, build, and documentation checks.
-- Status remains `IMPLEMENTED_NOT_VERIFIED` until the corrective PR checks pass and its final commit is inspected.
+- The repository `quality` gate passed with 22 backend tests, 17 database tests skipped outside the local service profile, one frontend test, 92% backend coverage, lint, type checks, build, and documentation checks.
+- Corrective PR #7 passed all seven repository CI jobs, including the clean local Supabase migration/Auth/RLS job; its final focused diff and commit were inspected, and the independent M003 QA review plus Guardian gate passed. The unrelated external Cloudflare Pages preview failure does not exercise this database task.
 
 ## [ ] Master Task 4 — M004 Frontend Foundation and Design Tokens
 
