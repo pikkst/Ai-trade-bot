@@ -1,21 +1,61 @@
-# Supabase local configuration for The Daily Roast AI
-# Local development uses Supabase CLI / PostgreSQL / Auth without a cloud project.
+# Local-only Supabase configuration for M003.
+# This stack mirrors the cloud security model without requiring a cloud project.
 
-[project]
-ref = "local-dev"
-organization_id = "local"
+project_id = "ai-trade-bot-local"
 
 [api]
 enabled = true
-port = 5432
-
-[auth]
-enabled = true
-site_url = "http://localhost:3000"
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
 
 [db]
-port = 5432
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.migrations]
+enabled = true
+schema_paths = []
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[realtime]
+enabled = false
 
 [studio]
 enabled = true
 port = 54323
+api_url = "http://127.0.0.1"
+
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+enabled = false
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:5173"
+additional_redirect_urls = ["http://localhost:5173"]
+jwt_expiry = 3600
+enable_signup = true
+enable_anonymous_sign_ins = false
+minimum_password_length = 8
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = false
+secure_password_change = false
+max_frequency = "1s"
+otp_length = 6
+otp_expiry = 3600
+
+[analytics]
+enabled = false
