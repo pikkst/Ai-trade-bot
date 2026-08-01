@@ -11,6 +11,7 @@ import importlib
 def test_contract_test_directory_exists():
     """Verify the contract test directory is importable."""
     import tests.contract
+
     importlib.reload(tests.contract)
 
 

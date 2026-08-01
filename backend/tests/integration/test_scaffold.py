@@ -11,6 +11,7 @@ import importlib
 def test_integration_test_directory_exists():
     """Verify the integration test directory is importable."""
     import tests.integration
+
     importlib.reload(tests.integration)
 
 

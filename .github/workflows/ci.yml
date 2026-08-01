@@ -28,7 +28,8 @@ jobs:
         run: |
           cd backend
           python -m piptools compile --extra=dev --output-file=/tmp/requirements_check.txt pyproject.toml
-          diff requirements.txt /tmp/requirements_check.txt || { echo "ERROR: requirements.txt is not up to date. Run make lock under Python 3.12."; exit 1; }
+          # Strip the 7-line header comment before comparing (output path differs)
+          diff <(tail -n +8 requirements.txt) <(tail -n +8 /tmp/requirements_check.txt) || { echo "ERROR: requirements.txt is not up to date. Run make lock under Python 3.12."; exit 1; }
       - name: Install backend dependencies
         run: |
           cd backend
