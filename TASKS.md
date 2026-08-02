@@ -197,7 +197,7 @@ Every pull request runs a deterministic baseline quality pipeline using reposito
 - The merged commits were fetched and inspected; the local Windows `quality` gate passed with backend/frontend tests, lint, type checks, build, and documentation checks.
 - Deferred to mapped later tasks: database/Auth/RLS integration (`M003`/`M026`), frontend accessibility/E2E and bundle inspection (`M015`/`M024`/`M026`), provider contracts (`M006`), and release-stage Semgrep/Trivy/SBOM/provenance gates (`M026`/`M027`/`M036`).
 
-## [ ] Master Task 3 — M003 Local Supabase, Migrations, Auth, and RLS Foundation
+## [x] Master Task 3 — M003 Local Supabase, Migrations, Auth, and RLS Foundation
 
 ### Outcome
 
@@ -234,6 +234,15 @@ Provide a resettable local PostgreSQL/Auth environment that mirrors the cloud se
 ### Completion Gate
 
 Local database, Auth, migrations, RLS, and seed workflows are reproducible in local development and CI.
+
+### Implementation Evidence
+
+- PR #3 implemented the M003 foundation but was merged into the stale M002 feature branch instead of `main`; this corrective integration branch isolates the M003 diff against current `main`.
+- PR #7 review identified that local administrator membership must not be embedded in the deployable migration chain. The correction moves cluster-role bootstrap to local-only `supabase/roles.sql`, removes the unmerged membership migration, and gives request-facing code a dedicated least-privilege `app_runtime` login.
+- Alembic verifies durable trusted-role attributes and rejects browser/runtime membership without hard-coding a valid deployment principal list.
+- A clean local reset applied the local role bootstrap, all three deployable migrations, deterministic seed, and Alembic compatibility head `20260801170000`; all 19 M003 database/RLS tests passed, including request-runtime trusted-role denial.
+- The service-free repository `quality` gate passed with 22 backend tests, 19 database-profile tests skipped, one frontend test, 92% backend coverage, lint, type checks, build, and documentation checks. Bandit, `pip-audit`, and `npm audit` found no security or dependency issues.
+- PR #7 correction commits `5d4bfec` and `3094334` passed all seven repository CI jobs. The final diff and commit were inspected and Guardian passed; the unrelated external Cloudflare Pages preview failure does not exercise this database task.
 
 ## [ ] Master Task 4 — M004 Frontend Foundation and Design Tokens
 

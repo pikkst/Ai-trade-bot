@@ -14,7 +14,6 @@ from sqlalchemy.exc import DBAPIError
 from alembic import command
 from app.authorization import WorkspaceRole, resolve_auth_context
 from app.database import (
-    apply_request_context,
     build_engine,
     build_session_factory,
     transactional_session,
@@ -138,7 +137,7 @@ def test_supabase_migrations_seed_and_alembic_head(database_engine: Engine) -> N
             connection.execute(
                 text("select version_num from private.alembic_version")
             ).scalar_one()
-            == "20260801151000"
+            == "20260801170000"
         )
 
 
@@ -304,7 +303,6 @@ def test_transaction_commit_and_rollback(database_engine: Engine) -> None:
         )
 
     with transactional_session(factory) as session:
-        apply_request_context(session, role="app_workflow", auth_subject=None)
         session.execute(
             text(
                 """
@@ -322,7 +320,6 @@ def test_transaction_commit_and_rollback(database_engine: Engine) -> None:
         pytest.raises(RuntimeError, match="rollback test"),
         transactional_session(factory) as session,
     ):
-        apply_request_context(session, role="app_workflow", auth_subject=None)
         session.execute(
             text(
                 """
@@ -413,3 +410,66 @@ def test_every_public_table_forces_rls_and_views_hide_raw_config(
         )
         assert "configuration" not in config_columns
         assert {"configuration_hash", "version", "workspace_id"} <= config_columns
+
+
+@pytest.mark.parametrize(
+    ("role", "expected_attributes"),
+    [
+        ("app_workflow", (False, False, False)),
+        ("app_migration", (False, False, True)),
+    ],
+)
+def test_trusted_role_graph_is_narrow(
+    database_engine: Engine,
+    role: str,
+    expected_attributes: tuple[bool, bool, bool],
+) -> None:
+    with database_engine.connect() as connection:
+        attributes = connection.execute(
+            text(
+                """
+                select rolcanlogin, rolinherit, rolbypassrls
+                from pg_roles
+                where rolname = :role
+                """
+            ),
+            {"role": role},
+        ).one()
+        members = set(
+            connection.execute(
+                text(
+                    """
+                    select pg_get_userbyid(member)
+                    from pg_auth_members
+                    where roleid = (select oid from pg_roles where rolname = :role)
+                    order by 1
+                    """
+                ),
+                {"role": role},
+            ).scalars()
+        )
+
+    assert tuple(attributes) == expected_attributes
+    assert "postgres" in members
+    assert not members.intersection(
+        {"anon", "authenticated", "service_role", "app_runtime"}
+    )
+
+
+@pytest.mark.parametrize("trusted_role", ["app_workflow", "app_migration"])
+def test_request_runtime_cannot_assume_trusted_roles(
+    database_engine: Engine,
+    trusted_role: str,
+) -> None:
+    runtime_url = database_engine.url.set(
+        username="app_runtime",
+        password="app-runtime-local-only",
+    )
+    runtime_engine = build_engine(runtime_url.render_as_string(hide_password=False))
+    try:
+        with runtime_engine.connect() as connection:
+            with pytest.raises(DBAPIError) as exc_info:
+                connection.exec_driver_sql(f"set role {trusted_role}")
+            assert "permission denied" in str(exc_info.value.orig).lower()
+    finally:
+        runtime_engine.dispose()
