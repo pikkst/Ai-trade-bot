@@ -1,7 +1,7 @@
 account_id = ""
 
 [build]
-command = "cd frontend && npm run build"
+command = "cd frontend && npm ci && npm run build"
 publish_dir = "frontend/dist"
 
 [[redirects]]
