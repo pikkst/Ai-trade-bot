@@ -1,6 +1,10 @@
 account_id = ""
 publish_dir = "frontend/dist"
 
+[build]
+  command = "cd frontend && npm run build"
+  publish = "frontend/dist"
+
 [[redirects]]
 from = "/*"
 to = "/index.html"

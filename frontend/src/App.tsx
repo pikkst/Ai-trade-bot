@@ -3,14 +3,17 @@ import { Link } from 'react-router-dom';
 import './App.css';
 import './styles/tokens.css';
 import { formatCurrency, formatPercent } from './lib/format';
+import { getContent, type SupportedLocale, type ContentKey } from './lib/content';
 
 type ThemeOption = 'light' | 'dark' | 'system';
 
-const themeOptions: Array<{ value: ThemeOption; label: string }> = [
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-  { value: 'system', label: 'System' },
+const themeOptions: Array<{ value: ThemeOption; labelKey: ContentKey }> = [
+  { value: 'light', labelKey: 'theme.light' },
+  { value: 'dark', labelKey: 'theme.dark' },
+  { value: 'system', labelKey: 'theme.system' },
 ];
+
+const ACTIVE_LOCALE: SupportedLocale = 'en';
 
 function App() {
   const [theme, setTheme] = useState<ThemeOption>(() => {
@@ -27,11 +30,19 @@ function App() {
     window.localStorage.setItem('daily-roast-theme', theme);
   }, [theme]);
 
+  const t = (key: ContentKey) => getContent(ACTIVE_LOCALE, key);
+
   const metrics = useMemo(
     () => [
-      { label: 'Portfolio', value: formatCurrency(12540.5, { currency: 'EUR' }) },
-      { label: 'Drawdown', value: formatPercent(-0.085) },
-      { label: 'Evidence freshness', value: '2m ago' },
+      {
+        label: t('metric.portfolio'),
+        value: formatCurrency(12540.5, { currency: 'EUR', locale: ACTIVE_LOCALE }),
+      },
+      {
+        label: t('metric.drawdown'),
+        value: formatPercent(-0.085, { locale: ACTIVE_LOCALE }),
+      },
+      { label: t('metric.evidenceFreshness'), value: '2m ago' },
     ],
     []
   );
@@ -40,11 +51,9 @@ function App() {
     <div className="app">
       <header className="app-header">
         <div className="app-title">
-          <p className="muted">Evidence-Driven Market Intelligence</p>
-          <h1>The Daily Roast AI</h1>
-          <p className="muted">
-            Design tokens · theme-ready foundation · financial clarity
-          </p>
+          <p className="muted">{t('app.tagline')}</p>
+          <h1>{t('app.title')}</h1>
+          <p className="muted">{t('app.subtitle')}</p>
         </div>
         <div className="theme-switcher" role="group" aria-label="Theme selection">
           {themeOptions.map((option) => (
@@ -54,7 +63,7 @@ function App() {
               aria-pressed={theme === option.value}
               onClick={() => setTheme(option.value)}
             >
-              {option.label}
+              {t(option.labelKey)}
             </button>
           ))}
         </div>
@@ -63,10 +72,8 @@ function App() {
       <main className="app-main">
         <div className="grid">
           <section className="panel">
-            <h2>Design tokens</h2>
-            <p className="muted">
-              Versioned visual primitives for calm, trustworthy evidence displays.
-            </p>
+            <h2>{t('section.designTokens')}</h2>
+            <p className="muted">{t('section.designTokensBody')}</p>
             <div className="token-list">
               <div className="token-chip">
                 <span className="value-row">
@@ -102,36 +109,36 @@ function App() {
           </section>
 
           <section className="panel">
-            <h3>Reference metrics</h3>
+            <h3>{t('section.referenceMetrics')}</h3>
             <div className="token-list">
               {metrics.map((metric) => (
                 <div className="token-chip" key={metric.label}>
                   <span>{metric.label}</span>
-                  <strong>{metric.value}</strong>
+                  <strong className="financial">{metric.value}</strong>
                 </div>
               ))}
             </div>
           </section>
 
           <section className="panel">
-            <h3>Accessibility notes</h3>
+            <h3>{t('section.accessibilityNotes')}</h3>
             <p className="muted">
               High contrast, reduced motion, and semantic status guidance are part of
               the foundation.
             </p>
             <div className="status-pill">
-              <span>●</span>
-              <span>Paper-only context</span>
+              <span>&#9679;</span>
+              <span>{t('status.paperContext')}</span>
             </div>
           </section>
         </div>
 
-        <div className="panel" style={{ marginTop: '1rem' }}>
+        <div className="panel" style={{ marginTop: 'var(--space-4)' }}>
           <h3>Navigation</h3>
           <div className="link-list">
-            <Link to="/">Token reference</Link>
+            <Link to="/">{t('nav.tokenReference')}</Link>
             <a href="https://thedailyroast.online" target="_blank" rel="noreferrer">
-              Product identity
+              {t('nav.productIdentity')}
             </a>
           </div>
         </div>

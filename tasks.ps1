@@ -65,6 +65,7 @@ Commands:
   frontend-dev          Run Vite development server
   frontend-build        Build the frontend production bundle
   frontend-test         Run frontend tests
+  frontend-bundle-scan  Scan the frontend bundle for leaked secrets
   research-cycle        Run one deterministic research cycle
   all-checks            Run the local pre-push quality gate
   quality               Run the deterministic baseline quality gate
@@ -265,6 +266,14 @@ switch ($Command) {
     "frontend-build" {
         Write-Host "==> Building frontend..." -ForegroundColor Cyan
         try { Push-Location frontend; Invoke-Native npm run build } finally { Pop-Location }
+        Write-Host "==> Scanning frontend bundle for secrets..." -ForegroundColor Cyan
+        Invoke-Native python infrastructure/scripts/scan_bundle_secrets.py frontend/dist
+        Write-Host "==> Frontend build complete." -ForegroundColor Green
+    }
+    "frontend-bundle-scan" {
+        Write-Host "==> Scanning frontend bundle for secrets..." -ForegroundColor Cyan
+        Invoke-Native python infrastructure/scripts/scan_bundle_secrets.py frontend/dist
+        Write-Host "==> Bundle scan complete." -ForegroundColor Green
     }
     "frontend-test" {
         Write-Host "==> Running frontend tests..." -ForegroundColor Cyan
