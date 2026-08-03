@@ -15,7 +15,10 @@ const themeOptions: Array<{ value: ThemeOption; label: string }> = [
 function App() {
   const [theme, setTheme] = useState<ThemeOption>(() => {
     if (typeof window === 'undefined') return 'system';
-    return (window.localStorage.getItem('daily-roast-theme') as ThemeOption | null) ?? 'system';
+    return (
+      (window.localStorage.getItem('daily-roast-theme') as ThemeOption | null) ??
+      'system'
+    );
   });
 
   useEffect(() => {
@@ -39,7 +42,9 @@ function App() {
         <div className="app-title">
           <p className="muted">Evidence-Driven Market Intelligence</p>
           <h1>The Daily Roast AI</h1>
-          <p className="muted">Design tokens · theme-ready foundation · financial clarity</p>
+          <p className="muted">
+            Design tokens · theme-ready foundation · financial clarity
+          </p>
         </div>
         <div className="theme-switcher" role="group" aria-label="Theme selection">
           {themeOptions.map((option) => (
@@ -59,25 +64,36 @@ function App() {
         <div className="grid">
           <section className="panel">
             <h2>Design tokens</h2>
-            <p className="muted">Versioned visual primitives for calm, trustworthy evidence displays.</p>
+            <p className="muted">
+              Versioned visual primitives for calm, trustworthy evidence displays.
+            </p>
             <div className="token-list">
               <div className="token-chip">
                 <span className="value-row">
-                  <span className="swatch" style={{ background: 'var(--color-brand)' }} />
+                  <span
+                    className="swatch"
+                    style={{ background: 'var(--color-brand)' }}
+                  />
                   Brand
                 </span>
                 <code>brand</code>
               </div>
               <div className="token-chip">
                 <span className="value-row">
-                  <span className="swatch" style={{ background: 'var(--color-accent)' }} />
+                  <span
+                    className="swatch"
+                    style={{ background: 'var(--color-accent)' }}
+                  />
                   Accent
                 </span>
                 <code>roast</code>
               </div>
               <div className="token-chip">
                 <span className="value-row">
-                  <span className="swatch" style={{ background: 'var(--color-danger)' }} />
+                  <span
+                    className="swatch"
+                    style={{ background: 'var(--color-danger)' }}
+                  />
                   Danger
                 </span>
                 <code>danger</code>
@@ -99,7 +115,10 @@ function App() {
 
           <section className="panel">
             <h3>Accessibility notes</h3>
-            <p className="muted">High contrast, reduced motion, and semantic status guidance are part of the foundation.</p>
+            <p className="muted">
+              High contrast, reduced motion, and semantic status guidance are part of
+              the foundation.
+            </p>
             <div className="status-pill">
               <span>●</span>
               <span>Paper-only context</span>

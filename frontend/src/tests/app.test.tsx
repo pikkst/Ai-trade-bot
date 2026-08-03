@@ -18,7 +18,9 @@ describe('App', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByRole('heading', { name: /the daily roast ai/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: /the daily roast ai/i })
+    ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /design tokens/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /token reference/i })).toBeInTheDocument();
   });

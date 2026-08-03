@@ -38,7 +38,7 @@ README_INVENTORY = (
 
 def markdown_files(root: Path) -> list[Path]:
     """Return tracked-source Markdown candidates without generated dependencies."""
-    ignored = {".git", ".venv", "node_modules", "dist", "build"}
+    ignored = {".git", ".venv", "node_modules", "dist", "build", ".pytest-tmp"}
     return sorted(
         path
         for path in root.rglob("*.md")
