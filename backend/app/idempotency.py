@@ -224,13 +224,8 @@ def update_with_expected_version(
     if statement is None:
         raise ValueError("unsupported optimistic-concurrency target")
 
-    parameters = {
-        f"value_{column}": value
-        for column, value in values.items()
-    }
-    parameters.update(
-        {"row_id": row_id, "expected_version": expected_version}
-    )
+    parameters = {f"value_{column}": value for column, value in values.items()}
+    parameters.update({"row_id": row_id, "expected_version": expected_version})
     result = session.execute(statement, parameters).scalar_one_or_none()
     if result is None:
         raise ConcurrencyConflictError()
