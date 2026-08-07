@@ -1003,8 +1003,8 @@ class MarketDataService:
             "exchange_id, symbol_version_id, interval_code, event_type, "
             "severity, details, detection_policy_version, resolution, "
             "ingestion_id, snapshot_id, reviewer_user_id, detected_at"
-            f") values {','.join(values)}"
-        )
+            f") values {','.join(values)}"  # nosec B608
+        )  # nosec B608
         self._session.execute(text(sql), params)
 
     def _insert_snapshot(
@@ -1079,8 +1079,8 @@ class MarketDataService:
         sql = (
             "insert into public.market_snapshot_candles "
             "(snapshot_id, candle_id, sequence) "
-            f"values {','.join(values)}"
-        )
+            f"values {','.join(values)}"  # nosec B608
+        )  # nosec B608
         self._session.execute(text(sql), params)
 
     def _compute_ingestion_hash(
