@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import TextClause, text
 from sqlalchemy.orm import Session
 
 from app.errors import ConcurrencyConflictError, IdempotencyConflictError
@@ -23,6 +23,62 @@ class IdempotencyReservation:
     created: bool
     response_status: int | None = None
     response_body: dict[str, Any] | None = None
+
+
+_CONCURRENCY_STATEMENTS: dict[tuple[str, frozenset[str]], TextClause] = {
+    ("workspaces", frozenset({"name"})): text(
+        """
+        update public.workspaces
+        set name = :value_name, version = version + 1
+        where id = :row_id and version = :expected_version
+        returning version
+        """
+    ),
+    ("workspaces", frozenset({"lifecycle_state"})): text(
+        """
+        update public.workspaces
+        set lifecycle_state = :value_lifecycle_state, version = version + 1
+        where id = :row_id and version = :expected_version
+        returning version
+        """
+    ),
+    ("workspaces", frozenset({"name", "lifecycle_state"})): text(
+        """
+        update public.workspaces
+        set name = :value_name,
+            lifecycle_state = :value_lifecycle_state,
+            version = version + 1
+        where id = :row_id and version = :expected_version
+        returning version
+        """
+    ),
+    ("virtual_portfolios", frozenset({"name"})): text(
+        """
+        update public.virtual_portfolios
+        set name = :value_name, version = version + 1
+        where id = :row_id and version = :expected_version
+        returning version
+        """
+    ),
+    ("virtual_portfolios", frozenset({"lifecycle_state"})): text(
+        """
+        update public.virtual_portfolios
+        set lifecycle_state = :value_lifecycle_state, version = version + 1
+        where id = :row_id and version = :expected_version
+        returning version
+        """
+    ),
+    ("virtual_portfolios", frozenset({"name", "lifecycle_state"})): text(
+        """
+        update public.virtual_portfolios
+        set name = :value_name,
+            lifecycle_state = :value_lifecycle_state,
+            version = version + 1
+        where id = :row_id and version = :expected_version
+        returning version
+        """
+    ),
+}
 
 
 def request_fingerprint(payload: Any) -> str:
@@ -143,24 +199,14 @@ def update_with_expected_version(
     expected_version: int,
     values: dict[str, Any],
 ) -> int:
-    """Apply an allowlisted optimistic update and return the next version."""
-    allowed_tables: dict[str, set[str]] = {
-        "workspaces": {"name", "lifecycle_state"},
-        "virtual_portfolios": {"name", "lifecycle_state"},
-    }
-    allowed_columns = allowed_tables.get(table)
-    if allowed_columns is None or not values or not set(values).issubset(allowed_columns):
+    """Apply a closed-set optimistic update and return the next version."""
+    statement = _CONCURRENCY_STATEMENTS.get((table, frozenset(values)))
+    if statement is None:
         raise ValueError("unsupported optimistic-concurrency target")
-    assignments = ", ".join(f"{column} = :value_{column}" for column in sorted(values))
+
     parameters = {f"value_{column}": value for column, value in values.items()}
     parameters.update({"row_id": row_id, "expected_version": expected_version})
-    result = session.execute(
-        text(
-            f"update public.{table} set {assignments}, version = version + 1 "
-            "where id = :row_id and version = :expected_version returning version"
-        ),
-        parameters,
-    ).scalar_one_or_none()
+    result = session.execute(statement, parameters).scalar_one_or_none()
     if result is None:
         raise ConcurrencyConflictError()
     return int(result)
