@@ -20,9 +20,7 @@ function tokenValue(css: string, token: string, selector = ':root'): string {
   );
   if (!block) throw new Error(`Missing CSS selector: ${selector}`);
 
-  const match = block[1].match(
-    new RegExp(`${escapeRegExp(token)}\\s*:\\s*([^;]+);`)
-  );
+  const match = block[1].match(new RegExp(`${escapeRegExp(token)}\\s*:\\s*([^;]+);`));
   if (!match) throw new Error(`Missing token ${token} in ${selector}`);
   return match[1].trim();
 }
@@ -124,7 +122,9 @@ describe('Accessibility — design token contract', () => {
   it('defines complete AI and deterministic semantic status token sets', () => {
     for (const state of ['ai', 'deterministic']) {
       for (const suffix of ['', '-bg', '-border', '-on']) {
-        expect(tokenValue(statusTokensCss, `--color-status-${state}${suffix}`)).toBeTruthy();
+        expect(
+          tokenValue(statusTokensCss, `--color-status-${state}${suffix}`)
+        ).toBeTruthy();
       }
     }
   });
