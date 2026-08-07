@@ -59,7 +59,7 @@ def test_transactional_session_commits_and_closes() -> None:
     fake = FakeSession()
 
     with database.transactional_session(fake_factory(fake)) as session:
-        assert session is fake
+        assert cast(Any, session) is fake
 
     assert fake.committed
     assert not fake.rolled_back
@@ -87,7 +87,7 @@ def test_session_dependency_uses_transaction_boundary(
     monkeypatch.setattr(database, "get_session_factory", lambda: fake_factory(fake))
 
     dependency = database.session_dependency()
-    assert next(dependency) is fake
+    assert next(dependency) is cast(Any, fake)
     with pytest.raises(StopIteration):
         next(dependency)
 

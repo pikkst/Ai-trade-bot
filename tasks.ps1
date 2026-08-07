@@ -291,6 +291,7 @@ switch ($Command) {
         .\tasks.ps1 lint
         .\tasks.ps1 type-check
         .\tasks.ps1 test
+        .\tasks.ps1 contract-test
         .\tasks.ps1 frontend-build
         .\tasks.ps1 docs-check
     }

@@ -244,7 +244,7 @@ Local database, Auth, migrations, RLS, and seed workflows are reproducible in lo
 - The service-free repository `quality` gate passed with 22 backend tests, 19 database-profile tests skipped, one frontend test, 92% backend coverage, lint, type checks, build, and documentation checks. Bandit, `pip-audit`, and `npm audit` found no security or dependency issues.
 - PR #7 correction commits `5d4bfec` and `3094334` passed all seven repository CI jobs. The final diff and commit were inspected and Guardian passed; the unrelated external Cloudflare Pages preview failure does not exercise this database task.
 
-## [ ] Master Task 4 — M004 Frontend Foundation and Design Tokens
+## [x] Master Task 4 — M004 Frontend Foundation and Design Tokens
 
 ### Outcome
 
@@ -277,7 +277,7 @@ Create a strict, accessible, token-driven frontend foundation before product scr
 
 The frontend can render a tested token reference page in all supported themes with no domain screen yet required.
 
-## [ ] Master Task 5 — M005 Typed Settings, Logging, Errors, Transactions, and Idempotency
+## [x] Master Task 5 — M005 Typed Settings, Logging, Errors, Transactions, and Idempotency
 
 ### Outcome
 

@@ -128,7 +128,7 @@ frontend-test: ## Run frontend tests
 research-cycle: ## Run one deterministic research cycle
 	cd backend && $(PYTHON) -m app.cli.run_research_cycle --experiment-id dummy --occurrence 2026-01-01T00:00:00Z
 
-quality: format-check lint type-check test frontend-build docs-check ## Run the deterministic baseline quality gate
+quality: format-check lint type-check test contract-test frontend-build docs-check ## Run the deterministic baseline quality gate
 
 all-checks: quality ## Run the local pre-push quality gate
 
