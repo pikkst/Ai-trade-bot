@@ -51,10 +51,7 @@ def _redact_processor(
     _method_name: str,
     event_dict: dict[str, Any],
 ) -> dict[str, Any]:
-    return {
-        key: redact_value(value, key=key)
-        for key, value in event_dict.items()
-    }
+    return {key: redact_value(value, key=key) for key, value in event_dict.items()}
 
 
 def _context_processor(
@@ -83,9 +80,7 @@ def configure_logging(*, level: str = "INFO") -> None:
             _redact_processor,
             structlog.processors.JSONRenderer(),
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            getattr(logging, level)
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, level)),
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=True,
     )
@@ -105,8 +100,7 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         if not candidate or len(candidate) > self._max_id_length:
             return None
         if not all(
-            character.isalnum() or character in "-_.:"
-            for character in candidate
+            character.isalnum() or character in "-_.:" for character in candidate
         ):
             return None
         return candidate
@@ -116,12 +110,9 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: RequestResponseEndpoint,
     ) -> Response:
-        request_id = (
-            self._clean_id(request.headers.get("X-Request-ID")) or uuid4().hex
-        )
+        request_id = self._clean_id(request.headers.get("X-Request-ID")) or uuid4().hex
         correlation_id = (
-            self._clean_id(request.headers.get("X-Correlation-ID"))
-            or request_id
+            self._clean_id(request.headers.get("X-Correlation-ID")) or request_id
         )
         with bind_context(
             correlation_id=correlation_id,
