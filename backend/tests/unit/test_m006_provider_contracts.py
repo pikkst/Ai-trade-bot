@@ -9,7 +9,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Any, get_type_hints
+from typing import Any, cast, get_type_hints
 
 import pytest
 
@@ -36,6 +36,7 @@ from app.infrastructure.ai.protocol import (
     AiUsage,
     BudgetEvaluationRequest,
     FreshnessPolicy,
+    JsonValue,
     LLMEmptyResponseError,
     LLMMalformedResponseError,
     LLMRateLimitError,
@@ -315,6 +316,11 @@ def test_fake_gemini_success_scenario_returns_candidate() -> None:
     assert response.candidate.payload["schema_version"] == "1.0"
     assert response.candidate.payload["market_regime"] == "bullish"
     assert response.candidate.provider_code == "fake-gemini"
+    evidence_features = [
+        cast(dict[str, JsonValue], e)["feature"]
+        for e in cast(list[JsonValue], response.candidate.payload.get("evidence", []))
+    ]
+    assert all(f in request.allowed_evidence_ids for f in evidence_features)
 
 
 def test_fake_gemini_invalid_schema_scenario_returns_success_with_candidate() -> None:
@@ -560,6 +566,16 @@ def test_deterministic_repeated_runs_produce_same_result() -> None:
     assert result1.attempt.outcome == result2.attempt.outcome
     assert result1.attempt.latency_ms == result2.attempt.latency_ms
     assert result1.candidate == result2.candidate
+
+
+def test_fake_gemini_retry_creates_unique_attempt_identity() -> None:
+    provider = make_gemini_provider(FakeGeminiScenario.SUCCESS)
+    request = make_analysis_request()
+    result1 = asyncio.run(provider.analyze(request))
+    result2 = asyncio.run(provider.analyze(request))
+    assert result1.attempt.attempt_id != result2.attempt.attempt_id
+    assert result1.attempt.retry_count == 0
+    assert result2.attempt.retry_count == 1
 
 
 def test_no_network_call_in_normal_unit_tests() -> None:

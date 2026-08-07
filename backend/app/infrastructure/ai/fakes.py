@@ -70,6 +70,7 @@ class FakeGeminiProvider:
         else:
             self._clock = None
         self._request_count = 0
+        self._analyze_count = 0
 
     def _now(self) -> datetime:
         if self._clock is not None:
@@ -104,8 +105,16 @@ class FakeGeminiProvider:
 
     async def analyze(self, request: AnalysisRequest) -> ProviderAnalysisResponse:
         self._check_scenario()
+        self._analyze_count += 1
+        attempt_id = f"{request.analysis_run_id}-attempt-{self._analyze_count:02d}"
+        retry_count = self._analyze_count - 1
 
         if self.config.scenario == FakeGeminiScenario.SUCCESS:
+            evidence_feature = (
+                request.allowed_evidence_ids[0]
+                if request.allowed_evidence_ids
+                else "ema_50"
+            )
             candidate = ProviderCandidate(
                 candidate_id=request.analysis_run_id,
                 schema_version="1.0",
@@ -114,7 +123,7 @@ class FakeGeminiProvider:
                     "market_regime": self.config.market_regime,
                     "recommended_action": self.config.recommended_action,
                     "confidence": str(self.config.confidence),
-                    "evidence": [{"feature": "fake_evidence", "observation": "true"}],
+                    "evidence": [{"feature": evidence_feature, "observation": "true"}],
                     "contradictions": [],
                     "risks": ["test_risk"],
                     "missing_information": [],
@@ -127,7 +136,7 @@ class FakeGeminiProvider:
             )
             return ProviderAnalysisResponse(
                 attempt=ProviderAttemptResult(
-                    attempt_id=request.analysis_run_id,
+                    attempt_id=attempt_id,
                     provider_code="fake-gemini",
                     configured_model="fake-model",
                     outcome=ProviderOutcome.SUCCESS,
@@ -140,7 +149,7 @@ class FakeGeminiProvider:
                     safety_status=SafetySeverity.LOW,
                     raw_response_reference="fake-response-ref",
                     latency_ms=self.config.latency_ms,
-                    retry_count=0,
+                    retry_count=retry_count,
                 ),
                 candidate=candidate,
             )
@@ -160,7 +169,7 @@ class FakeGeminiProvider:
             )
             return ProviderAnalysisResponse(
                 attempt=ProviderAttemptResult(
-                    attempt_id=request.analysis_run_id,
+                    attempt_id=attempt_id,
                     provider_code="fake-gemini",
                     configured_model="fake-model",
                     outcome=ProviderOutcome.SUCCESS,
@@ -173,13 +182,13 @@ class FakeGeminiProvider:
                     safety_status=SafetySeverity.LOW,
                     raw_response_reference="fake-response-ref",
                     latency_ms=self.config.latency_ms,
-                    retry_count=0,
+                    retry_count=retry_count,
                 ),
                 candidate=candidate,
             )
 
         attempt = ProviderAttemptResult(
-            attempt_id=request.analysis_run_id,
+            attempt_id=attempt_id,
             provider_code="fake-gemini",
             configured_model="fake-model",
             outcome={
@@ -193,6 +202,6 @@ class FakeGeminiProvider:
             }[self.config.scenario],
             error_message="Fake error",
             latency_ms=self.config.latency_ms,
-            retry_count=0,
+            retry_count=retry_count,
         )
         return ProviderAnalysisResponse(attempt=attempt)

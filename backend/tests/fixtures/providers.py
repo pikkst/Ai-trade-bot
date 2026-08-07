@@ -185,13 +185,25 @@ def make_provider_analysis_response(
     if request is None:
         request = make_analysis_request()
     if candidate is None:
+        evidence_feature = (
+            request.allowed_evidence_ids[0]
+            if request.allowed_evidence_ids
+            else "ema_50"
+        )
         candidate = ProviderCandidate(
             candidate_id=request.analysis_run_id,
             schema_version="1.0",
             payload={
+                "schema_version": "1.0",
                 "market_regime": "bullish",
                 "recommended_action": "hold",
                 "confidence": "0.70",
+                "evidence": [{"feature": evidence_feature, "observation": "true"}],
+                "contradictions": [],
+                "risks": ["test_risk"],
+                "missing_information": [],
+                "invalidation_conditions": ["test_invalidation"],
+                "summary": "Fake Gemini analysis for testing.",
             },
             provider_code="fixture-provider",
             configured_model="fixture-model",
