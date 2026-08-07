@@ -9,7 +9,10 @@ import { getContent } from '../lib/content';
 import { contrastRatio } from './contrast';
 
 const appCss = readFileSync(new URL('../App.css', import.meta.url), 'utf8');
-const baseTokensCss = readFileSync(new URL('../styles/tokens.css', import.meta.url), 'utf8');
+const baseTokensCss = readFileSync(
+  new URL('../styles/tokens.css', import.meta.url),
+  'utf8'
+);
 const statusTokensCss = readFileSync(
   new URL('../styles/status-tokens.css', import.meta.url),
   'utf8'
