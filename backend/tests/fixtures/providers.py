@@ -15,6 +15,10 @@ from app.infrastructure.ai.protocol import (
     AiBudgetDecision,
     AiUsage,
     AnalysisRequest,
+    BudgetEvaluationRequest,
+    FeatureCalculationReference,
+    FreshnessPolicy,
+    FreshnessQualityOutcome,
     ProviderAnalysisResponse,
     ProviderAttemptResult,
     ProviderCandidate,
@@ -73,22 +77,45 @@ def make_analysis_request(
     snapshot_id: str = "snap-00000001",
     snapshot_hash: str = "a" * 64,
 ) -> AnalysisRequest:
+    feature_calc = FeatureCalculationReference(
+        calculation_id="calc-001",
+        calculation_hash="calc-hash-001",
+        calculation_version="1.0",
+        feature_set_hash="feature-set-hash-001",
+    )
+    freshness = FreshnessQualityOutcome(
+        policy_version="1.0",
+        outcome=FreshnessPolicy.ACCEPTED,
+        latest_candle_time=FIXED_TIME,
+        max_age_minutes=60,
+        gap_count=0,
+        notes="",
+    )
     return AnalysisRequest(
         analysis_run_id=analysis_run_id,
         snapshot_id=snapshot_id,
         snapshot_hash=snapshot_hash,
+        exchange="binance",
         symbol="BTCEUR",
         interval="1h",
         analysis_time=FIXED_TIME,
-        features={
-            "ema_50": Decimal("50000.00"),
-            "ema_200": Decimal("49000.00"),
-            "rsi_14": Decimal("55.0"),
-            "atr_14": Decimal("500.00"),
-        },
+        latest_candle_time=FIXED_TIME,
+        freshness_quality=freshness,
+        feature_calculation=feature_calc,
+        allowed_evidence_ids=["ema_50", "ema_200", "rsi_14", "atr_14"],
         prompt_version="1.0",
         schema_version="1.0",
+        safety_version="1.0",
+        validation_version="1.0",
         provider_config_version="1.0",
+        logical_request_id="logical-001",
+        idempotency_key="fixture-test-value",
+        features={
+            "ema_50": "50000.00",
+            "ema_200": "49000.00",
+            "rsi_14": "55.0",
+            "atr_14": "500.00",
+        },
         budget_decision=AiBudgetDecision(
             allowed=True,
             reason="Fixture budget",
@@ -96,6 +123,41 @@ def make_analysis_request(
             remaining_tokens=10000,
             remaining_cost=Decimal("5.00"),
         ),
+        context=ExecutionContext(
+            correlation_id="corr-fixture",
+            request_id="req-fixture",
+            job_id="job-fixture",
+            cycle_id="cycle-fixture",
+        ),
+    )
+
+
+def make_budget_evaluation_request(
+    analysis_run_id: str = "run-00000001",
+    snapshot_id: str = "snap-00000001",
+    snapshot_hash: str = "a" * 64,
+) -> BudgetEvaluationRequest:
+    feature_calc = FeatureCalculationReference(
+        calculation_id="calc-001",
+        calculation_hash="calc-hash-001",
+        calculation_version="1.0",
+        feature_set_hash="feature-set-hash-001",
+    )
+    return BudgetEvaluationRequest(
+        analysis_run_id=analysis_run_id,
+        snapshot_id=snapshot_id,
+        snapshot_hash=snapshot_hash,
+        exchange="binance",
+        symbol="BTCEUR",
+        interval="1h",
+        feature_calculation=feature_calc,
+        prompt_version="1.0",
+        schema_version="1.0",
+        safety_version="1.0",
+        validation_version="1.0",
+        provider_config_version="1.0",
+        logical_request_id="logical-001",
+        idempotency_key="fixture-test-value",
         context=ExecutionContext(
             correlation_id="corr-fixture",
             request_id="req-fixture",

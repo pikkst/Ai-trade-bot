@@ -6,9 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Protocol
-
-from pydantic import BaseModel, ConfigDict
+from typing import Protocol
 
 from app.request_context import ExecutionContext
 
@@ -39,6 +37,10 @@ class SafetySeverity(str, Enum):
     BLOCKED = "blocked"
 
 
+JsonPrimitive = str | int | float | bool | None
+JsonValue = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
+
+
 @dataclass(frozen=True, slots=True)
 class AiUsage:
     prompt_tokens: int = 0
@@ -66,7 +68,7 @@ class ProviderAttemptResult:
 class ProviderCandidate:
     candidate_id: str
     schema_version: str
-    payload: dict[str, Any]
+    payload: dict[str, JsonValue]
     provider_code: str
     configured_model: str
     raw_response_reference: str | None = None
@@ -87,36 +89,47 @@ class AiBudgetDecision:
     remaining_cost: Decimal = Decimal("0.00")
 
 
-class ValidatedAiReport(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+class FreshnessPolicy(str, Enum):
+    ACCEPTED = "accepted"
+    DEGRADED = "degraded"
+    REJECTED = "rejected"
 
+
+@dataclass(frozen=True, slots=True)
+class FreshnessQualityOutcome:
+    policy_version: str
+    outcome: FreshnessPolicy
+    latest_candle_time: datetime | None = None
+    max_age_minutes: int = 0
+    gap_count: int = 0
+    notes: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureCalculationReference:
+    calculation_id: str
+    calculation_hash: str
+    calculation_version: str
+    feature_set_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class BudgetEvaluationRequest:
+    analysis_run_id: str
+    snapshot_id: str
+    snapshot_hash: str
+    exchange: str
+    symbol: str
+    interval: str
+    feature_calculation: FeatureCalculationReference
+    prompt_version: str
     schema_version: str
-    market_regime: str
-    recommended_action: str
-    confidence: Decimal
-    evidence: list[dict[str, Any]]
-    contradictions: list[str]
-    risks: list[str]
-    missing_information: list[str]
-    invalidation_conditions: list[str]
-    summary: str
-
-
-class DeterministicFallbackResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    schema_version: str = "1.0"
-    market_regime: str = "uncertain"
-    recommended_action: str = "hold"
-    confidence: Decimal = Decimal("0.0")
-    evidence: list[dict[str, Any]] = field(default_factory=list)
-    contradictions: list[str] = field(default_factory=list)
-    risks: list[str] = field(default_factory=lambda: ["ai_provider_unavailable"])
-    missing_information: list[str] = field(
-        default_factory=lambda: ["ai_analysis_unavailable"]
-    )
-    invalidation_conditions: list[str] = field(default_factory=list)
-    summary: str = "Deterministic fallback: AI analysis is unavailable."
+    safety_version: str
+    validation_version: str
+    provider_config_version: str
+    logical_request_id: str
+    idempotency_key: str
+    context: ExecutionContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,21 +137,32 @@ class AnalysisRequest:
     analysis_run_id: str
     snapshot_id: str
     snapshot_hash: str
+    exchange: str
     symbol: str
     interval: str
     analysis_time: datetime
-    features: dict[str, Any]
-    prompt_version: str
-    schema_version: str
-    provider_config_version: str
-    budget_decision: AiBudgetDecision
     context: ExecutionContext
+    latest_candle_time: datetime | None = None
+    freshness_quality: FreshnessQualityOutcome | None = None
+    feature_calculation: FeatureCalculationReference | None = None
+    allowed_evidence_ids: list[str] = field(default_factory=list)
+    prompt_version: str = "1.0"
+    schema_version: str = "1.0"
+    safety_version: str = "1.0"
+    validation_version: str = "1.0"
+    provider_config_version: str = "1.0"
+    logical_request_id: str = ""
+    idempotency_key: str = ""
+    features: dict[str, JsonValue] = field(default_factory=dict)
+    budget_decision: AiBudgetDecision | None = None
 
 
 class LLMProvider(Protocol):
     async def analyze(self, request: AnalysisRequest) -> ProviderAnalysisResponse: ...
 
-    async def check_budget(self, request: AnalysisRequest) -> AiBudgetDecision: ...
+    async def check_budget(
+        self, request: BudgetEvaluationRequest
+    ) -> AiBudgetDecision: ...
 
 
 class LLMProviderError(Exception):

@@ -53,6 +53,8 @@ class FakeBinanceConfig:
                 f"Invalid FakeBinanceScenario: {self.scenario!r}. "
                 f"Valid values: {[s.value for s in FakeBinanceScenario]}"
             )
+        if not self.fixture_version:
+            raise ValueError("fixture_version must be non-empty")
 
 
 class FakeBinanceProvider:

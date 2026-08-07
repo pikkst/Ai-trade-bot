@@ -33,6 +33,8 @@ from app.infrastructure.ai.fakes import (
 from app.infrastructure.ai.protocol import (
     AiBudgetDecision,
     AiUsage,
+    BudgetEvaluationRequest,
+    FreshnessPolicy,
     LLMEmptyResponseError,
     LLMMalformedResponseError,
     LLMRateLimitError,
@@ -68,6 +70,7 @@ from tests.fixtures.providers import (
     FIXTURE_VERSION,
     make_analysis_request,
     make_binance_provider,
+    make_budget_evaluation_request,
     make_gemini_provider,
 )
 
@@ -86,6 +89,16 @@ def test_fake_binance_config_carries_fixture_version() -> None:
 def test_fake_gemini_config_carries_fixture_version() -> None:
     config = FakeGeminiConfig(fixture_version=FIXTURE_VERSION)
     assert config.fixture_version == FIXTURE_VERSION
+
+
+def test_fake_binance_config_requires_fixture_version() -> None:
+    with pytest.raises(ValueError, match="fixture_version must be non-empty"):
+        FakeBinanceConfig(fixture_version="")
+
+
+def test_fake_gemini_config_requires_fixture_version() -> None:
+    with pytest.raises(ValueError, match="fixture_version must be non-empty"):
+        FakeGeminiConfig(fixture_version="")
 
 
 def test_make_binance_provider_binds_fixture_version() -> None:
@@ -251,6 +264,7 @@ def test_fake_binance_gap_scenario_skips_candles() -> None:
     config = FakeBinanceConfig(
         scenario=FakeBinanceScenario.GAP,
         fixed_clock_time=FIXED_TIME,
+        fixture_version=FIXTURE_VERSION,
         gap_start=FIXED_TIME,
         gap_end=FIXED_TIME + timedelta(hours=1),
     )
@@ -275,10 +289,11 @@ def test_fake_binance_rate_limit_state() -> None:
 
 def test_fake_gemini_success_scenario_returns_candidate() -> None:
     provider = make_gemini_provider(FakeGeminiScenario.SUCCESS)
-    request = make_analysis_request()
-    budget = asyncio.run(provider.check_budget(request))
+    budget_request = make_budget_evaluation_request()
+    budget = asyncio.run(provider.check_budget(budget_request))
     assert budget.allowed is True
 
+    request = make_analysis_request()
     response = asyncio.run(provider.analyze(request))
     assert isinstance(response, ProviderAnalysisResponse)
     assert response.attempt.outcome == ProviderOutcome.SUCCESS
@@ -355,25 +370,25 @@ def _dataclass_to_json(obj: Any) -> str:
 def _restore_from_dataclass_json(data: dict[str, Any], cls: Any) -> Any:
     hints = get_type_hints(cls)
     restored_kwargs: dict[str, Any] = {}
-    for name, value in data.items():
-        expected_type = hints.get(name)
 
-        def _unwrap_union(tp: Any) -> Any:
-            if isinstance(tp, types.UnionType):
-                args = tp.__args__
+    def _unwrap_union(tp: Any) -> Any:
+        if isinstance(tp, types.UnionType):
+            args = tp.__args__
+            non_none = [a for a in args if a is not type(None)]
+            if len(non_none) == 1:
+                return non_none[0]
+            return tp
+        if hasattr(tp, "__origin__"):
+            origin = tp.__origin__
+            args = getattr(tp, "__args__", ())
+            if origin is not None and args:
                 non_none = [a for a in args if a is not type(None)]
                 if len(non_none) == 1:
                     return non_none[0]
-                return tp
-            if hasattr(tp, "__origin__"):
-                origin = tp.__origin__
-                args = getattr(tp, "__args__", ())
-                if origin is not None and args:
-                    non_none = [a for a in args if a is not type(None)]
-                    if len(non_none) == 1:
-                        return non_none[0]
-            return tp
+        return tp
 
+    for name, value in data.items():
+        expected_type = hints.get(name)
         unwrapped = _unwrap_union(expected_type)
 
         if unwrapped is not None and is_dataclass(unwrapped):
@@ -433,9 +448,18 @@ def test_analysis_request_serialization_round_trip() -> None:
     assert restored.analysis_run_id == request.analysis_run_id
     assert restored.snapshot_id == request.snapshot_id
     assert restored.analysis_time == request.analysis_time
+    assert restored.exchange == request.exchange
+    assert restored.symbol == request.symbol
+    assert restored.interval == request.interval
+    assert restored.logical_request_id == request.logical_request_id
+    assert restored.idempotency_key == request.idempotency_key
     assert restored.context.correlation_id == request.context.correlation_id
     assert restored.budget_decision.remaining_cost == Decimal("5.00")
     assert restored.features["ema_50"] == "50000.00"
+    assert restored.freshness_quality is not None
+    assert restored.freshness_quality.outcome == FreshnessPolicy.ACCEPTED
+    assert restored.feature_calculation is not None
+    assert restored.feature_calculation.calculation_id == "calc-001"
 
 
 def test_provider_attempt_result_serialization_round_trip() -> None:
@@ -494,6 +518,18 @@ def test_provider_candidate_serialization_round_trip() -> None:
     assert restored == candidate
     assert isinstance(restored.payload, dict)
     assert restored.payload["market_regime"] == "bullish"
+
+
+def test_budget_evaluation_request_serialization_round_trip() -> None:
+    request = make_budget_evaluation_request()
+    payload = _dataclass_to_json(request)
+    data = json.loads(payload)
+    restored = _restore_from_dataclass_json(data, BudgetEvaluationRequest)
+    assert restored.analysis_run_id == request.analysis_run_id
+    assert restored.exchange == request.exchange
+    assert restored.symbol == request.symbol
+    assert restored.feature_calculation.calculation_id == "calc-001"
+    assert restored.context.correlation_id == request.context.correlation_id
 
 
 def test_deterministic_repeated_runs_produce_same_result() -> None:

@@ -12,6 +12,7 @@ from app.infrastructure.ai.protocol import (
     AiBudgetDecision,
     AiUsage,
     AnalysisRequest,
+    BudgetEvaluationRequest,
     LLMEmptyResponseError,
     LLMMalformedResponseError,
     LLMRateLimitError,
@@ -55,6 +56,8 @@ class FakeGeminiConfig:
                 f"Invalid FakeGeminiScenario: {self.scenario!r}. "
                 f"Valid values: {[s.value for s in FakeGeminiScenario]}"
             )
+        if not self.fixture_version:
+            raise ValueError("fixture_version must be non-empty")
 
 
 class FakeGeminiProvider:
@@ -90,8 +93,7 @@ class FakeGeminiProvider:
         if self.config.scenario == FakeGeminiScenario.STALE_SOURCE:
             raise LLMStaleSourceError("Fake Gemini stale source")
 
-    async def check_budget(self, request: AnalysisRequest) -> AiBudgetDecision:
-        self._check_scenario()
+    async def check_budget(self, request: BudgetEvaluationRequest) -> AiBudgetDecision:
         return AiBudgetDecision(
             allowed=True,
             reason="Budget available",
