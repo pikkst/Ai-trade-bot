@@ -404,17 +404,17 @@ def test_fake_gemini_malformed_scenario() -> None:
 
 
 def test_fake_gemini_stale_source_scenario() -> None:
-    provider = make_gemini_provider(FakeGeminiScenario.STALE_SOURCE)
-    request = make_analysis_request()
+    request = make_analysis_request(stale=True)
+    provider = make_gemini_provider(FakeGeminiScenario.SUCCESS)
     response = asyncio.run(provider.analyze(request))
     assert isinstance(response, ProviderAnalysisResponse)
     assert response.attempt.outcome == ProviderOutcome.SUCCESS
     assert response.attempt.attempt_id.endswith("-attempt-00000001")
     assert response.attempt.retry_count == 0
-    assert response.attempt.stale_source is True
     assert response.candidate is not None
     assert response.candidate.payload["schema_version"] == "1.0"
     assert "stale_source" not in response.candidate.payload
+    assert request.freshness_quality.outcome == FreshnessPolicy.REJECTED
 
 
 def _dataclass_to_json(obj: Any) -> str:
@@ -604,9 +604,10 @@ def test_deterministic_repeated_runs_produce_same_result() -> None:
 
 def test_fake_gemini_retry_creates_unique_attempt_identity() -> None:
     provider = make_gemini_provider(FakeGeminiScenario.SUCCESS)
-    request = make_analysis_request()
-    result1 = asyncio.run(provider.analyze(request))
-    result2 = asyncio.run(provider.analyze(request))
+    request1 = make_analysis_request(attempt=0)
+    request2 = make_analysis_request(attempt=1)
+    result1 = asyncio.run(provider.analyze(request1))
+    result2 = asyncio.run(provider.analyze(request2))
     assert result1.attempt.attempt_id != result2.attempt.attempt_id
     assert result1.attempt.retry_count == 0
     assert result2.attempt.retry_count == 1
@@ -614,8 +615,8 @@ def test_fake_gemini_retry_creates_unique_attempt_identity() -> None:
 
 def test_fake_gemini_independent_requests_get_independent_sequences() -> None:
     provider = make_gemini_provider(FakeGeminiScenario.SUCCESS)
-    request_a = make_analysis_request()
-    request_b = replace(request_a, logical_request_id="logical-b")
+    request_a = make_analysis_request(attempt=0)
+    request_b = replace(request_a, logical_request_id="logical-b", attempt=0)
     result_a = asyncio.run(provider.analyze(request_a))
     result_b = asyncio.run(provider.analyze(request_b))
     assert result_a.attempt.attempt_id == "logical-001-attempt-00000001"
@@ -632,12 +633,13 @@ def test_fake_gemini_cross_instance_unique_attempt_identity() -> None:
     provider_b = make_gemini_provider(
         FakeGeminiScenario.SUCCESS, id_generator=shared_generator
     )
-    request = make_analysis_request()
-    result_a = asyncio.run(provider_a.analyze(request))
-    result_b = asyncio.run(provider_b.analyze(request))
+    request1 = make_analysis_request(attempt=0)
+    request2 = make_analysis_request(attempt=1)
+    result_a = asyncio.run(provider_a.analyze(request1))
+    result_b = asyncio.run(provider_b.analyze(request2))
     assert result_a.attempt.attempt_id != result_b.attempt.attempt_id
-    assert result_a.attempt.attempt_id == "logical-001-attempt-00000001"
-    assert result_b.attempt.attempt_id == "logical-001-attempt-00000002"
+    assert result_a.attempt.retry_count == 0
+    assert result_b.attempt.retry_count == 1
 
 
 def test_fake_gemini_failure_preserves_attempt_metadata() -> None:

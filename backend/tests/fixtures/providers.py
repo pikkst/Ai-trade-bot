@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from app.core.clock import DeterministicIdGenerator, FixedClock, IdGenerator
@@ -84,6 +84,9 @@ def make_analysis_request(
     analysis_run_id: str = "run-00000001",
     snapshot_id: str = "snap-00000001",
     snapshot_hash: str = "a" * 64,
+    *,
+    attempt: int = 0,
+    stale: bool = False,
 ) -> AnalysisRequest:
     feature_calc = FeatureCalculationReference(
         calculation_id="calc-001",
@@ -91,13 +94,14 @@ def make_analysis_request(
         calculation_version="1.0",
         feature_set_hash="feature-set-hash-001",
     )
+    latest_candle = FIXED_TIME - timedelta(hours=2) if stale else FIXED_TIME
     freshness = FreshnessQualityOutcome(
         policy_version="1.0",
-        outcome=FreshnessPolicy.ACCEPTED,
-        latest_candle_time=FIXED_TIME,
+        outcome=FreshnessPolicy.REJECTED if stale else FreshnessPolicy.ACCEPTED,
+        latest_candle_time=latest_candle,
         max_age_minutes=60,
         gap_count=0,
-        notes="",
+        notes="stale_source" if stale else "",
     )
     return AnalysisRequest(
         analysis_run_id=analysis_run_id,
@@ -107,17 +111,18 @@ def make_analysis_request(
         symbol="BTCEUR",
         interval="1h",
         analysis_time=FIXED_TIME,
-        latest_candle_time=FIXED_TIME,
+        latest_candle_time=latest_candle,
         freshness_quality=freshness,
         feature_calculation=feature_calc,
+        logical_request_id="logical-001",
+        idempotency_key="fixture-test-value",
+        attempt=attempt,
         allowed_evidence_ids=["ema_50", "ema_200", "rsi_14", "atr_14"],
         prompt_version="1.0",
         schema_version="1.0",
         safety_version="1.0",
         validation_version="1.0",
         provider_config_version="1.0",
-        logical_request_id="logical-001",
-        idempotency_key="fixture-test-value",
         features={
             "ema_50": FeatureValue(value="50000.00", unit="USD", version="1.0"),
             "ema_200": FeatureValue(value="49000.00", unit="USD", version="1.0"),

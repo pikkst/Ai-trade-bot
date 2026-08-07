@@ -31,7 +31,6 @@ class FakeGeminiScenario(str, Enum):
     SAFETY_BLOCK = "safety_block"
     EMPTY_RESPONSE = "empty_response"
     MALFORMED = "malformed"
-    STALE_SOURCE = "stale_source"
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,17 +68,11 @@ class FakeGeminiProvider:
             self._clock = FixedClock(self.config.fixed_clock_time)
         else:
             self._clock = None
-        self._retry_counts: dict[str, int] = {}
 
     def _now(self) -> datetime:
         if self._clock is not None:
             return self._clock.now()
         return datetime.now(timezone.utc)
-
-    def _next_retry_count(self, logical_request_id: str) -> int:
-        count = self._retry_counts.get(logical_request_id, 0)
-        self._retry_counts[logical_request_id] = count + 1
-        return count
 
     async def check_budget(self, request: BudgetEvaluationRequest) -> AiBudgetDecision:
         return AiBudgetDecision(
@@ -94,7 +87,7 @@ class FakeGeminiProvider:
         attempt_id = self._id_generator.generate(
             f"{request.logical_request_id}-attempt-"
         )
-        retry_count = self._next_retry_count(request.logical_request_id)
+        retry_count = request.attempt
 
         if self.config.scenario == FakeGeminiScenario.SUCCESS:
             evidence: list[JsonValue] = (
@@ -170,47 +163,6 @@ class FakeGeminiProvider:
                     raw_response_reference="fake-response-ref",
                     latency_ms=self.config.latency_ms,
                     retry_count=retry_count,
-                ),
-                candidate=candidate,
-            )
-
-        if self.config.scenario == FakeGeminiScenario.STALE_SOURCE:
-            candidate = ProviderCandidate(
-                candidate_id=request.analysis_run_id,
-                schema_version="1.0",
-                payload={
-                    "schema_version": "1.0",
-                    "market_regime": self.config.market_regime,
-                    "recommended_action": self.config.recommended_action,
-                    "confidence": str(self.config.confidence),
-                    "evidence": [],
-                    "contradictions": [],
-                    "risks": ["stale_source"],
-                    "missing_information": [],
-                    "invalidation_conditions": [],
-                    "summary": "Fake Gemini stale source for testing.",
-                },
-                provider_code="fake-gemini",
-                configured_model="fake-model",
-                raw_response_reference="fake-response-ref",
-            )
-            return ProviderAnalysisResponse(
-                attempt=ProviderAttemptResult(
-                    attempt_id=attempt_id,
-                    provider_code="fake-gemini",
-                    configured_model="fake-model",
-                    outcome=ProviderOutcome.SUCCESS,
-                    usage=AiUsage(
-                        prompt_tokens=10,
-                        response_tokens=5,
-                        total_tokens=15,
-                        estimated_cost=Decimal("0.001"),
-                    ),
-                    safety_status=SafetySeverity.LOW,
-                    raw_response_reference="fake-response-ref",
-                    latency_ms=self.config.latency_ms,
-                    retry_count=retry_count,
-                    stale_source=True,
                 ),
                 candidate=candidate,
             )

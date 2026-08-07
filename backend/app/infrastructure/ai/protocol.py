@@ -62,7 +62,6 @@ class ProviderAttemptResult:
     error_message: str | None = None
     latency_ms: int | None = None
     retry_count: int = 0
-    stale_source: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +161,7 @@ class AnalysisRequest:
     feature_calculation: FeatureCalculationReference
     logical_request_id: str
     idempotency_key: str
+    attempt: int = 0
     allowed_evidence_ids: list[str] = field(default_factory=list)
     prompt_version: str = "1.0"
     schema_version: str = "1.0"
