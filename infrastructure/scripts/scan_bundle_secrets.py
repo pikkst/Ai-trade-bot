@@ -71,7 +71,10 @@ BUNDLE_CANARY_VALUE = "BUNDLE_CANARY_DO_NOT_SHIP"
 CREDENTIAL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("PostgreSQL connection URL", re.compile(r"postgres(?:ql)?://[^\s\"']+", re.I)),
     ("Bearer token", re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{16,}", re.I)),
-    ("JWT-like token", re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")),
+    (
+        "JWT-like token",
+        re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"),
+    ),
 )
 
 IGNORED_EXTENSIONS: set[str] = {
@@ -106,7 +109,9 @@ def scan_file(path: Path) -> list[str]:
             failures.append(f"{path}: contains forbidden server-only name '{name}'")
 
     if BUNDLE_CANARY_VALUE in content:
-        failures.append(f"{path}: contains frontend leak canary '{BUNDLE_CANARY_VALUE}'")
+        failures.append(
+            f"{path}: contains frontend leak canary '{BUNDLE_CANARY_VALUE}'"
+        )
 
     for label, pattern in CREDENTIAL_PATTERNS:
         if pattern.search(content):
@@ -122,7 +127,13 @@ def scan_bundle(dist_dir: Path) -> list[str]:
 
     failures: list[str] = []
     for artifact in dist_dir.rglob("*"):
-        if artifact.is_file() and artifact.suffix.lower() in {".js", ".mjs", ".cjs", ".html", ""}:
+        if artifact.is_file() and artifact.suffix.lower() in {
+            ".js",
+            ".mjs",
+            ".cjs",
+            ".html",
+            "",
+        }:
             failures.extend(scan_file(artifact))
     return failures
 
