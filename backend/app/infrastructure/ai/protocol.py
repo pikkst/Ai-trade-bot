@@ -62,6 +62,7 @@ class ProviderAttemptResult:
     error_message: str | None = None
     latency_ms: int | None = None
     retry_count: int = 0
+    stale_source: bool = False
 
 
 @dataclass(frozen=True, slots=True)

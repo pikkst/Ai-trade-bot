@@ -411,9 +411,10 @@ def test_fake_gemini_stale_source_scenario() -> None:
     assert response.attempt.outcome == ProviderOutcome.SUCCESS
     assert response.attempt.attempt_id.endswith("-attempt-00000001")
     assert response.attempt.retry_count == 0
+    assert response.attempt.stale_source is True
     assert response.candidate is not None
-    assert response.candidate.payload.get("stale_source") is True
-    assert response.candidate.payload.get("risks") == ["stale_source"]
+    assert response.candidate.payload["schema_version"] == "1.0"
+    assert "stale_source" not in response.candidate.payload
 
 
 def _dataclass_to_json(obj: Any) -> str:
@@ -608,7 +609,7 @@ def test_fake_gemini_retry_creates_unique_attempt_identity() -> None:
     result2 = asyncio.run(provider.analyze(request))
     assert result1.attempt.attempt_id != result2.attempt.attempt_id
     assert result1.attempt.retry_count == 0
-    assert result2.attempt.retry_count == 0
+    assert result2.attempt.retry_count == 1
 
 
 def test_fake_gemini_independent_requests_get_independent_sequences() -> None:

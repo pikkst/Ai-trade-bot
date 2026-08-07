@@ -69,11 +69,17 @@ class FakeGeminiProvider:
             self._clock = FixedClock(self.config.fixed_clock_time)
         else:
             self._clock = None
+        self._retry_counts: dict[str, int] = {}
 
     def _now(self) -> datetime:
         if self._clock is not None:
             return self._clock.now()
         return datetime.now(timezone.utc)
+
+    def _next_retry_count(self, logical_request_id: str) -> int:
+        count = self._retry_counts.get(logical_request_id, 0)
+        self._retry_counts[logical_request_id] = count + 1
+        return count
 
     async def check_budget(self, request: BudgetEvaluationRequest) -> AiBudgetDecision:
         return AiBudgetDecision(
@@ -88,6 +94,7 @@ class FakeGeminiProvider:
         attempt_id = self._id_generator.generate(
             f"{request.logical_request_id}-attempt-"
         )
+        retry_count = self._next_retry_count(request.logical_request_id)
 
         if self.config.scenario == FakeGeminiScenario.SUCCESS:
             evidence: list[JsonValue] = (
@@ -129,7 +136,7 @@ class FakeGeminiProvider:
                     safety_status=SafetySeverity.LOW,
                     raw_response_reference="fake-response-ref",
                     latency_ms=self.config.latency_ms,
-                    retry_count=0,
+                    retry_count=retry_count,
                 ),
                 candidate=candidate,
             )
@@ -162,7 +169,7 @@ class FakeGeminiProvider:
                     safety_status=SafetySeverity.LOW,
                     raw_response_reference="fake-response-ref",
                     latency_ms=self.config.latency_ms,
-                    retry_count=0,
+                    retry_count=retry_count,
                 ),
                 candidate=candidate,
             )
@@ -182,7 +189,6 @@ class FakeGeminiProvider:
                     "missing_information": [],
                     "invalidation_conditions": [],
                     "summary": "Fake Gemini stale source for testing.",
-                    "stale_source": True,
                 },
                 provider_code="fake-gemini",
                 configured_model="fake-model",
@@ -203,7 +209,8 @@ class FakeGeminiProvider:
                     safety_status=SafetySeverity.LOW,
                     raw_response_reference="fake-response-ref",
                     latency_ms=self.config.latency_ms,
-                    retry_count=0,
+                    retry_count=retry_count,
+                    stale_source=True,
                 ),
                 candidate=candidate,
             )
@@ -224,6 +231,6 @@ class FakeGeminiProvider:
                 outcome=outcome,
                 error_message="Fake error",
                 latency_ms=self.config.latency_ms,
-                retry_count=0,
+                retry_count=retry_count,
             )
         )
