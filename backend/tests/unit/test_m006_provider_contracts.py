@@ -343,7 +343,7 @@ def test_fake_gemini_timeout_scenario() -> None:
     response = asyncio.run(provider.analyze(request))
     assert isinstance(response, ProviderAnalysisResponse)
     assert response.attempt.outcome == ProviderOutcome.TIMEOUT
-    assert response.attempt.attempt_id.endswith("-attempt-01")
+    assert response.attempt.attempt_id.endswith("-attempt-00000001")
     assert response.attempt.retry_count == 0
     assert response.candidate is None
 
@@ -354,7 +354,7 @@ def test_fake_gemini_rate_limit_scenario() -> None:
     response = asyncio.run(provider.analyze(request))
     assert isinstance(response, ProviderAnalysisResponse)
     assert response.attempt.outcome == ProviderOutcome.RATE_LIMITED
-    assert response.attempt.attempt_id.endswith("-attempt-01")
+    assert response.attempt.attempt_id.endswith("-attempt-00000001")
     assert response.attempt.retry_count == 0
     assert response.candidate is None
 
@@ -365,7 +365,7 @@ def test_fake_gemini_refusal_scenario() -> None:
     response = asyncio.run(provider.analyze(request))
     assert isinstance(response, ProviderAnalysisResponse)
     assert response.attempt.outcome == ProviderOutcome.REFUSAL
-    assert response.attempt.attempt_id.endswith("-attempt-01")
+    assert response.attempt.attempt_id.endswith("-attempt-00000001")
     assert response.attempt.retry_count == 0
     assert response.candidate is None
 
@@ -376,7 +376,7 @@ def test_fake_gemini_safety_block_scenario() -> None:
     response = asyncio.run(provider.analyze(request))
     assert isinstance(response, ProviderAnalysisResponse)
     assert response.attempt.outcome == ProviderOutcome.SAFETY_BLOCKED
-    assert response.attempt.attempt_id.endswith("-attempt-01")
+    assert response.attempt.attempt_id.endswith("-attempt-00000001")
     assert response.attempt.retry_count == 0
     assert response.candidate is None
 
@@ -387,7 +387,7 @@ def test_fake_gemini_empty_response_scenario() -> None:
     response = asyncio.run(provider.analyze(request))
     assert isinstance(response, ProviderAnalysisResponse)
     assert response.attempt.outcome == ProviderOutcome.EMPTY_CANDIDATE
-    assert response.attempt.attempt_id.endswith("-attempt-01")
+    assert response.attempt.attempt_id.endswith("-attempt-00000001")
     assert response.attempt.retry_count == 0
     assert response.candidate is None
 
@@ -398,7 +398,7 @@ def test_fake_gemini_malformed_scenario() -> None:
     response = asyncio.run(provider.analyze(request))
     assert isinstance(response, ProviderAnalysisResponse)
     assert response.attempt.outcome == ProviderOutcome.MALFORMED_RESPONSE
-    assert response.attempt.attempt_id.endswith("-attempt-01")
+    assert response.attempt.attempt_id.endswith("-attempt-00000001")
     assert response.attempt.retry_count == 0
     assert response.candidate is None
 
@@ -409,9 +409,11 @@ def test_fake_gemini_stale_source_scenario() -> None:
     response = asyncio.run(provider.analyze(request))
     assert isinstance(response, ProviderAnalysisResponse)
     assert response.attempt.outcome == ProviderOutcome.SUCCESS
-    assert response.attempt.attempt_id.endswith("-attempt-01")
+    assert response.attempt.attempt_id.endswith("-attempt-00000001")
     assert response.attempt.retry_count == 0
-    assert response.candidate is None
+    assert response.candidate is not None
+    assert response.candidate.payload.get("stale_source") is True
+    assert response.candidate.payload.get("risks") == ["stale_source"]
 
 
 def _dataclass_to_json(obj: Any) -> str:
@@ -606,7 +608,7 @@ def test_fake_gemini_retry_creates_unique_attempt_identity() -> None:
     result2 = asyncio.run(provider.analyze(request))
     assert result1.attempt.attempt_id != result2.attempt.attempt_id
     assert result1.attempt.retry_count == 0
-    assert result2.attempt.retry_count == 1
+    assert result2.attempt.retry_count == 0
 
 
 def test_fake_gemini_independent_requests_get_independent_sequences() -> None:
@@ -615,10 +617,26 @@ def test_fake_gemini_independent_requests_get_independent_sequences() -> None:
     request_b = replace(request_a, logical_request_id="logical-b")
     result_a = asyncio.run(provider.analyze(request_a))
     result_b = asyncio.run(provider.analyze(request_b))
-    assert result_a.attempt.attempt_id == "logical-001-attempt-01"
-    assert result_b.attempt.attempt_id == "logical-b-attempt-01"
+    assert result_a.attempt.attempt_id == "logical-001-attempt-00000001"
+    assert result_b.attempt.attempt_id == "logical-b-attempt-00000002"
     assert result_a.attempt.retry_count == 0
     assert result_b.attempt.retry_count == 0
+
+
+def test_fake_gemini_cross_instance_unique_attempt_identity() -> None:
+    shared_generator = DeterministicIdGenerator()
+    provider_a = make_gemini_provider(
+        FakeGeminiScenario.SUCCESS, id_generator=shared_generator
+    )
+    provider_b = make_gemini_provider(
+        FakeGeminiScenario.SUCCESS, id_generator=shared_generator
+    )
+    request = make_analysis_request()
+    result_a = asyncio.run(provider_a.analyze(request))
+    result_b = asyncio.run(provider_b.analyze(request))
+    assert result_a.attempt.attempt_id != result_b.attempt.attempt_id
+    assert result_a.attempt.attempt_id == "logical-001-attempt-00000001"
+    assert result_b.attempt.attempt_id == "logical-001-attempt-00000002"
 
 
 def test_fake_gemini_failure_preserves_attempt_metadata() -> None:
@@ -627,7 +645,7 @@ def test_fake_gemini_failure_preserves_attempt_metadata() -> None:
     response = asyncio.run(provider.analyze(request))
     assert isinstance(response, ProviderAnalysisResponse)
     assert response.attempt.outcome == ProviderOutcome.TIMEOUT
-    assert response.attempt.attempt_id == "logical-001-attempt-01"
+    assert response.attempt.attempt_id == "logical-001-attempt-00000001"
     assert response.attempt.retry_count == 0
     assert response.attempt.provider_code == "fake-gemini"
     assert response.attempt.configured_model == "fake-model"

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from app.core.clock import DeterministicIdGenerator, FixedClock
+from app.core.clock import DeterministicIdGenerator, FixedClock, IdGenerator
 from app.infrastructure.ai.fakes import (
     FakeGeminiConfig,
     FakeGeminiProvider,
@@ -63,15 +63,20 @@ def make_binance_provider(
 
 def make_gemini_provider(
     scenario: str | FakeGeminiScenario = FakeGeminiScenario.SUCCESS,
+    *,
+    id_generator: IdGenerator | None = None,
 ) -> FakeGeminiProvider:
     if isinstance(scenario, str):
         scenario = FakeGeminiScenario(scenario)
+    if id_generator is None:
+        id_generator = DeterministicIdGenerator()
     return FakeGeminiProvider(
         config=FakeGeminiConfig(
             scenario=scenario,
             fixed_clock_time=FIXED_TIME,
             fixture_version=FIXTURE_VERSION,
-        )
+        ),
+        id_generator=id_generator,
     )
 
 
