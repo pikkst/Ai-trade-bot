@@ -312,7 +312,7 @@ Create the safe application infrastructure used by every domain and command.
 
 All later services can depend on one typed, observable, transaction-safe, idempotent application foundation.
 
-## [ ] Master Task 6 — M006 Provider Contracts and Deterministic Fakes
+## [x] Master Task 6 — M006 Provider Contracts and Deterministic Fakes
 
 ### Outcome
 
