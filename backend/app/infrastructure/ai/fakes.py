@@ -21,14 +21,15 @@ from app.infrastructure.ai.protocol import (
     LLMTimeoutError,
     ProviderAnalysisResponse,
     ProviderAttemptResult,
+    ProviderCandidate,
     ProviderOutcome,
     SafetySeverity,
-    ValidatedAiReport,
 )
 
 
 class FakeGeminiScenario(str, Enum):
     SUCCESS = "success"
+    INVALID_SCHEMA = "invalid_schema"
     TIMEOUT = "timeout"
     RATE_LIMIT = "rate_limit"
     REFUSAL = "refusal"
@@ -46,6 +47,7 @@ class FakeGeminiConfig:
     recommended_action: str = "hold"
     fixed_clock_time: datetime | None = None
     latency_ms: int = 50
+    fixture_version: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.scenario, FakeGeminiScenario):
@@ -102,17 +104,23 @@ class FakeGeminiProvider:
         self._check_scenario()
 
         if self.config.scenario == FakeGeminiScenario.SUCCESS:
-            report = ValidatedAiReport(
+            candidate = ProviderCandidate(
+                candidate_id=request.analysis_run_id,
                 schema_version="1.0",
-                market_regime=self.config.market_regime,
-                recommended_action=self.config.recommended_action,
-                confidence=self.config.confidence,
-                evidence=[{"feature": "fake_evidence", "observation": "true"}],
-                contradictions=[],
-                risks=["test_risk"],
-                missing_information=[],
-                invalidation_conditions=["test_invalidation"],
-                summary="Fake Gemini analysis for testing.",
+                payload={
+                    "market_regime": self.config.market_regime,
+                    "recommended_action": self.config.recommended_action,
+                    "confidence": str(self.config.confidence),
+                    "evidence": [{"feature": "fake_evidence", "observation": "true"}],
+                    "contradictions": [],
+                    "risks": ["test_risk"],
+                    "missing_information": [],
+                    "invalidation_conditions": ["test_invalidation"],
+                    "summary": "Fake Gemini analysis for testing.",
+                },
+                provider_code="fake-gemini",
+                configured_model="fake-model",
+                raw_response_reference="fake-response-ref",
             )
             return ProviderAnalysisResponse(
                 attempt=ProviderAttemptResult(
@@ -131,7 +139,40 @@ class FakeGeminiProvider:
                     latency_ms=self.config.latency_ms,
                     retry_count=0,
                 ),
-                report=report,
+                candidate=candidate,
+            )
+
+        if self.config.scenario == FakeGeminiScenario.INVALID_SCHEMA:
+            candidate = ProviderCandidate(
+                candidate_id=request.analysis_run_id,
+                schema_version="1.0",
+                payload={
+                    "market_regime": self.config.market_regime,
+                    "recommended_action": self.config.recommended_action,
+                    "confidence": str(self.config.confidence),
+                },
+                provider_code="fake-gemini",
+                configured_model="fake-model",
+                raw_response_reference="fake-response-ref",
+            )
+            return ProviderAnalysisResponse(
+                attempt=ProviderAttemptResult(
+                    attempt_id=request.analysis_run_id,
+                    provider_code="fake-gemini",
+                    configured_model="fake-model",
+                    outcome=ProviderOutcome.SUCCESS,
+                    usage=AiUsage(
+                        prompt_tokens=10,
+                        response_tokens=5,
+                        total_tokens=15,
+                        estimated_cost=Decimal("0.001"),
+                    ),
+                    safety_status=SafetySeverity.LOW,
+                    raw_response_reference="fake-response-ref",
+                    latency_ms=self.config.latency_ms,
+                    retry_count=0,
+                ),
+                candidate=candidate,
             )
 
         attempt = ProviderAttemptResult(

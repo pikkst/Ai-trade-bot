@@ -63,9 +63,19 @@ class ProviderAttemptResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderCandidate:
+    candidate_id: str
+    schema_version: str
+    payload: dict[str, Any]
+    provider_code: str
+    configured_model: str
+    raw_response_reference: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderAnalysisResponse:
     attempt: ProviderAttemptResult
-    report: ValidatedAiReport | None = None
+    candidate: ProviderCandidate | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -17,9 +17,9 @@ from app.infrastructure.ai.protocol import (
     AnalysisRequest,
     ProviderAnalysisResponse,
     ProviderAttemptResult,
+    ProviderCandidate,
     ProviderOutcome,
     SafetySeverity,
-    ValidatedAiReport,
 )
 from app.infrastructure.exchange.binance.fakes import (
     FakeBinanceConfig,
@@ -49,6 +49,7 @@ def make_binance_provider(
         config=FakeBinanceConfig(
             scenario=scenario,
             fixed_clock_time=FIXED_TIME,
+            fixture_version=FIXTURE_VERSION,
         )
     )
 
@@ -62,6 +63,7 @@ def make_gemini_provider(
         config=FakeGeminiConfig(
             scenario=scenario,
             fixed_clock_time=FIXED_TIME,
+            fixture_version=FIXTURE_VERSION,
         )
     )
 
@@ -106,11 +108,24 @@ def make_analysis_request(
 def make_provider_analysis_response(
     request: AnalysisRequest | None = None,
     *,
-    report: ValidatedAiReport | None = None,
+    candidate: ProviderCandidate | None = None,
     outcome: ProviderOutcome = ProviderOutcome.SUCCESS,
 ) -> ProviderAnalysisResponse:
     if request is None:
         request = make_analysis_request()
+    if candidate is None:
+        candidate = ProviderCandidate(
+            candidate_id=request.analysis_run_id,
+            schema_version="1.0",
+            payload={
+                "market_regime": "bullish",
+                "recommended_action": "hold",
+                "confidence": "0.70",
+            },
+            provider_code="fixture-provider",
+            configured_model="fixture-model",
+            raw_response_reference="fixture-response-ref",
+        )
     attempt = ProviderAttemptResult(
         attempt_id=request.analysis_run_id,
         provider_code="fixture-provider",
@@ -127,4 +142,4 @@ def make_provider_analysis_response(
         latency_ms=50,
         retry_count=0,
     )
-    return ProviderAnalysisResponse(attempt=attempt, report=report)
+    return ProviderAnalysisResponse(attempt=attempt, candidate=candidate)

@@ -45,6 +45,7 @@ class FakeBinanceConfig:
     gap_end: datetime | None = None
     stale_threshold_minutes: int = 60
     fixed_clock_time: datetime | None = None
+    fixture_version: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.scenario, FakeBinanceScenario):

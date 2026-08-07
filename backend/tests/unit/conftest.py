@@ -25,6 +25,8 @@ def _is_loopback(address: Any) -> bool:
 def _block_unit_test_network(monkeypatch: pytest.MonkeyPatch) -> None:
     original_connect = socket.socket.connect
     original_create_connection = socket.create_connection
+    original_sendto = socket.socket.sendto
+    original_getaddrinfo = socket.getaddrinfo
 
     def blocked_connect(self: Any, address: Any) -> None:
         if _is_loopback(address):
@@ -49,5 +51,26 @@ def _block_unit_test_network(monkeypatch: pytest.MonkeyPatch) -> None:
             return
         raise ConnectionError("Unit tests must not open network connections")
 
+    def blocked_sendto(self: Any, data: Any, address: Any) -> int:
+        if _is_loopback(address):
+            return original_sendto(self, data, address)
+        raise ConnectionError("Unit tests must not open network connections")
+
+    def blocked_getaddrinfo(
+        host: str,
+        port: str | int | None = None,
+        family: int = 0,
+        type: int = 0,
+        proto: int = 0,
+        flags: int = 0,
+    ) -> list[Any]:
+        if host in ("127.0.0.1", "::1", "localhost"):
+            return original_getaddrinfo(
+                host, port, family=family, type=type, proto=proto, flags=flags
+            )
+        raise ConnectionError("Unit tests must not open network connections")
+
     monkeypatch.setattr(socket.socket, "connect", blocked_connect)
     monkeypatch.setattr(socket, "create_connection", blocked_create_connection)
+    monkeypatch.setattr(socket.socket, "sendto", blocked_sendto)
+    monkeypatch.setattr(socket, "getaddrinfo", blocked_getaddrinfo)
