@@ -82,7 +82,7 @@ _CONCURRENCY_STATEMENTS: dict[tuple[str, frozenset[str]], TextClause] = {
 
 
 def request_fingerprint(payload: Any) -> str:
-    """Hash a canonical JSON representation without depending on object identity."""
+    """Hash a canonical JSON representation."""
     serialized = json.dumps(
         payload,
         sort_keys=True,
@@ -101,29 +101,37 @@ def reserve_idempotency(
     key: str,
     request_hash: str,
 ) -> IdempotencyReservation:
-    """Reserve a durable key or return the matching previous reservation."""
+    """Reserve a durable key or return the matching prior reservation."""
     if not key.strip() or len(key) > 200:
-        raise ValueError("idempotency key must contain 1..200 non-whitespace characters")
+        raise ValueError(
+            "idempotency key must contain 1..200 non-whitespace characters"
+        )
     if not scope.strip() or len(scope) > 100:
-        raise ValueError("idempotency scope must contain 1..100 non-whitespace characters")
+        raise ValueError(
+            "idempotency scope must contain 1..100 non-whitespace characters"
+        )
 
-    inserted = session.execute(
-        text(
-            """
-            insert into public.idempotency_records (
-                workspace_id, scope, idempotency_key, request_hash
-            ) values (:workspace_id, :scope, :key, :request_hash)
-            on conflict (workspace_id, scope, idempotency_key) do nothing
-            returning request_hash, response_status, response_body
-            """
-        ),
-        {
-            "workspace_id": workspace_id,
-            "scope": scope,
-            "key": key,
-            "request_hash": request_hash,
-        },
-    ).mappings().one_or_none()
+    inserted = (
+        session.execute(
+            text(
+                """
+                insert into public.idempotency_records (
+                    workspace_id, scope, idempotency_key, request_hash
+                ) values (:workspace_id, :scope, :key, :request_hash)
+                on conflict (workspace_id, scope, idempotency_key) do nothing
+                returning request_hash, response_status, response_body
+                """
+            ),
+            {
+                "workspace_id": workspace_id,
+                "scope": scope,
+                "key": key,
+                "request_hash": request_hash,
+            },
+        )
+        .mappings()
+        .one_or_none()
+    )
     if inserted is not None:
         return IdempotencyReservation(
             workspace_id=workspace_id,
@@ -133,19 +141,27 @@ def reserve_idempotency(
             created=True,
         )
 
-    existing = session.execute(
-        text(
-            """
-            select request_hash, response_status, response_body
-            from public.idempotency_records
-            where workspace_id = :workspace_id
-              and scope = :scope
-              and idempotency_key = :key
-            for update
-            """
-        ),
-        {"workspace_id": workspace_id, "scope": scope, "key": key},
-    ).mappings().one()
+    existing = (
+        session.execute(
+            text(
+                """
+                select request_hash, response_status, response_body
+                from public.idempotency_records
+                where workspace_id = :workspace_id
+                  and scope = :scope
+                  and idempotency_key = :key
+                for update
+                """
+            ),
+            {
+                "workspace_id": workspace_id,
+                "scope": scope,
+                "key": key,
+            },
+        )
+        .mappings()
+        .one()
+    )
     if existing["request_hash"] != request_hash:
         raise IdempotencyConflictError()
     return IdempotencyReservation(
@@ -166,7 +182,7 @@ def complete_idempotency(
     response_status: int,
     response_body: dict[str, Any],
 ) -> None:
-    """Persist the replayable command result in the same transaction as effects."""
+    """Persist a replayable result in the transaction owning its effects."""
     session.execute(
         text(
             """
@@ -186,7 +202,11 @@ def complete_idempotency(
             "key": reservation.key,
             "request_hash": reservation.request_hash,
             "status": response_status,
-            "body": json.dumps(response_body, sort_keys=True, separators=(",", ":")),
+            "body": json.dumps(
+                response_body,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
         },
     )
 
@@ -204,8 +224,13 @@ def update_with_expected_version(
     if statement is None:
         raise ValueError("unsupported optimistic-concurrency target")
 
-    parameters = {f"value_{column}": value for column, value in values.items()}
-    parameters.update({"row_id": row_id, "expected_version": expected_version})
+    parameters = {
+        f"value_{column}": value
+        for column, value in values.items()
+    }
+    parameters.update(
+        {"row_id": row_id, "expected_version": expected_version}
+    )
     result = session.execute(statement, parameters).scalar_one_or_none()
     if result is None:
         raise ConcurrencyConflictError()
