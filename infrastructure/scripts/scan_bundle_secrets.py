@@ -1,10 +1,10 @@
-"""Scan the frontend production bundle for server-only secrets and sentinel values.
+"""Scan the frontend production bundle for server-only data leakage.
 
-This gate enforces the M004/M028 verification requirement that no server-secret
-environment variable name or value enters the browser bundle. Vite's default
-``VITE_`` prefix provides first-line defense, but this scanner adds explicit,
-verifiable bundle-level protection against a server secret incorrectly prefixed
-with ``VITE_``.
+This gate enforces the M004 verification requirement that server-only
+configuration does not enter browser artifacts. Vite's ``VITE_`` prefix is the
+first line of defense; this scanner provides a second bundle-level gate for
+forbidden server-only names, obvious credential material, and an explicit
+build canary used by tests/CI.
 
 Usage:
     python infrastructure/scripts/scan_bundle_secrets.py frontend/dist
@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -63,7 +64,15 @@ SERVER_ONLY_NAMES: set[str] = {
     "WITHDRAWALS_ENABLED",
 }
 
-SENTINEL_SECRET_VALUE = "SENTINEL_SECRET_LEAK_TEST_DO_NOT_USE"
+# This is deliberately non-secret test data. A production build can inject it
+# into VITE_* variables to prove that accidental client exposure is detected.
+BUNDLE_CANARY_VALUE = "BUNDLE_CANARY_DO_NOT_SHIP"
+
+CREDENTIAL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("PostgreSQL connection URL", re.compile(r"postgres(?:ql)?://[^\s\"']+", re.I)),
+    ("Bearer token", re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{16,}", re.I)),
+    ("JWT-like token", re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")),
+)
 
 IGNORED_EXTENSIONS: set[str] = {
     ".map",
@@ -81,56 +90,55 @@ IGNORED_EXTENSIONS: set[str] = {
 
 
 def scan_file(path: Path) -> list[str]:
-    """Return a list of failure messages for a single file."""
-    failures: list[str] = []
-    ext = path.suffix.lower()
-    if ext in IGNORED_EXTENSIONS:
-        return failures
+    """Return bundle-leak findings for one text-like artifact."""
+    if path.suffix.lower() in IGNORED_EXTENSIONS:
+        return []
 
     try:
         content = path.read_text(encoding="utf-8", errors="ignore")
-    except (OSError, UnicodeDecodeError):
-        return failures
+    except OSError:
+        return []
 
-    for name in SERVER_ONLY_NAMES:
-        if name in content:
+    failures: list[str] = []
+
+    for name in sorted(SERVER_ONLY_NAMES):
+        if name in content or f"VITE_{name}" in content:
             failures.append(f"{path}: contains forbidden server-only name '{name}'")
 
-    if SENTINEL_SECRET_VALUE in content:
-        failures.append(
-            f"{path}: contains sentinel secret value '{SENTINEL_SECRET_VALUE}'"
-        )
+    if BUNDLE_CANARY_VALUE in content:
+        failures.append(f"{path}: contains frontend leak canary '{BUNDLE_CANARY_VALUE}'")
+
+    for label, pattern in CREDENTIAL_PATTERNS:
+        if pattern.search(content):
+            failures.append(f"{path}: contains credential-like material ({label})")
 
     return failures
 
 
 def scan_bundle(dist_dir: Path) -> list[str]:
-    failures: list[str] = []
+    """Scan JavaScript/HTML bundle outputs and return all findings."""
     if not dist_dir.is_dir():
-        failures.append(f"Bundle directory does not exist: {dist_dir}")
-        return failures
+        return [f"Bundle directory does not exist: {dist_dir}"]
 
-    for js_file in dist_dir.rglob("*"):
-        if js_file.is_file() and js_file.suffix in (".js", ".html", ""):
-            failures.extend(scan_file(js_file))
-
+    failures: list[str] = []
+    for artifact in dist_dir.rglob("*"):
+        if artifact.is_file() and artifact.suffix.lower() in {".js", ".mjs", ".cjs", ".html", ""}:
+            failures.extend(scan_file(artifact))
     return failures
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
+    if len(sys.argv) != 2:
         print("Usage: scan_bundle_secrets.py <frontend/dist>", file=sys.stderr)
         return 2
 
-    dist_dir = Path(sys.argv[1])
-    failures = scan_bundle(dist_dir)
-
+    failures = scan_bundle(Path(sys.argv[1]))
     if failures:
         for failure in failures:
             print(f"FAIL: {failure}", file=sys.stderr)
         return 1
 
-    print("Bundle secret scan passed: no server-only secrets detected.")
+    print("Bundle secret scan passed: no server-only material detected.")
     return 0
 
 
