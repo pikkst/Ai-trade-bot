@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "npm@10.9.2",
   "engines": {
-    "node": "22.17.1",
+    "node": "22.22.0",
     "npm": "10.9.2"
   },
   "scripts": {
@@ -20,17 +20,17 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.56.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-router-dom": "7.18.2"
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-router": "8.3.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
-    "@types/react": "^18.3.10",
-    "@types/react-dom": "^18.3.0",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "^6.0.5",
     "eslint": "^9.0.0",
     "jsdom": "^29.1.1",
