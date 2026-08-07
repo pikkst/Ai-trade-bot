@@ -39,7 +39,9 @@ def test_scanner_passes_on_clean_bundle(tmp_path: Path) -> None:
 def test_scanner_detects_server_only_name(tmp_path: Path) -> None:
     scanner = load_scanner()
     dist = make_dist(tmp_path)
-    (dist / "app.js").write_text("const config = 'VITE_DATABASE_URL';", encoding="utf-8")
+    (dist / "app.js").write_text(
+        "const config = 'VITE_DATABASE_URL';", encoding="utf-8"
+    )
 
     failures = scanner.scan_bundle(dist)
     assert any("DATABASE_URL" in failure for failure in failures)
