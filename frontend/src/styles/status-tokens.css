@@ -1,0 +1,39 @@
+/* Semantic status tokens that complement the base token palette. */
+
+:root {
+  --color-status-ai: #7a4bdb;
+  --color-status-ai-bg: #f3e8ff;
+  --color-status-ai-border: #d8b4ff;
+  --color-status-ai-on: #102a5e;
+
+  --color-status-deterministic: #1f7a7a;
+  --color-status-deterministic-bg: #e0f4f1;
+  --color-status-deterministic-border: #9bd7cf;
+  --color-status-deterministic-on: #102a5e;
+}
+
+:root[data-theme='dark'] {
+  --color-status-ai: #b592ff;
+  --color-status-ai-bg: #2a1a3a;
+  --color-status-ai-border: #8a5ed6;
+  --color-status-ai-on: #e8eef8;
+
+  --color-status-deterministic: #76d4c4;
+  --color-status-deterministic-bg: #123532;
+  --color-status-deterministic-border: #3b8178;
+  --color-status-deterministic-on: #e8eef8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='system'] {
+    --color-status-ai: #b592ff;
+    --color-status-ai-bg: #2a1a3a;
+    --color-status-ai-border: #8a5ed6;
+    --color-status-ai-on: #e8eef8;
+
+    --color-status-deterministic: #76d4c4;
+    --color-status-deterministic-bg: #123532;
+    --color-status-deterministic-border: #3b8178;
+    --color-status-deterministic-on: #e8eef8;
+  }
+}
