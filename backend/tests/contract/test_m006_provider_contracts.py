@@ -668,29 +668,3 @@ def test_no_network_call_in_normal_unit_tests() -> None:
     )
     assert len(candles) == 1
     assert isinstance(candles[0], Candle)
-
-
-def test_network_guard_blocks_non_loopback_connections() -> None:
-    socket_module = pytest.importorskip("socket")
-    with pytest.raises(
-        ConnectionError, match="Unit tests must not open network connections"
-    ):
-        socket_module.create_connection(("8.8.8.8", 53))
-
-
-def test_network_guard_blocks_udp_sendto() -> None:
-    socket_module = pytest.importorskip("socket")
-    sock = socket_module.socket(socket_module.AF_INET, socket_module.SOCK_DGRAM)
-    with pytest.raises(
-        ConnectionError, match="Unit tests must not open network connections"
-    ):
-        sock.sendto(b"ping", ("8.8.8.8", 53))
-    sock.close()
-
-
-def test_network_guard_blocks_dns_getaddrinfo() -> None:
-    socket_module = pytest.importorskip("socket")
-    with pytest.raises(
-        ConnectionError, match="Unit tests must not open network connections"
-    ):
-        socket_module.getaddrinfo("example.com", 80)

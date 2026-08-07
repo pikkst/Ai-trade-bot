@@ -145,6 +145,58 @@ Supports deterministic simulation of:
 - reconciliation mismatch;
 - export, restore, and recovery failure.
 
+#### 6.4.1 Fake Binance Scenario Examples
+
+```python
+from app.infrastructure.ai.factory import create_binance_provider
+from app.infrastructure.exchange.binance.fakes import FakeBinanceScenario
+
+# Normal success path
+binance = create_binance_provider(FakeBinanceScenario.SUCCESS)
+
+# Simulate rate-limit response
+binance = create_binance_provider(FakeBinanceScenario.RATE_LIMIT)
+
+# Simulate stale candle data
+binance = create_binance_provider(FakeBinanceScenario.STALE)
+
+# Simulate gap in candle series
+binance = create_binance_provider(FakeBinanceScenario.GAP)
+```
+
+#### 6.4.2 Fake Gemini Scenario Examples
+
+```python
+from app.infrastructure.ai.factory import create_gemini_provider
+from app.infrastructure.ai.fakes import FakeGeminiScenario
+
+# Normal success path
+gemini = create_gemini_provider(FakeGeminiScenario.SUCCESS)
+
+# Simulate invalid schema response
+gemini = create_gemini_provider(FakeGeminiScenario.INVALID_SCHEMA)
+
+# Simulate timeout
+gemini = create_gemini_provider(FakeGeminiScenario.TIMEOUT)
+
+# Simulate rate limit
+gemini = create_gemini_provider(FakeGeminiScenario.RATE_LIMIT)
+
+# Simulate refusal
+gemini = create_gemini_provider(FakeGeminiScenario.REFUSAL)
+
+# Simulate safety block
+gemini = create_gemini_provider(FakeGeminiScenario.SAFETY_BLOCK)
+
+# Simulate empty response
+gemini = create_gemini_provider(FakeGeminiScenario.EMPTY_RESPONSE)
+
+# Simulate malformed response
+gemini = create_gemini_provider(FakeGeminiScenario.MALFORMED)
+```
+
+All fake scenarios use fixture version `2026-08-07-m006-v1` and deterministic behavior by default.
+
 ## 7. Required Commands
 
 The implementation must expose stable commands equivalent to:
