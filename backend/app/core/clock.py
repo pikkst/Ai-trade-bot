@@ -11,8 +11,7 @@ from uuid import uuid4
 
 
 class Clock(Protocol):
-    def now(self) -> datetime:
-        ...
+    def now(self) -> datetime: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,8 +28,7 @@ class SystemClock:
 
 
 class IdGenerator(Protocol):
-    def generate(self, prefix: str = "") -> str:
-        ...
+    def generate(self, prefix: str = "") -> str: ...
 
 
 class DeterministicIdGenerator:

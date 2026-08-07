@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from enum import Enum
 
 from app.core.clock import Clock, FixedClock
 from app.infrastructure.exchange.binance.protocol import (
@@ -12,6 +13,7 @@ from app.infrastructure.exchange.binance.protocol import (
     BinanceMalformedDataError,
     BinanceProviderUnavailableError,
     BinanceRateLimitError,
+    BinanceStaleDataError,
     BinanceTimeoutError,
     Candle,
     CandleInterval,
@@ -23,7 +25,7 @@ from app.infrastructure.exchange.binance.protocol import (
 )
 
 
-class FakeBinanceScenario:
+class FakeBinanceScenario(str, Enum):
     SUCCESS = "success"
     TIMEOUT = "timeout"
     RATE_LIMIT = "rate_limit"
@@ -36,7 +38,7 @@ class FakeBinanceScenario:
 
 @dataclass(frozen=True, slots=True)
 class FakeBinanceConfig:
-    scenario: str = FakeBinanceScenario.SUCCESS
+    scenario: FakeBinanceScenario = FakeBinanceScenario.SUCCESS
     server_time_offset_seconds: int = 0
     rate_limit_remaining: int = 1000
     gap_start: datetime | None = None
@@ -44,12 +46,21 @@ class FakeBinanceConfig:
     stale_threshold_minutes: int = 60
     fixed_clock_time: datetime | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.scenario, FakeBinanceScenario):
+            raise ValueError(
+                f"Invalid FakeBinanceScenario: {self.scenario!r}. "
+                f"Valid values: {[s.value for s in FakeBinanceScenario]}"
+            )
+
 
 class FakeBinanceProvider:
+    _clock: Clock | None
+
     def __init__(self, config: FakeBinanceConfig | None = None) -> None:
         self.config = config or FakeBinanceConfig()
         if self.config.fixed_clock_time is not None:
-            self._clock: Clock | None = FixedClock(self.config.fixed_clock_time)
+            self._clock = FixedClock(self.config.fixed_clock_time)
         else:
             self._clock = None
         self._request_count = 0
@@ -112,6 +123,9 @@ class FakeBinanceProvider:
         self._check_scenario()
         if self.config.scenario == FakeBinanceScenario.MALFORMED:
             raise BinanceMalformedDataError("Fake malformed candle data")
+
+        if self.config.scenario == FakeBinanceScenario.STALE:
+            raise BinanceStaleDataError("Fake Binance stale data")
 
         candles: list[Candle] = []
         current = self._base_time

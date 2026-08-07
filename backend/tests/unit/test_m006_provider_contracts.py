@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
@@ -22,9 +25,12 @@ from app.core.clock import (
     get_scheduler_context,
 )
 from app.infrastructure.ai.fakes import (
+    FakeGeminiConfig,
     FakeGeminiScenario,
 )
 from app.infrastructure.ai.protocol import (
+    AiBudgetDecision,
+    AiUsage,
     LLMEmptyResponseError,
     LLMMalformedResponseError,
     LLMRateLimitError,
@@ -32,8 +38,10 @@ from app.infrastructure.ai.protocol import (
     LLMSafetyBlockError,
     LLMStaleSourceError,
     LLMTimeoutError,
+    ProviderAnalysisResponse,
     ProviderAttemptResult,
     ProviderOutcome,
+    SafetySeverity,
     ValidatedAiReport,
 )
 from app.infrastructure.exchange.binance.fakes import (
@@ -46,6 +54,7 @@ from app.infrastructure.exchange.binance.protocol import (
     BinanceMalformedDataError,
     BinanceProviderUnavailableError,
     BinanceRateLimitError,
+    BinanceStaleDataError,
     BinanceTimeoutError,
     Candle,
     CandleInterval,
@@ -54,12 +63,33 @@ from app.infrastructure.exchange.binance.protocol import (
 )
 from tests.fixtures.providers import (
     FIXED_TIME,
+    FIXTURE_VERSION,
     make_analysis_request,
     make_binance_provider,
     make_gemini_provider,
 )
 
 FIXED_CLOCK = FixedClock(FIXED_TIME)
+
+
+def test_fixture_version_is_explicit() -> None:
+    assert FIXTURE_VERSION == "2026-08-07-m006-v1"
+
+
+def test_fake_binance_scenario_validation_fails_closed() -> None:
+    with pytest.raises(ValueError, match="FakeBinanceScenario"):
+        FakeBinanceConfig(scenario="rate_limt")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="FakeBinanceScenario"):
+        make_binance_provider("typo")
+
+
+def test_fake_gemini_scenario_validation_fails_closed() -> None:
+    with pytest.raises(ValueError, match="FakeGeminiScenario"):
+        FakeGeminiConfig(scenario="typo")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="FakeGeminiScenario"):
+        make_gemini_provider("typo")
 
 
 def test_fixed_clock_returns_constant_time() -> None:
@@ -182,6 +212,19 @@ def test_fake_binance_malformed_scenario() -> None:
         )
 
 
+def test_fake_binance_stale_scenario_raises_stale_error() -> None:
+    provider = make_binance_provider(FakeBinanceScenario.STALE)
+    with pytest.raises(BinanceStaleDataError):
+        asyncio.run(
+            provider.get_finalized_candles(
+                "BTCEUR",
+                CandleInterval.ONE_HOUR,
+                FIXED_TIME,
+                FIXED_TIME + timedelta(hours=1),
+            )
+        )
+
+
 def test_fake_binance_gap_scenario_skips_candles() -> None:
     config = FakeBinanceConfig(
         scenario=FakeBinanceScenario.GAP,
@@ -208,15 +251,18 @@ def test_fake_binance_rate_limit_state() -> None:
     assert state.remaining_requests == 1000
 
 
-def test_fake_gemini_success_scenario() -> None:
+def test_fake_gemini_success_scenario_returns_response_with_report() -> None:
     provider = make_gemini_provider(FakeGeminiScenario.SUCCESS)
     request = make_analysis_request()
     budget = asyncio.run(provider.check_budget(request))
     assert budget.allowed is True
 
-    result = asyncio.run(provider.analyze(request))
-    assert isinstance(result, ProviderAttemptResult)
-    assert result.outcome == ProviderOutcome.SUCCESS
+    response = asyncio.run(provider.analyze(request))
+    assert isinstance(response, ProviderAnalysisResponse)
+    assert response.attempt.outcome == ProviderOutcome.SUCCESS
+    assert response.report is not None
+    assert response.report.schema_version == "1.0"
+    assert response.report.market_regime == "bullish"
 
 
 def test_fake_gemini_timeout_scenario() -> None:
@@ -268,20 +314,81 @@ def test_fake_gemini_stale_source_scenario() -> None:
         asyncio.run(provider.analyze(request))
 
 
-def test_validated_ai_report_schema_enforces_fields() -> None:
+def test_validated_ai_report_serialization_round_trip() -> None:
     report = ValidatedAiReport(
         schema_version="1.0",
         market_regime="bullish",
         recommended_action="hold",
         confidence=Decimal("0.70"),
-        evidence=[],
+        evidence=[{"feature": "ema_50", "observation": "true"}],
         contradictions=[],
-        risks=[],
+        risks=["test_risk"],
         missing_information=[],
-        invalidation_conditions=[],
+        invalidation_conditions=["test_invalidation"],
         summary="Test summary",
     )
-    assert report.confidence == Decimal("0.70")
+    payload = report.model_dump(mode="json")
+    restored = ValidatedAiReport.model_validate(payload)
+    assert restored == report
+    assert restored.confidence == Decimal("0.70")
+
+
+def _dataclass_to_json(obj: Any) -> str:
+    return json.dumps(asdict(obj), default=str)
+
+
+def _dataclass_from_json(json_str: str, cls: type[Any]) -> Any:
+    data = json.loads(json_str)
+    if is_dataclass(cls) and not isinstance(cls, type):
+        cls = type(cls)
+    if not is_dataclass(cls):
+        raise TypeError(f"{cls} is not a dataclass")
+    return cls(**data)
+
+
+def test_analysis_request_serialization_round_trip() -> None:
+    request = make_analysis_request()
+    payload = _dataclass_to_json(request)
+    data = json.loads(payload)
+    assert data["snapshot_id"] == request.snapshot_id
+    assert data["context"]["correlation_id"] == request.context.correlation_id
+
+
+def test_provider_attempt_result_serialization_round_trip() -> None:
+    result = ProviderAttemptResult(
+        attempt_id="attempt-1",
+        provider_code="fake",
+        configured_model="model",
+        outcome=ProviderOutcome.SUCCESS,
+        usage=AiUsage(
+            prompt_tokens=10,
+            response_tokens=5,
+            total_tokens=15,
+            estimated_cost=Decimal("0.001"),
+        ),
+        safety_status=SafetySeverity.LOW,
+        raw_response_reference="ref",
+        latency_ms=50,
+        retry_count=0,
+    )
+    payload = _dataclass_to_json(result)
+    data = json.loads(payload)
+    assert data["attempt_id"] == "attempt-1"
+    assert data["usage"]["estimated_cost"] == "0.001"
+    assert data["safety_status"] == "low"
+
+
+def test_ai_budget_decision_serialization_round_trip() -> None:
+    decision = AiBudgetDecision(
+        allowed=True,
+        reason="Budget available",
+        remaining_requests=100,
+        remaining_tokens=10000,
+        remaining_cost=Decimal("5.00"),
+    )
+    payload = _dataclass_to_json(decision)
+    data = json.loads(payload)
+    assert data["remaining_cost"] == "5.00"
 
 
 def test_deterministic_repeated_runs_produce_same_result() -> None:
@@ -289,8 +396,9 @@ def test_deterministic_repeated_runs_produce_same_result() -> None:
     request = make_analysis_request()
     result1 = asyncio.run(provider.analyze(request))
     result2 = asyncio.run(provider.analyze(request))
-    assert result1.outcome == result2.outcome
-    assert result1.latency_ms == result2.latency_ms
+    assert result1.attempt.outcome == result2.attempt.outcome
+    assert result1.attempt.latency_ms == result2.attempt.latency_ms
+    assert result1.report == result2.report
 
 
 def test_no_network_call_in_normal_unit_tests() -> None:
@@ -305,3 +413,11 @@ def test_no_network_call_in_normal_unit_tests() -> None:
     )
     assert len(candles) == 1
     assert isinstance(candles[0], Candle)
+
+
+def test_network_guard_blocks_non_loopback_connections() -> None:
+    socket_module = pytest.importorskip("socket")
+    with pytest.raises(
+        ConnectionError, match="Unit tests must not open network connections"
+    ):
+        socket_module.create_connection(("8.8.8.8", 53))

@@ -63,6 +63,12 @@ class ProviderAttemptResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderAnalysisResponse:
+    attempt: ProviderAttemptResult
+    report: ValidatedAiReport | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AiBudgetDecision:
     allowed: bool
     reason: str
@@ -120,11 +126,9 @@ class AnalysisRequest:
 
 
 class LLMProvider(Protocol):
-    async def analyze(self, request: AnalysisRequest) -> ProviderAttemptResult:
-        ...
+    async def analyze(self, request: AnalysisRequest) -> ProviderAnalysisResponse: ...
 
-    async def check_budget(self, request: AnalysisRequest) -> AiBudgetDecision:
-        ...
+    async def check_budget(self, request: AnalysisRequest) -> AiBudgetDecision: ...
 
 
 class LLMProviderError(Exception):

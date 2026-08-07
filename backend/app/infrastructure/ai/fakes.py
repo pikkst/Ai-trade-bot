@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from enum import Enum
 
 from app.core.clock import Clock, FixedClock
 from app.infrastructure.ai.protocol import (
@@ -18,6 +19,7 @@ from app.infrastructure.ai.protocol import (
     LLMSafetyBlockError,
     LLMStaleSourceError,
     LLMTimeoutError,
+    ProviderAnalysisResponse,
     ProviderAttemptResult,
     ProviderOutcome,
     SafetySeverity,
@@ -25,7 +27,7 @@ from app.infrastructure.ai.protocol import (
 )
 
 
-class FakeGeminiScenario:
+class FakeGeminiScenario(str, Enum):
     SUCCESS = "success"
     TIMEOUT = "timeout"
     RATE_LIMIT = "rate_limit"
@@ -38,12 +40,19 @@ class FakeGeminiScenario:
 
 @dataclass(frozen=True, slots=True)
 class FakeGeminiConfig:
-    scenario: str = FakeGeminiScenario.SUCCESS
+    scenario: FakeGeminiScenario = FakeGeminiScenario.SUCCESS
     confidence: Decimal = Decimal("0.70")
     market_regime: str = "bullish"
     recommended_action: str = "hold"
     fixed_clock_time: datetime | None = None
     latency_ms: int = 50
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.scenario, FakeGeminiScenario):
+            raise ValueError(
+                f"Invalid FakeGeminiScenario: {self.scenario!r}. "
+                f"Valid values: {[s.value for s in FakeGeminiScenario]}"
+            )
 
 
 class FakeGeminiProvider:
@@ -89,11 +98,11 @@ class FakeGeminiProvider:
             remaining_cost=Decimal("5.00"),
         )
 
-    async def analyze(self, request: AnalysisRequest) -> ProviderAttemptResult:
+    async def analyze(self, request: AnalysisRequest) -> ProviderAnalysisResponse:
         self._check_scenario()
 
         if self.config.scenario == FakeGeminiScenario.SUCCESS:
-            ValidatedAiReport(
+            report = ValidatedAiReport(
                 schema_version="1.0",
                 market_regime=self.config.market_regime,
                 recommended_action=self.config.recommended_action,
@@ -105,24 +114,27 @@ class FakeGeminiProvider:
                 invalidation_conditions=["test_invalidation"],
                 summary="Fake Gemini analysis for testing.",
             )
-            return ProviderAttemptResult(
-                attempt_id=request.analysis_run_id,
-                provider_code="fake-gemini",
-                configured_model="fake-model",
-                outcome=ProviderOutcome.SUCCESS,
-                usage=AiUsage(
-                    prompt_tokens=10,
-                    response_tokens=5,
-                    total_tokens=15,
-                    estimated_cost=Decimal("0.001"),
+            return ProviderAnalysisResponse(
+                attempt=ProviderAttemptResult(
+                    attempt_id=request.analysis_run_id,
+                    provider_code="fake-gemini",
+                    configured_model="fake-model",
+                    outcome=ProviderOutcome.SUCCESS,
+                    usage=AiUsage(
+                        prompt_tokens=10,
+                        response_tokens=5,
+                        total_tokens=15,
+                        estimated_cost=Decimal("0.001"),
+                    ),
+                    safety_status=SafetySeverity.LOW,
+                    raw_response_reference="fake-response-ref",
+                    latency_ms=self.config.latency_ms,
+                    retry_count=0,
                 ),
-                safety_status=SafetySeverity.LOW,
-                raw_response_reference="fake-response-ref",
-                latency_ms=self.config.latency_ms,
-                retry_count=0,
+                report=report,
             )
 
-        return ProviderAttemptResult(
+        attempt = ProviderAttemptResult(
             attempt_id=request.analysis_run_id,
             provider_code="fake-gemini",
             configured_model="fake-model",
@@ -139,3 +151,4 @@ class FakeGeminiProvider:
             latency_ms=self.config.latency_ms,
             retry_count=0,
         )
+        return ProviderAnalysisResponse(attempt=attempt)

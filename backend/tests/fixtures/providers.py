@@ -6,17 +6,29 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from app.core.clock import DeterministicIdGenerator, FixedClock
-from app.infrastructure.ai.fakes import FakeGeminiConfig, FakeGeminiProvider
+from app.infrastructure.ai.fakes import (
+    FakeGeminiConfig,
+    FakeGeminiProvider,
+    FakeGeminiScenario,
+)
 from app.infrastructure.ai.protocol import (
     AiBudgetDecision,
+    AiUsage,
     AnalysisRequest,
+    ProviderAnalysisResponse,
+    ProviderAttemptResult,
+    ProviderOutcome,
+    SafetySeverity,
+    ValidatedAiReport,
 )
 from app.infrastructure.exchange.binance.fakes import (
     FakeBinanceConfig,
     FakeBinanceProvider,
+    FakeBinanceScenario,
 )
 from app.request_context import ExecutionContext
 
+FIXTURE_VERSION = "2026-08-07-m006-v1"
 FIXED_TIME = datetime(2026, 8, 7, 12, 0, 0, tzinfo=timezone.utc)
 
 
@@ -29,8 +41,10 @@ def make_deterministic_id_generator() -> DeterministicIdGenerator:
 
 
 def make_binance_provider(
-    scenario: str = "success",
+    scenario: str | FakeBinanceScenario = FakeBinanceScenario.SUCCESS,
 ) -> FakeBinanceProvider:
+    if isinstance(scenario, str):
+        scenario = FakeBinanceScenario(scenario)
     return FakeBinanceProvider(
         config=FakeBinanceConfig(
             scenario=scenario,
@@ -40,8 +54,10 @@ def make_binance_provider(
 
 
 def make_gemini_provider(
-    scenario: str = "success",
+    scenario: str | FakeGeminiScenario = FakeGeminiScenario.SUCCESS,
 ) -> FakeGeminiProvider:
+    if isinstance(scenario, str):
+        scenario = FakeGeminiScenario(scenario)
     return FakeGeminiProvider(
         config=FakeGeminiConfig(
             scenario=scenario,
@@ -85,3 +101,30 @@ def make_analysis_request(
             cycle_id="cycle-fixture",
         ),
     )
+
+
+def make_provider_analysis_response(
+    request: AnalysisRequest | None = None,
+    *,
+    report: ValidatedAiReport | None = None,
+    outcome: ProviderOutcome = ProviderOutcome.SUCCESS,
+) -> ProviderAnalysisResponse:
+    if request is None:
+        request = make_analysis_request()
+    attempt = ProviderAttemptResult(
+        attempt_id=request.analysis_run_id,
+        provider_code="fixture-provider",
+        configured_model="fixture-model",
+        outcome=outcome,
+        usage=AiUsage(
+            prompt_tokens=10,
+            response_tokens=5,
+            total_tokens=15,
+            estimated_cost=Decimal("0.001"),
+        ),
+        safety_status=SafetySeverity.LOW,
+        raw_response_reference="fixture-response-ref",
+        latency_ms=50,
+        retry_count=0,
+    )
+    return ProviderAnalysisResponse(attempt=attempt, report=report)
