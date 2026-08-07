@@ -26,6 +26,11 @@ from app.core.clock import (
     get_id_generator,
     get_scheduler_context,
 )
+from app.infrastructure.ai.factory import (
+    create_binance_provider,
+    create_gemini_provider,
+    create_providers,
+)
 from app.infrastructure.ai.fakes import (
     FakeGeminiConfig,
     FakeGeminiProvider,
@@ -654,6 +659,41 @@ def test_fake_gemini_failure_preserves_attempt_metadata() -> None:
     assert response.attempt.configured_model == "fake-model"
     assert response.attempt.error_message == "Fake error"
     assert response.candidate is None
+
+
+def test_factory_binance_produces_deterministic_server_time() -> None:
+    provider_a = create_binance_provider(FakeBinanceScenario.SUCCESS)
+    provider_b = create_binance_provider(FakeBinanceScenario.SUCCESS)
+    time_a = asyncio.run(provider_a.get_server_time())
+    time_b = asyncio.run(provider_b.get_server_time())
+    assert time_a.server_time == time_b.server_time
+    assert time_a.clock_drift_ms == time_b.clock_drift_ms
+
+
+def test_factory_gemini_produces_deterministic_attempt_ids() -> None:
+    provider_a = create_gemini_provider(FakeGeminiScenario.SUCCESS)
+    provider_b = create_gemini_provider(FakeGeminiScenario.SUCCESS)
+    request = make_analysis_request()
+    result_a = asyncio.run(provider_a.analyze(request))
+    result_b = asyncio.run(provider_b.analyze(request))
+    assert result_a.attempt.attempt_id == result_b.attempt.attempt_id
+    assert result_a.attempt.retry_count == result_b.attempt.retry_count
+
+
+def test_factory_providers_produce_deterministic_outputs() -> None:
+    binance_a, gemini_a = create_providers(
+        FakeBinanceScenario.SUCCESS, FakeGeminiScenario.SUCCESS
+    )
+    binance_b, gemini_b = create_providers(
+        FakeBinanceScenario.SUCCESS, FakeGeminiScenario.SUCCESS
+    )
+    time_a = asyncio.run(binance_a.get_server_time())
+    time_b = asyncio.run(binance_b.get_server_time())
+    assert time_a.server_time == time_b.server_time
+    request = make_analysis_request()
+    result_a = asyncio.run(gemini_a.analyze(request))
+    result_b = asyncio.run(gemini_b.analyze(request))
+    assert result_a.attempt.attempt_id == result_b.attempt.attempt_id
 
 
 def test_no_network_call_in_normal_unit_tests() -> None:
