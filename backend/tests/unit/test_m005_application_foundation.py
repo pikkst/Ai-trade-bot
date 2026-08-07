@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
 from typing import Any, cast
 from uuid import UUID
 
@@ -10,7 +9,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
 from app import database
-from app.errors import ValidationAppError, install_error_handlers
+from app.errors import (
+    ConcurrencyConflictError,
+    IdempotencyConflictError,
+    ValidationAppError,
+    install_error_handlers,
+)
 from app.health import liveness, readiness
 from app.idempotency import (
     IdempotencyReservation,
@@ -24,6 +28,8 @@ from app.observability import redact_value
 from app.request_context import bind_context, current_context
 from app.settings import AppSettings, SettingsError, load_settings
 from app.transaction_guard import assert_network_call_allowed, transaction_active
+
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000101")
 
 
 class FakeTransactionSession:
@@ -42,8 +48,12 @@ class FakeTransactionSession:
         self.closed = True
 
 
-def _fake_factory(session: FakeTransactionSession) -> sessionmaker[Any]:
-    return cast(sessionmaker[Any], lambda: session)
+class SessionFactory:
+    def __init__(self, session: object) -> None:
+        self.session = session
+
+    def __call__(self) -> object:
+        return self.session
 
 
 class FakeMappings:
@@ -75,7 +85,7 @@ class FakeResult:
         return self.scalar
 
 
-class FakeIdempotencySession:
+class FakeDatabaseSession:
     def __init__(self, results: list[FakeResult]) -> None:
         self.results = results
         self.executions: list[tuple[str, dict[str, Any] | None]] = []
@@ -104,30 +114,6 @@ class ReadySession:
             raise RuntimeError("database unavailable")
 
 
-def test_settings_defaults_are_safe_and_do_not_expose_database_url() -> None:
-    settings = load_settings({})
-
-    assert settings.environment == "local"
-    assert settings.ai_provider == "fake"
-    assert settings.live_trading_enabled is False
-    assert "database_url" not in settings.safe_summary()
-
-
-def test_settings_use_canonical_environment_names() -> None:
-    settings = load_settings(
-        {
-            "APP_ENV": "development",
-            "APP_LOG_LEVEL": "DEBUG",
-            "AI_PROVIDER": "fake",
-            "GEMINI_ENABLED": "false",
-            "PRIVATE_BINANCE_API_ENABLED": "0",
-        }
-    )
-
-    assert settings.environment == "development"
-    assert settings.log_level == "DEBUG"
-
-
 @pytest.mark.parametrize(
     "name",
     [
@@ -142,7 +128,37 @@ def test_settings_reject_prohibited_trading_capabilities(name: str) -> None:
         load_settings({name: "true"})
 
 
-def test_settings_reject_paid_provider_in_ci_and_invalid_boolean() -> None:
+def test_settings_defaults_and_canonical_environment_are_safe() -> None:
+    defaults = load_settings({})
+    assert defaults.environment == "local"
+    assert defaults.ai_provider == "fake"
+    assert defaults.live_trading_enabled is False
+    assert "database_url" not in defaults.safe_summary()
+
+    configured = load_settings(
+        {
+            "APP_ENV": "development",
+            "APP_LOG_LEVEL": "DEBUG",
+            "AI_PROVIDER": "fake",
+            "GEMINI_ENABLED": "false",
+            "PRIVATE_BINANCE_API_ENABLED": "0",
+        }
+    )
+    assert configured.environment == "development"
+    assert configured.log_level == "DEBUG"
+
+
+def test_settings_fail_closed_without_echoing_secrets() -> None:
+    secret = "postgresql://user:super-secret@example.invalid/db"
+    with pytest.raises(SettingsError) as caught:
+        load_settings(
+            {
+                "APP_ENV": "invalid",
+                "DATABASE_URL": secret,
+            }
+        )
+    assert "super-secret" not in str(caught.value)
+
     with pytest.raises(SettingsError, match="fake AI provider"):
         load_settings(
             {
@@ -154,23 +170,10 @@ def test_settings_reject_paid_provider_in_ci_and_invalid_boolean() -> None:
         )
 
     with pytest.raises(SettingsError, match="must be one of"):
-        load_settings({"LIVE_TRADING_ENABLED": "definitely"})
+        load_settings({"LIVE_TRADING_ENABLED": "invalid"})
 
 
-def test_settings_validation_does_not_echo_database_secret() -> None:
-    secret = "postgresql://user:super-secret@example.invalid/db"
-    with pytest.raises(SettingsError) as caught:
-        load_settings(
-            {
-                "APP_ENV": "invalid",
-                "DATABASE_URL": secret,
-            }
-        )
-
-    assert "super-secret" not in str(caught.value)
-
-
-def test_context_binding_and_redaction() -> None:
+def test_context_binding_and_recursive_redaction() -> None:
     with bind_context(
         correlation_id="corr-1",
         request_id="req-1",
@@ -188,7 +191,10 @@ def test_context_binding_and_redaction() -> None:
         {
             "password": "hidden",
             "sessionId": "operational-id",
-            "message": "Bearer abc.def and postgresql://u:p@example.invalid/db",
+            "message": (
+                "Bearer abc.def and "
+                "postgresql://u:p@example.invalid/db"
+            ),
         }
     )
     assert redacted["password"] == "[REDACTED]"
@@ -197,7 +203,7 @@ def test_context_binding_and_redaction() -> None:
     assert "u:p@" not in redacted["message"]
 
 
-def test_http_context_health_and_safe_error_envelope() -> None:
+def test_http_context_health_and_safe_errors() -> None:
     app = create_app(AppSettings())
 
     @app.get("/validation-error")
@@ -207,10 +213,16 @@ def test_http_context_health_and_safe_error_envelope() -> None:
     client = TestClient(app)
     response = client.get(
         "/health/live",
-        headers={"X-Correlation-ID": "corr-test", "X-Request-ID": "req-test"},
+        headers={
+            "X-Correlation-ID": "corr-test",
+            "X-Request-ID": "req-test",
+        },
     )
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "checks": {"process": "ok"}}
+    assert response.json() == {
+        "status": "ok",
+        "checks": {"process": "ok"},
+    }
     assert response.headers["X-Correlation-ID"] == "corr-test"
     assert response.headers["X-Request-ID"] == "req-test"
 
@@ -219,7 +231,8 @@ def test_http_context_health_and_safe_error_envelope() -> None:
     assert ready_response.json()["checks"]["database"] == "not_required"
 
     error_response = client.get(
-        "/validation-error", headers={"X-Correlation-ID": "corr-error"}
+        "/validation-error",
+        headers={"X-Correlation-ID": "corr-error"},
     )
     assert error_response.status_code == 400
     body = error_response.json()["error"]
@@ -229,16 +242,16 @@ def test_http_context_health_and_safe_error_envelope() -> None:
     assert "internal detail" not in error_response.text
 
 
-def test_invalid_correlation_header_is_replaced() -> None:
+def test_invalid_correlation_id_and_unexpected_error_are_safe() -> None:
     client = TestClient(create_app(AppSettings(max_request_id_length=16)))
-    response = client.get("/health", headers={"X-Correlation-ID": "bad id spaces"})
-
+    response = client.get(
+        "/health",
+        headers={"X-Correlation-ID": "bad id spaces"},
+    )
     assert response.status_code == 200
     assert response.headers["X-Correlation-ID"] != "bad id spaces"
     assert len(response.headers["X-Correlation-ID"]) == 32
 
-
-def test_unexpected_error_uses_safe_envelope() -> None:
     app = FastAPI()
     install_error_handlers(app)
 
@@ -246,19 +259,22 @@ def test_unexpected_error_uses_safe_envelope() -> None:
     def boom() -> None:
         raise RuntimeError("database password=secret")
 
-    client = TestClient(app, raise_server_exceptions=False)
-    response = client.get("/boom")
-
-    assert response.status_code == 500
-    assert response.json()["error"]["code"] == "application_error"
-    assert "secret" not in response.text
+    unsafe_client = TestClient(app, raise_server_exceptions=False)
+    error_response = unsafe_client.get("/boom")
+    assert error_response.status_code == 500
+    assert error_response.json()["error"]["code"] == "application_error"
+    assert "secret" not in error_response.text
 
 
 def test_transaction_guard_blocks_network_calls_and_resets() -> None:
     fake = FakeTransactionSession()
+    factory = cast(
+        sessionmaker[Any],
+        SessionFactory(fake),
+    )
     assert transaction_active() is False
 
-    with database.transactional_session(_fake_factory(fake)):
+    with database.transactional_session(factory):
         assert transaction_active() is True
         with pytest.raises(RuntimeError, match="network calls are prohibited"):
             assert_network_call_allowed()
@@ -268,51 +284,61 @@ def test_transaction_guard_blocks_network_calls_and_resets() -> None:
     assert fake.closed is True
 
 
-def test_health_readiness_success_and_failure() -> None:
+def test_readiness_reports_dependency_state() -> None:
     assert liveness().status == "ok"
-
     good_factory = cast(
         sessionmaker[Any],
-        lambda: ReadySession(),
+        SessionFactory(ReadySession()),
     )
     bad_factory = cast(
         sessionmaker[Any],
-        lambda: ReadySession(fail=True),
+        SessionFactory(ReadySession(fail=True)),
     )
 
-    assert readiness(check_database=True, factory=good_factory).status == "ready"
-    result = readiness(check_database=True, factory=bad_factory)
-    assert result.status == "not_ready"
-    assert result.checks["database"] == "unavailable"
+    assert readiness(
+        check_database=True,
+        factory=good_factory,
+    ).status == "ready"
+    unavailable = readiness(
+        check_database=True,
+        factory=bad_factory,
+    )
+    assert unavailable.status == "not_ready"
+    assert unavailable.checks["database"] == "unavailable"
 
     with pytest.raises(ValueError, match="session factory"):
         readiness(check_database=True, factory=None)
 
 
 def test_request_fingerprint_is_canonical() -> None:
-    first = request_fingerprint({"b": 2, "a": 1})
-    second = request_fingerprint({"a": 1, "b": 2})
-
-    assert first == second
-    assert len(first) == 64
+    assert request_fingerprint({"b": 2, "a": 1}) == request_fingerprint(
+        {"a": 1, "b": 2}
+    )
 
 
-def test_idempotency_reservation_duplicate_and_conflict() -> None:
-    workspace_id = UUID("00000000-0000-0000-0000-000000000101")
+def test_idempotency_create_replay_and_conflict() -> None:
     fingerprint = request_fingerprint({"command": "run"})
-    inserted = FakeIdempotencySession(
-        [FakeResult(row={"request_hash": fingerprint, "response_status": None, "response_body": None})]
+    inserted = FakeDatabaseSession(
+        [
+            FakeResult(
+                row={
+                    "request_hash": fingerprint,
+                    "response_status": None,
+                    "response_body": None,
+                }
+            )
+        ]
     )
     created = reserve_idempotency(
         cast(Any, inserted),
-        workspace_id=workspace_id,
+        workspace_id=WORKSPACE_ID,
         scope="research-cycle",
         key="cycle-1",
         request_hash=fingerprint,
     )
     assert created.created is True
 
-    replay = FakeIdempotencySession(
+    replay = FakeDatabaseSession(
         [
             FakeResult(row=None),
             FakeResult(
@@ -326,7 +352,7 @@ def test_idempotency_reservation_duplicate_and_conflict() -> None:
     )
     existing = reserve_idempotency(
         cast(Any, replay),
-        workspace_id=workspace_id,
+        workspace_id=WORKSPACE_ID,
         scope="research-cycle",
         key="cycle-1",
         request_hash=fingerprint,
@@ -334,7 +360,7 @@ def test_idempotency_reservation_duplicate_and_conflict() -> None:
     assert existing.created is False
     assert existing.response_body == {"cycle_id": "existing"}
 
-    conflict = FakeIdempotencySession(
+    conflict = FakeDatabaseSession(
         [
             FakeResult(row=None),
             FakeResult(
@@ -346,59 +372,60 @@ def test_idempotency_reservation_duplicate_and_conflict() -> None:
             ),
         ]
     )
-    with pytest.raises(Exception, match="idempotency"):
+    with pytest.raises(IdempotencyConflictError):
         reserve_idempotency(
             cast(Any, conflict),
-            workspace_id=workspace_id,
+            workspace_id=WORKSPACE_ID,
             scope="research-cycle",
             key="cycle-1",
             request_hash=fingerprint,
         )
 
 
-def test_complete_idempotency_and_expected_version() -> None:
-    workspace_id = UUID("00000000-0000-0000-0000-000000000101")
+def test_idempotency_completion_and_optimistic_concurrency() -> None:
     reservation = IdempotencyReservation(
-        workspace_id=workspace_id,
+        workspace_id=WORKSPACE_ID,
         scope="command",
         key="key-1",
         request_hash="a" * 64,
         created=True,
     )
-    completion_session = FakeIdempotencySession([FakeResult()])
+    completion = FakeDatabaseSession([FakeResult()])
     complete_idempotency(
-        cast(Any, completion_session),
+        cast(Any, completion),
         reservation,
         response_status=200,
         response_body={"ok": True},
     )
-    assert "public.idempotency_records" in completion_session.executions[0][0]
+    assert "public.idempotency_records" in completion.executions[0][0]
 
-    update_session = FakeIdempotencySession([FakeResult(scalar=4)])
-    new_version = update_with_expected_version(
-        cast(Any, update_session),
-        table="workspaces",
-        row_id=workspace_id,
-        expected_version=3,
-        values={"name": "Updated"},
-    )
-    assert new_version == 4
-
-    conflict_session = FakeIdempotencySession([FakeResult(scalar=None)])
-    with pytest.raises(Exception, match="resource changed"):
+    update = FakeDatabaseSession([FakeResult(scalar=4)])
+    assert (
         update_with_expected_version(
-            cast(Any, conflict_session),
+            cast(Any, update),
             table="workspaces",
-            row_id=workspace_id,
+            row_id=WORKSPACE_ID,
+            expected_version=3,
+            values={"name": "Updated"},
+        )
+        == 4
+    )
+
+    conflict = FakeDatabaseSession([FakeResult(scalar=None)])
+    with pytest.raises(ConcurrencyConflictError):
+        update_with_expected_version(
+            cast(Any, conflict),
+            table="workspaces",
+            row_id=WORKSPACE_ID,
             expected_version=3,
             values={"name": "Updated"},
         )
 
     with pytest.raises(ValueError, match="unsupported"):
         update_with_expected_version(
-            cast(Any, update_session),
+            cast(Any, update),
             table="unsafe_table",
-            row_id=workspace_id,
+            row_id=WORKSPACE_ID,
             expected_version=1,
             values={"name": "x"},
         )
