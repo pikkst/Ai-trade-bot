@@ -69,8 +69,11 @@ SERVER_ONLY_NAMES: set[str] = {
 BUNDLE_CANARY_VALUE = "BUNDLE_CANARY_DO_NOT_SHIP"
 
 CREDENTIAL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("PostgreSQL connection URL", re.compile(r"postgres(?:ql)?://[^\s\"']+", re.I)),
-    ("Bearer token", re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{16,}", re.I)),
+    (
+        "PostgreSQL connection URL",
+        re.compile(r"postgres(?:ql)?://[^\s\"']+", re.IGNORECASE),
+    ),
+    ("Bearer token", re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{16,}", re.IGNORECASE)),
     (
         "JWT-like token",
         re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"),

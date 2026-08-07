@@ -87,7 +87,8 @@ class AppSettings(BaseModel):
                 )
             if not self.health_database_check:
                 raise ValueError(
-                    f"{self.environment} environment requires HEALTH_DATABASE_CHECK=true"
+                    f"{self.environment} environment requires "
+                    "HEALTH_DATABASE_CHECK=true"
                 )
         return self
 
