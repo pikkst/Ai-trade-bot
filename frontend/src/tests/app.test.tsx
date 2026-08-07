@@ -3,18 +3,26 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import App from '../App';
+import appCss from '../App.css?raw';
 import { formatCurrency, formatPercent } from '../lib/format';
-import { contrastRatio } from './contrast';
 import { getContent } from '../lib/content';
 import baseTokensCss from '../styles/tokens.css?raw';
 import statusTokensCss from '../styles/status-tokens.css?raw';
+import { contrastRatio } from './contrast';
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 function tokenValue(css: string, token: string, selector = ':root'): string {
-  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const block = css.match(new RegExp(`${escapedSelector}\\s*\\{([\\s\\S]*?)\\}`));
+  const block = css.match(
+    new RegExp(`${escapeRegExp(selector)}\\s*\\{([\\s\\S]*?)\\}`)
+  );
   if (!block) throw new Error(`Missing CSS selector: ${selector}`);
 
-  const match = block[1].match(new RegExp(`${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*([^;]+);`));
+  const match = block[1].match(
+    new RegExp(`${escapeRegExp(token)}\\s*:\\s*([^;]+);`)
+  );
   if (!match) throw new Error(`Missing token ${token} in ${selector}`);
   return match[1].trim();
 }
@@ -121,9 +129,13 @@ describe('Accessibility — design token contract', () => {
     }
   });
 
-  it('keeps reduced-motion behavior in the production stylesheet', () => {
+  it('keeps reduced-motion tokens and production media-query behavior', () => {
     expect(baseTokensCss).toContain('--motion-duration-none: 0s');
     expect(baseTokensCss).toContain('--motion-duration-fast: 160ms');
     expect(baseTokensCss).toContain('--motion-duration-base: 240ms');
+    expect(appCss).toContain('@media (prefers-reduced-motion: reduce)');
+    expect(appCss).toContain('animation-duration: 0.01ms !important');
+    expect(appCss).toContain('transition-duration: 0.01ms !important');
+    expect(appCss).toContain('scroll-behavior: auto !important');
   });
 });
