@@ -469,18 +469,22 @@ def test_non_local_environments_require_explicit_database_url(env_name: str) -> 
 )
 def test_non_local_environments_require_database_readiness(env_name: str) -> None:
     with pytest.raises(SettingsError, match="requires HEALTH_DATABASE_CHECK=true"):
-        load_settings({
-            "APP_ENV": env_name,
-            "DATABASE_URL": "postgresql://user:pass@host/db",
-        })
+        load_settings(
+            {
+                "APP_ENV": env_name,
+                "DATABASE_URL": "postgresql://user:pass@host/db",
+            }
+        )
 
 
 def test_production_ready_returns_503_when_database_unavailable() -> None:
-    settings = load_settings({
-        "APP_ENV": "production",
-        "DATABASE_URL": "postgresql://user:pass@host/db",
-        "HEALTH_DATABASE_CHECK": "true",
-    })
+    settings = load_settings(
+        {
+            "APP_ENV": "production",
+            "DATABASE_URL": "postgresql://user:pass@host/db",
+            "HEALTH_DATABASE_CHECK": "true",
+        }
+    )
     app = create_app(settings)
 
     class FailingSession:
