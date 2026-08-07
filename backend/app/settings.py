@@ -8,8 +8,16 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, model_validator
 
-Environment = Literal["local", "test", "ci", "free_cloud", "staging", "production"]
+Environment = Literal[
+    "development",
+    "test",
+    "ci",
+    "free_cloud",
+    "staging",
+    "production",
+]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+AIProvider = Literal["fake", "gemini"]
 
 
 class SettingsError(RuntimeError):
@@ -21,28 +29,46 @@ class AppSettings(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    environment: Environment = "local"
+    environment: Environment = "development"
     service_name: str = "the-daily-roast-api"
     log_level: LogLevel = "INFO"
     database_url: SecretStr = SecretStr(
         "postgresql+psycopg://app_runtime:app-runtime-local-only@127.0.0.1:54322/postgres"
     )
-    fake_ai_provider: bool = True
+    ai_provider: AIProvider = "fake"
     gemini_enabled: bool = False
+    allow_paid_provider_usage: bool = False
     live_trading_enabled: bool = False
-    private_binance_enabled: bool = False
+    binance_test_trading_enabled: bool = False
+    private_binance_api_enabled: bool = False
+    exchange_order_execution_enabled: bool = False
     health_database_check: bool = False
     max_request_id_length: int = Field(default=128, ge=16, le=256)
 
     @model_validator(mode="after")
     def enforce_mvp_safety(self) -> AppSettings:
         """Reject capabilities that are forbidden for the paper-only MVP."""
-        if self.live_trading_enabled:
-            raise ValueError("live trading is prohibited by the MVP safety model")
-        if self.private_binance_enabled:
-            raise ValueError("private Binance access is prohibited by the MVP safety model")
-        if self.environment in {"ci", "test"} and self.gemini_enabled:
-            raise ValueError("paid Gemini access must remain disabled in CI and tests")
+        prohibited = {
+            "LIVE_TRADING_ENABLED": self.live_trading_enabled,
+            "BINANCE_TEST_TRADING_ENABLED": self.binance_test_trading_enabled,
+            "PRIVATE_BINANCE_API_ENABLED": self.private_binance_api_enabled,
+            "EXCHANGE_ORDER_EXECUTION_ENABLED": self.exchange_order_execution_enabled,
+        }
+        enabled = [name for name, value in prohibited.items() if value]
+        if enabled:
+            raise ValueError(
+                "paper-only MVP prohibits: " + ", ".join(sorted(enabled))
+            )
+        if self.environment in {"ci", "test"} and (
+            self.gemini_enabled
+            or self.ai_provider != "fake"
+            or self.allow_paid_provider_usage
+        ):
+            raise ValueError("CI and tests require the fake AI provider with paid usage disabled")
+        if self.ai_provider == "gemini" and not self.gemini_enabled:
+            raise ValueError("AI_PROVIDER=gemini requires GEMINI_ENABLED=true")
+        if self.gemini_enabled and not self.allow_paid_provider_usage:
+            raise ValueError("GEMINI_ENABLED=true requires ALLOW_PAID_PROVIDER_USAGE=true")
         return self
 
     def safe_summary(self) -> dict[str, object]:
@@ -51,10 +77,13 @@ class AppSettings(BaseModel):
             "environment": self.environment,
             "service_name": self.service_name,
             "log_level": self.log_level,
-            "fake_ai_provider": self.fake_ai_provider,
+            "ai_provider": self.ai_provider,
             "gemini_enabled": self.gemini_enabled,
+            "allow_paid_provider_usage": self.allow_paid_provider_usage,
             "live_trading_enabled": self.live_trading_enabled,
-            "private_binance_enabled": self.private_binance_enabled,
+            "binance_test_trading_enabled": self.binance_test_trading_enabled,
+            "private_binance_api_enabled": self.private_binance_api_enabled,
+            "exchange_order_execution_enabled": self.exchange_order_execution_enabled,
             "health_database_check": self.health_database_check,
         }
 
@@ -79,15 +108,18 @@ def load_settings(environ: Mapping[str, str] | None = None) -> AppSettings:
     aliases: dict[str, str] = {
         "APP_ENV": "environment",
         "SERVICE_NAME": "service_name",
-        "LOG_LEVEL": "log_level",
+        "APP_LOG_LEVEL": "log_level",
         "DATABASE_URL": "database_url",
+        "AI_PROVIDER": "ai_provider",
         "MAX_REQUEST_ID_LENGTH": "max_request_id_length",
     }
     bool_aliases: dict[str, str] = {
-        "FAKE_AI_PROVIDER": "fake_ai_provider",
         "GEMINI_ENABLED": "gemini_enabled",
+        "ALLOW_PAID_PROVIDER_USAGE": "allow_paid_provider_usage",
         "LIVE_TRADING_ENABLED": "live_trading_enabled",
-        "PRIVATE_BINANCE_ENABLED": "private_binance_enabled",
+        "BINANCE_TEST_TRADING_ENABLED": "binance_test_trading_enabled",
+        "PRIVATE_BINANCE_API_ENABLED": "private_binance_api_enabled",
+        "EXCHANGE_ORDER_EXECUTION_ENABLED": "exchange_order_execution_enabled",
         "HEALTH_DATABASE_CHECK": "health_database_check",
     }
     for env_name, field_name in aliases.items():
