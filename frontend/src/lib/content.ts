@@ -4,8 +4,8 @@
  *
  * This module provides a minimal content-key boundary so that all user-facing
  * strings and locale-aware formatting are decoupled from component literals.
- * Production i18n will extend this catalog with Estonian and additional
- * locales; the boundary itself is established here.
+ * Production i18n can extend this catalog with additional locales while keeping
+ * components independent from raw copy.
  * ========================================================================== */
 
 export type ContentKey =
@@ -28,9 +28,7 @@ export type ContentKey =
 
 export type SupportedLocale = 'en' | 'et';
 
-interface ContentCatalog {
-  [locale: string]: Record<ContentKey, string>;
-}
+type ContentCatalog = Record<SupportedLocale, Record<ContentKey, string>>;
 
 const catalog: ContentCatalog = {
   en: {
@@ -54,27 +52,27 @@ const catalog: ContentCatalog = {
   },
   et: {
     'app.title': 'The Daily Roast AI',
-    'app.subtitle': 'Disainitokenid · kvaldufond • finantsel clarity',
-    'app.tagline': 'Evidence-Driven Market Intelligence',
-    'status.paperContext': 'Harvesti kontext',
-    'nav.tokenReference': 'Atomaadne viide',
+    'app.subtitle': 'Disainitokenid · teemavalmis alus · finantsiline selgus',
+    'app.tagline': 'Tõenduspõhine turuanalüüs',
+    'status.paperContext': 'Ainult paberkaubanduse keskkond',
+    'nav.tokenReference': 'Tokenite ülevaade',
     'nav.productIdentity': 'Toote identiteet',
     'section.designTokens': 'Disainitokenid',
     'section.designTokensBody':
-      'Versioonitud visual primitiver kurbide ja usaldusväädsete tõendite näitamiseks.',
-    'section.referenceMetrics': 'Viite mõõdiku',
-    'section.accessibilityNotes': 'Juoad kättesaadavus',
-    'theme.light': 'Heleda',
-    'theme.dark': 'Mellan',
+      'Versioonitud visuaalsed alusväärtused rahulike ja usaldusväärsete tõendivaadete jaoks.',
+    'section.referenceMetrics': 'Näidismõõdikud',
+    'section.accessibilityNotes': 'Ligipääsetavuse märkused',
+    'theme.light': 'Hele',
+    'theme.dark': 'Tume',
     'theme.system': 'Süsteem',
     'metric.portfolio': 'Portfell',
-    'metric.drawdown': 'Joonis',
+    'metric.drawdown': 'Langus tipust',
     'metric.evidenceFreshness': 'Tõendite värskus',
   },
 };
 
 export function getContent(locale: SupportedLocale, key: ContentKey): string {
-  return catalog[locale]?.[key] ?? catalog['en'][key] ?? key;
+  return catalog[locale][key] ?? catalog.en[key] ?? key;
 }
 
 export function getSupportedLocales(): SupportedLocale[] {
