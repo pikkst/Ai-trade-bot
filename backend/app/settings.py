@@ -60,15 +60,11 @@ class AppSettings(BaseModel):
             "LIVE_TRADING_ENABLED": self.live_trading_enabled,
             "BINANCE_TEST_TRADING_ENABLED": self.binance_test_trading_enabled,
             "PRIVATE_BINANCE_API_ENABLED": self.private_binance_api_enabled,
-            "EXCHANGE_ORDER_EXECUTION_ENABLED": (
-                self.exchange_order_execution_enabled
-            ),
+            "EXCHANGE_ORDER_EXECUTION_ENABLED": (self.exchange_order_execution_enabled),
         }
         enabled = [name for name, value in prohibited.items() if value]
         if enabled:
-            raise ValueError(
-                "paper-only MVP prohibits: " + ", ".join(sorted(enabled))
-            )
+            raise ValueError("paper-only MVP prohibits: " + ", ".join(sorted(enabled)))
         if self.environment in {"ci", "test"} and (
             self.gemini_enabled
             or self.ai_provider != "fake"
@@ -78,9 +74,7 @@ class AppSettings(BaseModel):
                 "CI and tests require the fake AI provider with paid usage disabled"
             )
         if self.ai_provider == "gemini" and not self.gemini_enabled:
-            raise ValueError(
-                "AI_PROVIDER=gemini requires GEMINI_ENABLED=true"
-            )
+            raise ValueError("AI_PROVIDER=gemini requires GEMINI_ENABLED=true")
         if self.gemini_enabled and not self.allow_paid_provider_usage:
             raise ValueError(
                 "GEMINI_ENABLED=true requires ALLOW_PAID_PROVIDER_USAGE=true"
@@ -99,9 +93,7 @@ class AppSettings(BaseModel):
             "live_trading_enabled": self.live_trading_enabled,
             "binance_test_trading_enabled": self.binance_test_trading_enabled,
             "private_binance_api_enabled": self.private_binance_api_enabled,
-            "exchange_order_execution_enabled": (
-                self.exchange_order_execution_enabled
-            ),
+            "exchange_order_execution_enabled": (self.exchange_order_execution_enabled),
             "health_database_check": self.health_database_check,
         }
 
@@ -116,9 +108,7 @@ def _read_bool(value: str, *, name: str) -> bool:
         return True
     if normalized in _FALSE_VALUES:
         return False
-    raise SettingsError(
-        f"{name} must be one of true/false, 1/0, yes/no, on/off"
-    )
+    raise SettingsError(f"{name} must be one of true/false, 1/0, yes/no, on/off")
 
 
 def load_settings(environ: Mapping[str, str] | None = None) -> AppSettings:
