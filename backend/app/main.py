@@ -13,7 +13,7 @@ from app.settings import AppSettings, load_settings
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
-    """Create a fully configured application without performing provider I/O."""
+    """Create a configured application without performing provider I/O."""
     runtime_settings = settings or load_settings()
     configure_logging(level=runtime_settings.log_level)
 
@@ -35,13 +35,12 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     @application.get("/health/ready")
     def health_ready() -> JSONResponse:
+        factory = None
+        if runtime_settings.health_database_check:
+            factory = get_session_factory()
         check = readiness(
             check_database=runtime_settings.health_database_check,
-            factory=(
-                get_session_factory()
-                if runtime_settings.health_database_check
-                else None
-            ),
+            factory=factory,
         )
         return JSONResponse(
             status_code=200 if check.status == "ready" else 503,
