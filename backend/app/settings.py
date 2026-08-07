@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, model_validator
 
 Environment = Literal[
+    "local",
     "development",
     "test",
     "ci",
@@ -29,7 +30,7 @@ class AppSettings(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    environment: Environment = "development"
+    environment: Environment = "local"
     service_name: str = "the-daily-roast-api"
     log_level: LogLevel = "INFO"
     database_url: SecretStr = SecretStr(
