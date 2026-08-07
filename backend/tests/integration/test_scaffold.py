@@ -8,13 +8,13 @@ configured. Full integration tests will be implemented in later Master Tasks
 import importlib
 
 
-def test_integration_test_directory_exists():
+def test_integration_test_directory_exists() -> None:
     """Verify the integration test directory is importable."""
     import tests.integration
 
     importlib.reload(tests.integration)
 
 
-def test_pytest_collector_works():
+def test_pytest_collector_works() -> None:
     """Verify pytest can collect and execute tests in this directory."""
     assert True

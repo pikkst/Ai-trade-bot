@@ -2,20 +2,21 @@ from __future__ import annotations
 
 import sys
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.cli.run_research_cycle import main as research_cycle_main
 from app.main import app
 
 
-def test_health_endpoint():
+def test_health_endpoint() -> None:
     client = TestClient(app)
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
 
-def test_root_endpoint():
+def test_root_endpoint() -> None:
     client = TestClient(app)
     response = client.get("/")
     assert response.status_code == 200
@@ -23,7 +24,9 @@ def test_root_endpoint():
     assert response.json()["environment"] == "local"
 
 
-def test_research_cycle_scaffold_is_deterministic(monkeypatch, capsys) -> None:
+def test_research_cycle_scaffold_is_deterministic(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     monkeypatch.setattr(
         sys,
         "argv",

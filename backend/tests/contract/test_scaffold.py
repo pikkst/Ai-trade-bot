@@ -8,13 +8,13 @@ in later Master Tasks after the contract definitions are established.
 import importlib
 
 
-def test_contract_test_directory_exists():
+def test_contract_test_directory_exists() -> None:
     """Verify the contract test directory is importable."""
     import tests.contract
 
     importlib.reload(tests.contract)
 
 
-def test_pytest_collector_works():
+def test_pytest_collector_works() -> None:
     """Verify pytest can collect and execute tests in this directory."""
     assert True

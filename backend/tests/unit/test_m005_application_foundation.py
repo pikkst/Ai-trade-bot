@@ -501,9 +501,9 @@ def test_production_ready_returns_503_when_database_unavailable() -> None:
         def __call__(self) -> FailingSession:
             return FailingSession()
 
-    import app.main as app_main
+    import app.database as app_database
 
-    app_main.get_session_factory = FailingSessionFactory()  # type: ignore[method-assign]
+    app_database.get_session_factory = FailingSessionFactory()  # type: ignore[assignment]
 
     client = TestClient(app)
     response = client.get("/health/ready")
