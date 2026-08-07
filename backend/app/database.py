@@ -11,6 +11,8 @@ from uuid import UUID
 from sqlalchemy import Engine, TextClause, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.transaction_guard import transaction_scope
+
 DEFAULT_DATABASE_URL = (
     "postgresql+psycopg://app_runtime:app-runtime-local-only@127.0.0.1:54322/postgres"
 )
@@ -55,11 +57,16 @@ def get_session_factory() -> sessionmaker[Session]:
 def transactional_session(
     factory: sessionmaker[Session] | None = None,
 ) -> Iterator[Session]:
-    """Commit successful work and roll back every raised exception."""
+    """Commit successful work and roll back every raised exception.
+
+    The transaction context is exposed to provider adapters so external network
+    calls can fail fast instead of creating non-atomic side effects.
+    """
     session = (factory or get_session_factory())()
     try:
-        yield session
-        session.commit()
+        with transaction_scope():
+            yield session
+            session.commit()
     except Exception:
         session.rollback()
         raise
