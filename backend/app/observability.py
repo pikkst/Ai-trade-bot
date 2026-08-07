@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from typing import Any
 from uuid import uuid4
 
@@ -49,16 +49,16 @@ def redact_value(value: Any, *, key: str | None = None) -> Any:
 def _redact_processor(
     _logger: Any,
     _method_name: str,
-    event_dict: dict[str, Any],
-) -> dict[str, Any]:
+    event_dict: MutableMapping[str, Any],
+) -> Mapping[str, Any]:
     return {key: redact_value(value, key=key) for key, value in event_dict.items()}
 
 
 def _context_processor(
     _logger: Any,
     _method_name: str,
-    event_dict: dict[str, Any],
-) -> dict[str, Any]:
+    event_dict: MutableMapping[str, Any],
+) -> Mapping[str, Any]:
     for key, value in current_context().as_dict().items():
         event_dict.setdefault(key, value)
     return event_dict
