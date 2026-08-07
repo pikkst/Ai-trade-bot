@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import './App.css';
 import './styles/tokens.css';
+import './styles/status-tokens.css';
 
 const queryClient = new QueryClient();
 
