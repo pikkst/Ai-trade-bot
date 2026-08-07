@@ -1,4 +1,4 @@
-.PHONY: bootstrap toolchain-bootstrap format lint type-check test local-up local-down local-migrate local-seed local-reset alembic-upgrade database-test api-dev frontend-dev frontend-build frontend-test research-cycle all-checks quality help export-test restore-test security-test frontend-audit docs-check unit-test integration-test contract-test e2e-test lock lock-check format-check
+.PHONY: bootstrap toolchain-bootstrap format lint type-check test local-up local-down local-migrate local-seed local-reset alembic-upgrade database-test api-dev frontend-dev frontend-build frontend-test frontend-bundle-scan research-cycle all-checks quality help export-test restore-test security-test frontend-audit docs-check unit-test integration-test contract-test e2e-test lock lock-check format-check
 
 PYTHON := python3
 PIP := $(PYTHON) -m pip
@@ -117,6 +117,10 @@ frontend-dev: ## Run Vite development server
 
 frontend-build: ## Build the frontend production bundle
 	cd $(FRONTEND) && npm run build
+	python infrastructure/scripts/scan_bundle_secrets.py $(FRONTEND)/dist
+
+frontend-bundle-scan: ## Scan frontend bundle for leaked server secrets
+	python infrastructure/scripts/scan_bundle_secrets.py $(FRONTEND)/dist
 
 frontend-test: ## Run frontend tests
 	cd $(FRONTEND) && npm test

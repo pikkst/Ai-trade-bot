@@ -51,6 +51,9 @@ markers = [
 addopts = [
     "--strict-config",
     "--strict-markers",
+    "--basetemp=.pytest-tmp",
+    "-o",
+    "cache_dir=.pytest-cache",
     "--cov=app",
     "--cov-branch",
     "--cov-report=term-missing:skip-covered",
