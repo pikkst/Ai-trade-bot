@@ -54,7 +54,7 @@ def reserve_idempotency(
     inserted = session.execute(
         text(
             """
-            insert into app.idempotency_records (
+            insert into public.idempotency_records (
                 workspace_id, scope, idempotency_key, request_hash
             ) values (:workspace_id, :scope, :key, :request_hash)
             on conflict (workspace_id, scope, idempotency_key) do nothing
@@ -81,7 +81,7 @@ def reserve_idempotency(
         text(
             """
             select request_hash, response_status, response_body
-            from app.idempotency_records
+            from public.idempotency_records
             where workspace_id = :workspace_id
               and scope = :scope
               and idempotency_key = :key
@@ -114,7 +114,7 @@ def complete_idempotency(
     session.execute(
         text(
             """
-            update app.idempotency_records
+            update public.idempotency_records
             set response_status = :status,
                 response_body = cast(:body as jsonb),
                 completed_at = timezone('utc', now())
@@ -143,14 +143,10 @@ def update_with_expected_version(
     expected_version: int,
     values: dict[str, Any],
 ) -> int:
-    """Apply an allowlisted optimistic update and return the next version.
-
-    Table and column identifiers cannot be bound parameters, so this helper accepts
-    only project-owned identifiers. Callers must never pass user-controlled names.
-    """
+    """Apply an allowlisted optimistic update and return the next version."""
     allowed_tables: dict[str, set[str]] = {
-        "workspace_settings": {"name", "value", "reason"},
-        "experiments": {"status", "reason"},
+        "workspaces": {"name", "lifecycle_state"},
+        "virtual_portfolios": {"name", "lifecycle_state"},
     }
     allowed_columns = allowed_tables.get(table)
     if allowed_columns is None or not values or not set(values).issubset(allowed_columns):
@@ -160,7 +156,7 @@ def update_with_expected_version(
     parameters.update({"row_id": row_id, "expected_version": expected_version})
     result = session.execute(
         text(
-            f"update app.{table} set {assignments}, version = version + 1 "
+            f"update public.{table} set {assignments}, version = version + 1 "
             "where id = :row_id and version = :expected_version returning version"
         ),
         parameters,
