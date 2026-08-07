@@ -35,6 +35,7 @@ from app.infrastructure.exchange.binance.fakes import (
     FakeBinanceProvider,
 )
 from app.infrastructure.exchange.binance.protocol import (
+    BinanceProviderUnavailableError,
     Candle,
     CandleInterval,
     ExchangeTime,
@@ -47,7 +48,9 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_BACKFILL_MAX_RANGE_DAYS = 30
 _DEFAULT_INCREMENTAL_MAX_RANGE_HOURS = 2
+_DEFAULT_INCREMENTAL_OVERLAP_HOURS = 1
 _DEFAULT_INTERVAL = CandleInterval.ONE_HOUR
+_MAX_PAGE_CANDLES = 1000
 
 
 class MarketDataService:
@@ -65,6 +68,7 @@ class MarketDataService:
         clock: Clock | None = None,
         backfill_max_range_days: int = _DEFAULT_BACKFILL_MAX_RANGE_DAYS,
         incremental_max_range_hours: int = _DEFAULT_INCREMENTAL_MAX_RANGE_HOURS,
+        incremental_overlap_hours: int = _DEFAULT_INCREMENTAL_OVERLAP_HOURS,
         policy: ValidationPolicy | None = None,
     ) -> None:
         self._session = session
@@ -76,6 +80,7 @@ class MarketDataService:
         self._clock = clock or get_clock()
         self._backfill_max_range_days = backfill_max_range_days
         self._incremental_max_range_hours = incremental_max_range_hours
+        self._incremental_overlap_hours = incremental_overlap_hours
         self._policy = policy or ValidationPolicy(
             interval_seconds=_INTERVAL_SECONDS[interval]
         )
@@ -102,7 +107,7 @@ class MarketDataService:
             raise ValueError(
                 f"Backfill range exceeds {self._backfill_max_range_days} days"
             )
-        return await self._ingest(
+        return await self._ingest_pages(
             ingestion_type=IngestionType.BACKFILL,
             symbol=symbol,
             start_time=start_time,
@@ -116,14 +121,7 @@ class MarketDataService:
         idempotency_key: str,
     ) -> IngestionResult:
         assert_network_call_allowed()
-        latest = self._get_latest_finalized_candle_time()
-        now = self._clock.now()
-        if latest is None:
-            lookback = timedelta(hours=self._incremental_max_range_hours)
-            start_time = now - lookback
-        else:
-            start_time = latest + timedelta(seconds=self._interval_seconds)
-        end_time = now
+        start_time, end_time = self._compute_incremental_range()
         if start_time >= end_time:
             return IngestionResult(
                 ingestion_type=IngestionType.INCREMENTAL,
@@ -144,7 +142,7 @@ class MarketDataService:
                 actual_start_time=start_time,
                 actual_end_time=end_time,
             )
-        return await self._ingest(
+        return await self._ingest_pages(
             ingestion_type=IngestionType.INCREMENTAL,
             symbol=symbol,
             start_time=start_time,
@@ -152,10 +150,30 @@ class MarketDataService:
             idempotency_key=idempotency_key,
         )
 
+    def _compute_incremental_range(
+        self,
+    ) -> tuple[datetime, datetime]:
+        latest = self._get_latest_finalized_candle_time()
+        now = self._clock.now()
+        if latest is None:
+            lookback = timedelta(hours=self._incremental_max_range_hours)
+            start_time = now - lookback
+        else:
+            overlap = timedelta(hours=self._incremental_overlap_hours)
+            start_time = latest - overlap
+        return start_time, now
+
+    def _check_clock_drift(self, server_time: ExchangeTime) -> None:
+        if abs(server_time.clock_drift_ms) > self._policy.max_clock_drift_ms:
+            raise BinanceProviderUnavailableError(
+                f"clock drift {server_time.clock_drift_ms}ms exceeds policy"
+            )
+
     async def detect_gaps(
         self,
         symbol_version_id: UUID,
         interval_code: str,
+        expected_end: datetime | None = None,
     ) -> GapReport:
         existing_times = self._get_existing_candle_times()
         latest = max(existing_times) if existing_times else None
@@ -172,7 +190,8 @@ class MarketDataService:
                 detection_policy_version=self._policy.policy_version,
             )
         expected_start = min(existing_times)
-        expected_end = latest + timedelta(seconds=self._interval_seconds)
+        if expected_end is None:
+            expected_end = latest
         all_expected: list[datetime] = []
         current = expected_start
         while current <= expected_end:
@@ -247,7 +266,7 @@ class MarketDataService:
                 actual_start_time=gap_report.expected_start,
                 actual_end_time=gap_report.expected_end,
             )
-        return await self._ingest(
+        return await self._ingest_pages(
             ingestion_type=IngestionType.GAP_REPAIR,
             symbol=symbol,
             start_time=gap_report.expected_start,
@@ -268,6 +287,11 @@ class MarketDataService:
         if not candle_ids:
             raise ValueError("Cannot create snapshot with empty candle membership")
         first_time, last_time, count = self._get_snapshot_candle_range(candle_ids)
+        if count != len(candle_ids) or first_time is None or last_time is None:
+            raise ValueError(
+                "Snapshot membership must match exactly the provided candle IDs "
+                "for this symbol and interval"
+            )
         snapshot_hash = self._compute_snapshot_hash(
             candle_ids=candle_ids,
             analysis_time=analysis_time,
@@ -301,7 +325,7 @@ class MarketDataService:
             analysis_time=analysis_time,
         )
 
-    async def _ingest(
+    async def _ingest_pages(
         self,
         ingestion_type: IngestionType,
         symbol: str,
@@ -309,127 +333,244 @@ class MarketDataService:
         end_time: datetime,
         idempotency_key: str,
     ) -> IngestionResult:
-        ingestion_id = self._create_ingestion(
+        ingestion_id = self._get_or_create_ingestion(
             ingestion_type=ingestion_type,
             start_time=start_time,
             end_time=end_time,
             idempotency_key=idempotency_key,
         )
+        row = self._session.execute(
+            text(
+                "select status, actual_start_time, actual_end_time, checkpoint "
+                "from public.market_data_ingestions where id = :id"
+            ),
+            {"id": ingestion_id},
+        ).mappings().one_or_none()
+        if row and row["status"] in (
+            IngestionStatus.COMPLETED.value,
+            IngestionStatus.FAILED.value,
+            IngestionStatus.CANCELLED.value,
+        ):
+            return IngestionResult(
+                ingestion_type=ingestion_type,
+                status=IngestionStatus(row["status"]),
+                inserted_count=0,
+                duplicate_count=0,
+                invalid_count=0,
+                corrected_count=0,
+                gap_count=0,
+                retry_count=0,
+                request_count=0,
+                provider_latency_ms=None,
+                safe_error=None,
+                content_hash="",
+                idempotency_key=idempotency_key,
+                actual_start_time=row["actual_start_time"],
+                actual_end_time=row["actual_end_time"],
+            )
+        checkpoint = row["checkpoint"] if row else None
+        if checkpoint is not None:
+            current_start = checkpoint
         request_count = 0
         retry_count = 0
         provider_latency_ms: int | None = None
         safe_error: str | None = None
-        try:
-            start_ns = self._clock.now()
-            raw_candles = await self._provider.get_finalized_candles(
-                symbol=symbol,
-                interval=self._interval,
-                start_time=start_time,
-                end_time=end_time,
-            )
-            end_ns = self._clock.now()
-            provider_latency_ms = int(
-                (end_ns - start_ns).total_seconds() * 1000
-            )
-            request_count = 1
-            existing_hashes = self._get_existing_candle_hashes()
-            existing_times = self._get_existing_candle_times()
-            inserted = 0
-            duplicates = 0
-            invalid = 0
-            corrected = 0
-            if isinstance(self._provider, FakeBinanceProvider):
-                pass
-            else:
-                await self._provider.get_server_time()
+        server_time = self._clock.now()
+        clock_drift_ms = 0
+        if not isinstance(self._provider, FakeBinanceProvider):
+            try:
+                st = await self._provider.get_server_time()
+                clock_drift_ms = st.clock_drift_ms
+                server_time = st.server_time
                 request_count += 1
-            validated = self._validate_candles(raw_candles)
-            quality_events: list[QualityEvent] = []
-            for result in validated:
-                if not result.is_valid:
-                    invalid += 1
-                    quality_events.append(
-                        make_quality_event(
-                            event_type=result.quality_state.value,
-                            severity="error",
-                            symbol_version_id=self._symbol_version_id,
-                            interval_code=self._interval.value,
-                            details={"reasons": result.invalid_reasons},
-                            ingestion_id=ingestion_id,
-                        )
+            except Exception as exc:
+                safe_error = str(exc)[:500]
+                self._update_ingestion(
+                    ingestion_id=ingestion_id,
+                    status=IngestionStatus.FAILED,
+                    inserted=0,
+                    duplicates=0,
+                    invalid=0,
+                    corrected=0,
+                    request_count=request_count,
+                    retry_count=retry_count,
+                    provider_latency_ms=None,
+                    safe_error=safe_error,
+                    content_hash="",
+                    actual_start_time=start_time,
+                    actual_end_time=end_time,
+                )
+                raise
+        if abs(clock_drift_ms) > self._policy.max_clock_drift_ms:
+            quality_event = make_quality_event(
+                event_type=QualityState.CLOCK_DRIFT_EXCEEDED.value,
+                severity="error",
+                symbol_version_id=self._symbol_version_id,
+                interval_code=self._interval.value,
+                details={"drift_ms": clock_drift_ms},
+                ingestion_id=ingestion_id,
+            )
+            self._bulk_insert_quality_events([quality_event])
+            self._update_ingestion(
+                ingestion_id=ingestion_id,
+                status=IngestionStatus.FAILED,
+                inserted=0,
+                duplicates=0,
+                invalid=0,
+                corrected=0,
+                request_count=request_count,
+                retry_count=retry_count,
+                provider_latency_ms=provider_latency_ms,
+                safe_error="clock_drift_exceeded",
+                content_hash="",
+                actual_start_time=start_time,
+                actual_end_time=end_time,
+            )
+            raise BinanceProviderUnavailableError(
+                f"clock drift {clock_drift_ms}ms exceeds policy"
+            )
+        page_size = timedelta(
+            seconds=_MAX_PAGE_CANDLES * self._interval_seconds
+        )
+        current_start = start_time
+        inserted_total = 0
+        duplicates_total = 0
+        invalid_total = 0
+        corrected_total = 0
+        existing_hashes = self._get_existing_candle_hashes()
+        existing_times = self._get_existing_candle_times()
+        batch_seen_times: set[datetime] = set()
+        batch_seen_hashes: dict[str, datetime] = {}
+        try:
+            while current_start < end_time:
+                page_end = min(current_start + page_size, end_time)
+                page_start_ns = self._clock.now()
+                raw_candles = (
+                    await self._provider.get_finalized_candles(
+                        symbol=symbol,
+                        interval=self._interval,
+                        start_time=current_start,
+                        end_time=page_end,
+                        server_time=server_time,
                     )
-                    continue
-                if result.is_duplicate:
-                    if result.duplicate_conflict:
+                )
+                page_end_ns = self._clock.now()
+                page_latency = int(
+                    (page_end_ns - page_start_ns).total_seconds() * 1000
+                )
+                provider_latency_ms = (
+                    provider_latency_ms or page_latency
+                )
+                request_count += 1
+                if not raw_candles:
+                    break
+                page_inserted = 0
+                page_duplicates = 0
+                page_invalid = 0
+                page_corrected = 0
+                quality_events: list[QualityEvent] = []
+                validated = self._validate_candles(
+                    raw_candles,
+                    existing_hashes=existing_hashes,
+                    existing_times=existing_times,
+                    batch_seen_times=batch_seen_times,
+                    batch_seen_hashes=batch_seen_hashes,
+                    clock_drift_ms=clock_drift_ms,
+                )
+                for result in validated:
+                    if not result.is_valid:
+                        page_invalid += 1
                         quality_events.append(
                             make_quality_event(
-                                event_type=(
-                                    QualityState.DUPLICATE_CONFLICT.value
-                                ),
+                                event_type=result.quality_state.value,
+                                severity="error",
+                                symbol_version_id=self._symbol_version_id,
+                                interval_code=self._interval.value,
+                                details={"reasons": result.invalid_reasons},
+                                ingestion_id=ingestion_id,
+                            )
+                        )
+                        continue
+                    if result.is_duplicate:
+                        if result.duplicate_conflict:
+                            quality_events.append(
+                                make_quality_event(
+                                    event_type=QualityState.DUPLICATE_CONFLICT.value,
+                                    severity="warning",
+                                    symbol_version_id=self._symbol_version_id,
+                                    interval_code=self._interval.value,
+                                    details={
+                                        "hash": result.content_hash,
+                                        "open_time": result.candle.time.isoformat(),
+                                    },
+                                    ingestion_id=ingestion_id,
+                                )
+                            )
+                        else:
+                            quality_events.append(
+                                make_quality_event(
+                                    event_type=QualityState.DUPLICATE_CONSISTENT.value,
+                                    severity="info",
+                                    symbol_version_id=self._symbol_version_id,
+                                    interval_code=self._interval.value,
+                                    details={
+                                        "hash": result.content_hash,
+                                        "open_time": result.candle.time.isoformat(),
+                                    },
+                                    ingestion_id=ingestion_id,
+                                )
+                            )
+                        page_duplicates += 1
+                        continue
+                    if result.out_of_order:
+                        quality_events.append(
+                            make_quality_event(
+                                event_type=QualityState.OUT_OF_ORDER.value,
                                 severity="warning",
-                                symbol_version_id=(
-                                    self._symbol_version_id
-                                ),
+                                symbol_version_id=self._symbol_version_id,
                                 interval_code=self._interval.value,
-                                details={"hash": result.content_hash},
+                                details={
+                                    "hash": result.content_hash,
+                                    "open_time": result.candle.time.isoformat(),
+                                },
                                 ingestion_id=ingestion_id,
                             )
                         )
-                    else:
-                        quality_events.append(
-                            make_quality_event(
-                                event_type=(
-                                    QualityState.DUPLICATE_CONSISTENT.value
-                                ),
-                                severity="info",
-                                symbol_version_id=(
-                                    self._symbol_version_id
-                                ),
-                                interval_code=self._interval.value,
-                                details={"hash": result.content_hash},
-                                ingestion_id=ingestion_id,
-                            )
-                        )
-                    duplicates += 1
-                    continue
-                if result.out_of_order:
-                    quality_events.append(
-                        make_quality_event(
-                            event_type=QualityState.OUT_OF_ORDER.value,
-                            severity="warning",
-                            symbol_version_id=self._symbol_version_id,
-                            interval_code=self._interval.value,
-                            details={"hash": result.content_hash},
-                            ingestion_id=ingestion_id,
-                        )
-                    )
-                    invalid += 1
-                    continue
-                if result.content_hash in existing_hashes:
-                    duplicates += 1
-                    continue
-                self._insert_candle(result.candle, result.content_hash)
-                existing_hashes.add(result.content_hash)
-                existing_times.add(result.candle.time)
-                inserted += 1
-            if quality_events:
-                self._bulk_insert_quality_events(quality_events)
+                        page_invalid += 1
+                        continue
+                    if result.content_hash in existing_hashes:
+                        page_duplicates += 1
+                        continue
+                    self._insert_candle(result.candle, result.content_hash)
+                    existing_hashes.add(result.content_hash)
+                    existing_times.add(result.candle.time)
+                    batch_seen_times.add(result.candle.time)
+                    batch_seen_hashes[result.content_hash] = result.candle.time
+                    page_inserted += 1
+                if quality_events:
+                    self._bulk_insert_quality_events(quality_events)
+                inserted_total += page_inserted
+                duplicates_total += page_duplicates
+                invalid_total += page_invalid
+                corrected_total += page_corrected
+                self._update_checkpoint(ingestion_id, page_end)
+                current_start = page_end
             content_hash = self._compute_ingestion_hash(
                 start_time,
                 end_time,
-                inserted,
-                duplicates,
-                invalid,
-                corrected,
+                inserted_total,
+                duplicates_total,
+                invalid_total,
+                corrected_total,
                 request_count,
             )
             self._update_ingestion(
                 ingestion_id=ingestion_id,
                 status=IngestionStatus.COMPLETED,
-                inserted=inserted,
-                duplicates=duplicates,
-                invalid=invalid,
-                corrected=corrected,
+                inserted=inserted_total,
+                duplicates=duplicates_total,
+                invalid=invalid_total,
+                corrected=corrected_total,
                 request_count=request_count,
                 retry_count=retry_count,
                 provider_latency_ms=provider_latency_ms,
@@ -441,10 +582,10 @@ class MarketDataService:
             return IngestionResult(
                 ingestion_type=ingestion_type,
                 status=IngestionStatus.COMPLETED,
-                inserted_count=inserted,
-                duplicate_count=duplicates,
-                invalid_count=invalid,
-                corrected_count=corrected,
+                inserted_count=inserted_total,
+                duplicate_count=duplicates_total,
+                invalid_count=invalid_total,
+                corrected_count=corrected_total,
                 gap_count=0,
                 retry_count=retry_count,
                 request_count=request_count,
@@ -461,15 +602,16 @@ class MarketDataService:
                 extra={"ingestion_id": str(ingestion_id), "error": str(exc)},
             )
             content_hash = self._compute_ingestion_hash(
-                start_time, end_time, 0, 0, 0, 0, request_count
+                start_time, end_time, inserted_total, duplicates_total,
+                invalid_total, corrected_total, request_count
             )
             self._update_ingestion(
                 ingestion_id=ingestion_id,
                 status=IngestionStatus.FAILED,
-                inserted=0,
-                duplicates=0,
-                invalid=0,
-                corrected=0,
+                inserted=inserted_total,
+                duplicates=duplicates_total,
+                invalid=invalid_total,
+                corrected=corrected_total,
                 request_count=request_count,
                 retry_count=retry_count,
                 provider_latency_ms=provider_latency_ms,
@@ -480,17 +622,42 @@ class MarketDataService:
             )
             raise
 
-    def _validate_candles(self, candles: list[Candle]) -> list[Any]:
+    async def _ingest(
+        self,
+        ingestion_type: IngestionType,
+        symbol: str,
+        start_time: datetime,
+        end_time: datetime,
+        idempotency_key: str,
+    ) -> IngestionResult:
+        return await self._ingest_pages(
+            ingestion_type=ingestion_type,
+            symbol=symbol,
+            start_time=start_time,
+            end_time=end_time,
+            idempotency_key=idempotency_key,
+        )
+
+    def _validate_candles(
+        self,
+        candles: list[Candle],
+        *,
+        existing_hashes: set[str],
+        existing_times: set[datetime],
+        batch_seen_times: set[datetime],
+        batch_seen_hashes: dict[str, datetime],
+        clock_drift_ms: int,
+    ) -> list[Any]:
         results = []
         for candle in candles:
             ohlc_valid, ohlc_reasons = validate_candle_ohlc(
                 candle.open, candle.high, candle.low, candle.close
             )
             time_valid, time_reasons = validate_candle_times(
-                candle.time, candle.time, self._interval_seconds
+                candle.time, candle.close_time, self._interval_seconds
             )
             vol_valid, vol_reasons = validate_candle_volumes(
-                candle.volume, candle.volume, 0
+                candle.volume, candle.quote_volume, candle.trade_count
             )
             all_reasons = ohlc_reasons + time_reasons + vol_reasons
             is_valid = ohlc_valid and time_valid and vol_valid
@@ -498,26 +665,23 @@ class MarketDataService:
                 symbol_version_id=self._symbol_version_id,
                 interval_code=self._interval.value,
                 open_time=candle.time,
-                close_time=candle.time,
+                close_time=candle.close_time,
                 open_price=candle.open,
                 high_price=candle.high,
                 low_price=candle.low,
                 close_price=candle.close,
                 base_volume=candle.volume,
-                quote_volume=candle.volume,
-                trade_count=0,
+                quote_volume=candle.quote_volume,
+                trade_count=candle.trade_count,
             )
-            existing = self._get_existing_candle_by_time(candle.time)
-            is_duplicate = existing is not None
+            is_duplicate = content_hash in existing_hashes
             duplicate_conflict = False
             out_of_order = False
-            if existing is not None:
-                existing_hash = existing.get("content_hash", "")
-                if existing_hash and existing_hash != content_hash:
+            if not is_duplicate:
+                if candle.time in batch_seen_times:
+                    out_of_order = True
+                if content_hash in batch_seen_hashes:
                     duplicate_conflict = True
-            latest_time = self._get_latest_finalized_candle_time()
-            if latest_time is not None and candle.time < latest_time:
-                out_of_order = True
             quality_state, _ = assess_quality(
                 candle=candle,
                 is_duplicate=is_duplicate,
@@ -526,6 +690,7 @@ class MarketDataService:
                 invalid_reasons=all_reasons,
                 content_hash=content_hash,
                 policy=self._policy,
+                clock_drift_ms=clock_drift_ms,
             )
             results.append(
                 type("CandleValidationResult", (), {
@@ -539,6 +704,8 @@ class MarketDataService:
                     "content_hash": content_hash,
                 })
             )
+            batch_seen_times.add(candle.time)
+            batch_seen_hashes[content_hash] = candle.time
         return results
 
     def _get_latest_finalized_candle_time(self) -> datetime | None:
@@ -629,11 +796,20 @@ class MarketDataService:
                        count(*) as cnt
                 from public.candles candle
                 where candle.id = any(:ids)
+                  and candle.symbol_version_id = :symbol_version_id
+                  and candle.interval_code = :interval_code
+                  and candle.finalized = true
                 """
             ),
-            {"ids": candle_ids},
+            {
+                "ids": candle_ids,
+                "symbol_version_id": self._symbol_version_id,
+                "interval_code": self._interval.value,
+            },
         ).mappings().one()
-        return rows["min_time"], rows["max_time"], int(rows["cnt"])
+        min_time = cast(datetime, rows["min_time"])
+        max_time = cast(datetime, rows["max_time"])
+        return min_time, max_time, int(rows["cnt"])
 
     def _insert_candle(self, candle: Candle, content_hash: str) -> None:
         self._session.execute(
@@ -648,26 +824,36 @@ class MarketDataService:
                     :open_price, :high_price, :low_price, :close_price,
                     :base_volume, :quote_volume, :trade_count, true, :content_hash
                 )
-                on conflict (symbol_version_id, interval_code, open_time) do nothing
+                on conflict (symbol_version_id, interval_code, open_time) do update
+                set close_time = excluded.close_time,
+                    high_price = greatest(candles.high_price, excluded.high_price),
+                    low_price = least(candles.low_price, excluded.low_price),
+                    close_price = excluded.close_price,
+                    base_volume = candles.base_volume + excluded.base_volume,
+                    quote_volume = candles.quote_volume + excluded.quote_volume,
+                    trade_count = candles.trade_count + excluded.trade_count,
+                    content_hash = excluded.content_hash
+                where candles.content_hash <> excluded.content_hash
+                returning id
                 """
             ),
             {
                 "symbol_version_id": self._symbol_version_id,
                 "interval_code": self._interval.value,
                 "open_time": candle.time,
-                "close_time": candle.time,
+                "close_time": candle.close_time,
                 "open_price": candle.open,
                 "high_price": candle.high,
                 "low_price": candle.low,
                 "close_price": candle.close,
                 "base_volume": candle.volume,
-                "quote_volume": candle.volume,
-                "trade_count": 0,
+                "quote_volume": candle.quote_volume,
+                "trade_count": candle.trade_count,
                 "content_hash": content_hash,
             },
         )
 
-    def _create_ingestion(
+    def _get_or_create_ingestion(
         self,
         ingestion_type: IngestionType,
         start_time: datetime,
@@ -680,12 +866,15 @@ class MarketDataService:
                 insert into public.market_data_ingestions (
                     exchange_id, symbol_version_id, ingestion_type,
                     interval_code, requested_start_time, requested_end_time,
-                    status, idempotency_key, content_hash
+                    status, idempotency_key, content_hash, checkpoint
                 ) values (
                     :exchange_id, :symbol_version_id, :ingestion_type,
                     :interval_code, :start_time, :end_time, 'running',
-                    :idempotency_key, :content_hash
+                    :idempotency_key, :content_hash, :start_time
                 )
+                on conflict (exchange_id, symbol_version_id, interval_code,
+                             requested_start_time, requested_end_time, ingestion_type)
+                do update set updated_at = timezone('utc', now())
                 returning id
                 """
             ),
@@ -719,6 +908,7 @@ class MarketDataService:
         content_hash: str,
         actual_start_time: datetime | None,
         actual_end_time: datetime | None,
+        checkpoint: datetime | None = None,
     ) -> None:
         self._session.execute(
             text(
@@ -736,6 +926,7 @@ class MarketDataService:
                     content_hash = :content_hash,
                     actual_start_time = :actual_start_time,
                     actual_end_time = :actual_end_time,
+                    checkpoint = :checkpoint,
                     completed_at = case
                         when :status in ('completed', 'failed', 'cancelled')
                         then timezone('utc', now()) else null end,
@@ -757,7 +948,23 @@ class MarketDataService:
                 "content_hash": content_hash,
                 "actual_start_time": actual_start_time,
                 "actual_end_time": actual_end_time,
+                "checkpoint": checkpoint,
             },
+        )
+
+    def _update_checkpoint(
+        self, ingestion_id: UUID, checkpoint: datetime
+    ) -> None:
+        self._session.execute(
+            text(
+                """
+                update public.market_data_ingestions
+                set checkpoint = :checkpoint,
+                    updated_at = timezone('utc', now())
+                where id = :id
+                """
+            ),
+            {"id": ingestion_id, "checkpoint": checkpoint},
         )
 
     def _bulk_insert_quality_events(self, events: list[QualityEvent]) -> None:

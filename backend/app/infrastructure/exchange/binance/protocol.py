@@ -31,16 +31,39 @@ class CandleInterval(str, Enum):
 @dataclass(frozen=True, slots=True)
 class Candle:
     time: datetime
+    close_time: datetime
     open: Decimal
     high: Decimal
     low: Decimal
     close: Decimal
     volume: Decimal
+    quote_volume: Decimal
+    trade_count: int
 
     def as_sequence(
         self,
-    ) -> tuple[datetime, Decimal, Decimal, Decimal, Decimal, Decimal]:
-        return (self.time, self.open, self.high, self.low, self.close, self.volume)
+    ) -> tuple[
+        datetime,
+        datetime,
+        Decimal,
+        Decimal,
+        Decimal,
+        Decimal,
+        Decimal,
+        Decimal,
+        int,
+    ]:
+        return (
+            self.time,
+            self.close_time,
+            self.open,
+            self.high,
+            self.low,
+            self.close,
+            self.volume,
+            self.quote_volume,
+            self.trade_count,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +153,7 @@ class MarketDataProvider(Protocol):
         interval: CandleInterval,
         start_time: datetime,
         end_time: datetime,
+        server_time: datetime | None = None,
     ) -> list[Candle]: ...
 
     async def get_rate_limit_state(self) -> RateLimitState: ...

@@ -21,12 +21,14 @@ create table if not exists public.market_data_ingestions (
     request_count integer not null default 0 check (request_count >= 0),
     provider_latency_ms integer,
     safe_error text,
+    checkpoint timestamptz,
     idempotency_key text not null check (length(idempotency_key) between 1 and 200),
     content_hash text not null check (length(content_hash) = 64),
     created_at timestamptz not null default timezone('utc', now()),
     updated_at timestamptz not null default timezone('utc', now()),
     completed_at timestamptz,
-    unique (exchange_id, symbol_version_id, interval_code, requested_start_time, requested_end_time, ingestion_type)
+    unique (exchange_id, symbol_version_id, interval_code, requested_start_time, requested_end_time, ingestion_type),
+    unique (idempotency_key)
 );
 
 create table if not exists public.data_quality_events (
@@ -201,7 +203,9 @@ select snapshot.id,
 from public.market_snapshots snapshot
 join public.exchange_symbol_versions symbol on symbol.id = snapshot.symbol_version_id
 join public.exchanges exchange on exchange.id = snapshot.exchange_id
-where snapshot.state = 'active';
+where snapshot.state = 'active'
+  and snapshot.quality_outcome = 'approved'
+  and snapshot.freshness_outcome = 'fresh';
 
 create or replace view public.data_quality_event_read
 with (security_invoker = true)

@@ -122,6 +122,7 @@ class FakeBinanceProvider:
         interval: CandleInterval,
         start_time: datetime,
         end_time: datetime,
+        server_time: datetime | None = None,
     ) -> list[Candle]:
         self._check_scenario()
         if self.config.scenario == FakeBinanceScenario.MALFORMED:
@@ -163,11 +164,14 @@ class FakeBinanceProvider:
             candles.append(
                 Candle(
                     time=current,
+                    close_time=current + timedelta(minutes=interval_minutes),
                     open=open_price,
                     high=high_price,
                     low=low_price,
                     close=close_price,
                     volume=volume,
+                    quote_volume=volume * close_price,
+                    trade_count=100,
                 )
             )
             price = close_price

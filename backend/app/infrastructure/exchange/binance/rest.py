@@ -124,9 +124,12 @@ class BinanceRestProvider:
         interval: CandleInterval,
         start_time: datetime,
         end_time: datetime,
+        server_time: datetime | None = None,
     ) -> list[Candle]:
         if start_time >= end_time:
             return []
+        if server_time is None:
+            server_time = self._clock.now()
         all_candles: list[Candle] = []
         current_start = start_time
         interval_seconds = _INTERVAL_SECONDS[interval]
@@ -149,11 +152,13 @@ class BinanceRestProvider:
             )
             if not response:
                 break
-            chunk = [_parse_kline(row, interval) for row in response]
-            all_candles.extend(chunk)
-            if len(chunk) < max_candles_per_request:
+            for row in response:
+                candle = _parse_kline(row, interval)
+                if candle.close_time <= server_time:
+                    all_candles.append(candle)
+            if len(response) < max_candles_per_request:
                 break
-            last_candle = chunk[-1]
+            last_candle = _parse_kline(response[-1], interval)
             next_start = last_candle.time + timedelta(
                 seconds=interval_seconds
             )
@@ -356,13 +361,19 @@ def _parse_kline(row: list[Any], interval: CandleInterval) -> Candle:
     open_time = datetime.fromtimestamp(
         int(row[0]) / 1000.0, tz=timezone.utc
     )
+    close_time = datetime.fromtimestamp(
+        int(row[6]) / 1000.0, tz=timezone.utc
+    )
     return Candle(
         time=open_time,
+        close_time=close_time,
         open=Decimal(str(row[1])),
         high=Decimal(str(row[2])),
         low=Decimal(str(row[3])),
         close=Decimal(str(row[4])),
         volume=Decimal(str(row[5])),
+        quote_volume=Decimal(str(row[7])) if len(row) > 7 else Decimal("0"),
+        trade_count=int(row[8]) if len(row) > 8 else 0,
     )
 
 
@@ -387,3 +398,4 @@ _INTERVAL_SECONDS: dict[CandleInterval, int] = {
     CandleInterval.FOUR_HOURS: 14400,
     CandleInterval.ONE_DAY: 86400,
 }
+
