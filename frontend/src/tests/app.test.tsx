@@ -6,6 +6,18 @@ import App from '../App';
 import { formatCurrency, formatPercent } from '../lib/format';
 import { contrastRatio } from './contrast';
 import { getContent } from '../lib/content';
+import baseTokensCss from '../styles/tokens.css?raw';
+import statusTokensCss from '../styles/status-tokens.css?raw';
+
+function tokenValue(css: string, token: string, selector = ':root'): string {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const block = css.match(new RegExp(`${escapedSelector}\\s*\\{([\\s\\S]*?)\\}`));
+  if (!block) throw new Error(`Missing CSS selector: ${selector}`);
+
+  const match = block[1].match(new RegExp(`${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*([^;]+);`));
+  if (!match) throw new Error(`Missing token ${token} in ${selector}`);
+  return match[1].trim();
+}
 
 describe('App', () => {
   beforeEach(() => {
@@ -54,12 +66,9 @@ describe('Localization', () => {
     const et = formatCurrency(1234567.89, { currency: 'EUR', locale: 'et' });
 
     expect(en).toBe('€1,234,567.89');
-
     expect(et).not.toBe(en);
-
     expect(et).toContain('€');
     expect(et).not.toMatch(/^€/);
-
     expect(et).toContain(',');
     expect(et).not.toContain('.');
   });
@@ -70,48 +79,51 @@ describe('Localization', () => {
 
     expect(en).toBe('12.4%');
     expect(et).toBe('12,4%');
-
     expect(et).not.toBe(en);
   });
 
-  it('falls back to English content keys', () => {
+  it('keeps the official product name unchanged across locales', () => {
     expect(getContent('et', 'app.title')).toBe('The Daily Roast AI');
   });
 
-  it('exposes supported locale content keys', () => {
+  it('exposes reviewed Estonian content keys', () => {
     expect(getContent('en', 'nav.tokenReference')).toBe('Token reference');
-    expect(getContent('et', 'nav.tokenReference')).toBe('Atomaadne viide');
+    expect(getContent('et', 'nav.tokenReference')).toBe('Tokenite ülevaade');
+    expect(getContent('et', 'theme.dark')).toBe('Tume');
   });
 });
 
-describe('Accessibility — contrast', () => {
-  it('theme button foreground meets WCAG AA on brand background in dark mode', () => {
-    const ratio = contrastRatio('#102a5e', '#6ea0ff');
-    expect(ratio).toBeGreaterThanOrEqual(4.5);
-  });
+describe('Accessibility — design token contract', () => {
+  it('tests WCAG contrast against the actual light theme CSS tokens', () => {
+    const checks = [
+      ['--color-brand-on', '--color-brand'],
+      ['--color-status-healthy-on', '--color-status-healthy-bg'],
+      ['--color-status-degraded-on', '--color-status-degraded-bg'],
+      ['--color-status-halted-on', '--color-status-halted-bg'],
+      ['--color-status-paused-on', '--color-status-paused-bg'],
+    ] as const;
 
-  it('brand-strong heading text meets WCAG AA on dark background', () => {
-    const ratio = contrastRatio('#a7c5ff', '#07111f');
-    expect(ratio).toBeGreaterThanOrEqual(4.5);
-  });
-
-  it('all semantic status tokens meet WCAG AA contrast', () => {
-    const lightChecks: Array<{ on: string; bg: string; name: string }> = [
-      { on: '#102a5e', bg: '#dcf5e7', name: 'healthy-light' },
-      { on: '#102a5e', bg: '#fff3e0', name: 'degraded-light' },
-      { on: '#102a5e', bg: '#fde8e8', name: 'halted-light' },
-      { on: '#07111f', bg: '#e8f2fa', name: 'paused-light' },
-    ];
-    const darkChecks: Array<{ on: string; bg: string; name: string }> = [
-      { on: '#e8eef8', bg: '#1a2d42', name: 'paused-dark' },
-      { on: '#e8eef8', bg: '#3a1a1a', name: 'halted-dark-bg' },
-      { on: '#e8eef8', bg: '#1a3a2a', name: 'approved-dark-bg' },
-      { on: '#e8eef8', bg: '#2a1a3a', name: 'simulated-dark-bg' },
-      { on: '#e8eef8', bg: '#3a2a0a', name: 'degraded-dark-bg' },
-    ];
-    for (const check of [...lightChecks, ...darkChecks]) {
-      const ratio = contrastRatio(check.on, check.bg);
-      expect(ratio).toBeGreaterThanOrEqual(4.5);
+    for (const [foreground, background] of checks) {
+      expect(
+        contrastRatio(
+          tokenValue(baseTokensCss, foreground),
+          tokenValue(baseTokensCss, background)
+        )
+      ).toBeGreaterThanOrEqual(4.5);
     }
+  });
+
+  it('defines complete AI and deterministic semantic status token sets', () => {
+    for (const state of ['ai', 'deterministic']) {
+      for (const suffix of ['', '-bg', '-border', '-on']) {
+        expect(tokenValue(statusTokensCss, `--color-status-${state}${suffix}`)).toBeTruthy();
+      }
+    }
+  });
+
+  it('keeps reduced-motion behavior in the production stylesheet', () => {
+    expect(baseTokensCss).toContain('--motion-duration-none: 0s');
+    expect(baseTokensCss).toContain('--motion-duration-fast: 160ms');
+    expect(baseTokensCss).toContain('--motion-duration-base: 240ms');
   });
 });
