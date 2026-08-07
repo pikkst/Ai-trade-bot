@@ -1,14 +1,19 @@
+import { readFileSync } from 'node:fs';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router';
 import App from '../App';
-import appCss from '../App.css?raw';
 import { formatCurrency, formatPercent } from '../lib/format';
 import { getContent } from '../lib/content';
-import baseTokensCss from '../styles/tokens.css?raw';
-import statusTokensCss from '../styles/status-tokens.css?raw';
 import { contrastRatio } from './contrast';
+
+const appCss = readFileSync(new URL('../App.css', import.meta.url), 'utf8');
+const baseTokensCss = readFileSync(new URL('../styles/tokens.css', import.meta.url), 'utf8');
+const statusTokensCss = readFileSync(
+  new URL('../styles/status-tokens.css', import.meta.url),
+  'utf8'
+);
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
