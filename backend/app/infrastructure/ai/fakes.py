@@ -13,6 +13,7 @@ from app.infrastructure.ai.protocol import (
     AiUsage,
     AnalysisRequest,
     BudgetEvaluationRequest,
+    JsonValue,
     LLMEmptyResponseError,
     LLMMalformedResponseError,
     LLMRateLimitError,
@@ -70,29 +71,48 @@ class FakeGeminiProvider:
         else:
             self._clock = None
         self._request_count = 0
-        self._analyze_count = 0
+        self._analyze_counts: dict[str, int] = {}
 
     def _now(self) -> datetime:
         if self._clock is not None:
             return self._clock.now()
         return datetime.now(timezone.utc)
 
-    def _check_scenario(self) -> None:
+    def _check_scenario(self, attempt_id: str) -> None:
         self._request_count += 1
         if self.config.scenario == FakeGeminiScenario.TIMEOUT:
-            raise LLMTimeoutError("Fake Gemini timeout")
+            raise LLMTimeoutError(
+                "Fake Gemini timeout", details={"attempt_id": attempt_id}
+            )
         if self.config.scenario == FakeGeminiScenario.RATE_LIMIT:
-            raise LLMRateLimitError("Fake Gemini rate limit")
+            raise LLMRateLimitError(
+                "Fake Gemini rate limit", details={"attempt_id": attempt_id}
+            )
         if self.config.scenario == FakeGeminiScenario.REFUSAL:
-            raise LLMRefusalError("Fake Gemini refusal")
+            raise LLMRefusalError(
+                "Fake Gemini refusal", details={"attempt_id": attempt_id}
+            )
         if self.config.scenario == FakeGeminiScenario.SAFETY_BLOCK:
-            raise LLMSafetyBlockError("Fake Gemini safety block")
+            raise LLMSafetyBlockError(
+                "Fake Gemini safety block", details={"attempt_id": attempt_id}
+            )
         if self.config.scenario == FakeGeminiScenario.EMPTY_RESPONSE:
-            raise LLMEmptyResponseError("Fake Gemini empty response")
+            raise LLMEmptyResponseError(
+                "Fake Gemini empty response", details={"attempt_id": attempt_id}
+            )
         if self.config.scenario == FakeGeminiScenario.MALFORMED:
-            raise LLMMalformedResponseError("Fake Gemini malformed response")
+            raise LLMMalformedResponseError(
+                "Fake Gemini malformed response", details={"attempt_id": attempt_id}
+            )
         if self.config.scenario == FakeGeminiScenario.STALE_SOURCE:
-            raise LLMStaleSourceError("Fake Gemini stale source")
+            raise LLMStaleSourceError(
+                "Fake Gemini stale source", details={"attempt_id": attempt_id}
+            )
+
+    def _next_attempt(self, analysis_run_id: str) -> tuple[str, int]:
+        count = self._analyze_counts.get(analysis_run_id, 0) + 1
+        self._analyze_counts[analysis_run_id] = count
+        return f"{analysis_run_id}-attempt-{count:02d}", count - 1
 
     async def check_budget(self, request: BudgetEvaluationRequest) -> AiBudgetDecision:
         return AiBudgetDecision(
@@ -104,16 +124,14 @@ class FakeGeminiProvider:
         )
 
     async def analyze(self, request: AnalysisRequest) -> ProviderAnalysisResponse:
-        self._check_scenario()
-        self._analyze_count += 1
-        attempt_id = f"{request.analysis_run_id}-attempt-{self._analyze_count:02d}"
-        retry_count = self._analyze_count - 1
+        attempt_id, retry_count = self._next_attempt(request.analysis_run_id)
+        self._check_scenario(attempt_id)
 
         if self.config.scenario == FakeGeminiScenario.SUCCESS:
-            evidence_feature = (
-                request.allowed_evidence_ids[0]
+            evidence: list[JsonValue] = (
+                [{"feature": request.allowed_evidence_ids[0], "observation": "true"}]
                 if request.allowed_evidence_ids
-                else "ema_50"
+                else []
             )
             candidate = ProviderCandidate(
                 candidate_id=request.analysis_run_id,
@@ -123,7 +141,7 @@ class FakeGeminiProvider:
                     "market_regime": self.config.market_regime,
                     "recommended_action": self.config.recommended_action,
                     "confidence": str(self.config.confidence),
-                    "evidence": [{"feature": evidence_feature, "observation": "true"}],
+                    "evidence": evidence,
                     "contradictions": [],
                     "risks": ["test_risk"],
                     "missing_information": [],

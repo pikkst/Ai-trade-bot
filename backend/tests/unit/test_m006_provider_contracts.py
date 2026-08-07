@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import types
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
@@ -323,6 +323,16 @@ def test_fake_gemini_success_scenario_returns_candidate() -> None:
     assert all(f in request.allowed_evidence_ids for f in evidence_features)
 
 
+def test_fake_gemini_success_scenario_empty_evidence_ids() -> None:
+    provider = make_gemini_provider(FakeGeminiScenario.SUCCESS)
+    request = make_analysis_request()
+    request = replace(request, allowed_evidence_ids=[])
+    response = asyncio.run(provider.analyze(request))
+    assert response.candidate is not None
+    evidence = cast(list[JsonValue], response.candidate.payload.get("evidence", []))
+    assert len(evidence) == 0
+
+
 def test_fake_gemini_invalid_schema_scenario_returns_success_with_candidate() -> None:
     provider = make_gemini_provider(FakeGeminiScenario.INVALID_SCHEMA)
     request = make_analysis_request()
@@ -576,6 +586,18 @@ def test_fake_gemini_retry_creates_unique_attempt_identity() -> None:
     assert result1.attempt.attempt_id != result2.attempt.attempt_id
     assert result1.attempt.retry_count == 0
     assert result2.attempt.retry_count == 1
+
+
+def test_fake_gemini_independent_requests_get_independent_sequences() -> None:
+    provider = make_gemini_provider(FakeGeminiScenario.SUCCESS)
+    request_a = make_analysis_request(analysis_run_id="run-a")
+    request_b = make_analysis_request(analysis_run_id="run-b")
+    result_a = asyncio.run(provider.analyze(request_a))
+    result_b = asyncio.run(provider.analyze(request_b))
+    assert result_a.attempt.attempt_id == "run-a-attempt-01"
+    assert result_b.attempt.attempt_id == "run-b-attempt-01"
+    assert result_a.attempt.retry_count == 0
+    assert result_b.attempt.retry_count == 0
 
 
 def test_no_network_call_in_normal_unit_tests() -> None:
