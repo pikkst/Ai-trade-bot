@@ -63,8 +63,8 @@ class FakeGeminiConfig:
 class FakeGeminiProvider:
     _clock: Clock | None
 
-    def __init__(self, config: FakeGeminiConfig | None = None) -> None:
-        self.config = config or FakeGeminiConfig()
+    def __init__(self, config: FakeGeminiConfig) -> None:
+        self.config = config
         if self.config.fixed_clock_time is not None:
             self._clock = FixedClock(self.config.fixed_clock_time)
         else:
@@ -110,6 +110,7 @@ class FakeGeminiProvider:
                 candidate_id=request.analysis_run_id,
                 schema_version="1.0",
                 payload={
+                    "schema_version": "1.0",
                     "market_regime": self.config.market_regime,
                     "recommended_action": self.config.recommended_action,
                     "confidence": str(self.config.confidence),

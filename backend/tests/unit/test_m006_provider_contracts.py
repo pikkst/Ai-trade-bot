@@ -28,6 +28,7 @@ from app.core.clock import (
 )
 from app.infrastructure.ai.fakes import (
     FakeGeminiConfig,
+    FakeGeminiProvider,
     FakeGeminiScenario,
 )
 from app.infrastructure.ai.protocol import (
@@ -99,6 +100,18 @@ def test_fake_binance_config_requires_fixture_version() -> None:
 def test_fake_gemini_config_requires_fixture_version() -> None:
     with pytest.raises(ValueError, match="fixture_version must be non-empty"):
         FakeGeminiConfig(fixture_version="")
+
+
+def test_fake_binance_provider_requires_explicit_config() -> None:
+    config = FakeBinanceConfig(fixture_version=FIXTURE_VERSION)
+    provider = FakeBinanceProvider(config=config)
+    assert provider.config is config
+
+
+def test_fake_gemini_provider_requires_explicit_config() -> None:
+    config = FakeGeminiConfig(fixture_version=FIXTURE_VERSION)
+    provider = FakeGeminiProvider(config=config)
+    assert provider.config is config
 
 
 def test_make_binance_provider_binds_fixture_version() -> None:
@@ -299,6 +312,7 @@ def test_fake_gemini_success_scenario_returns_candidate() -> None:
     assert response.attempt.outcome == ProviderOutcome.SUCCESS
     assert response.candidate is not None
     assert response.candidate.schema_version == "1.0"
+    assert response.candidate.payload["schema_version"] == "1.0"
     assert response.candidate.payload["market_regime"] == "bullish"
     assert response.candidate.provider_code == "fake-gemini"
 
@@ -378,13 +392,6 @@ def _restore_from_dataclass_json(data: dict[str, Any], cls: Any) -> Any:
             if len(non_none) == 1:
                 return non_none[0]
             return tp
-        if hasattr(tp, "__origin__"):
-            origin = tp.__origin__
-            args = getattr(tp, "__args__", ())
-            if origin is not None and args:
-                non_none = [a for a in args if a is not type(None)]
-                if len(non_none) == 1:
-                    return non_none[0]
         return tp
 
     for name, value in data.items():
@@ -422,17 +429,29 @@ def _restore_from_dataclass_json(data: dict[str, Any], cls: Any) -> Any:
             origin = expected_type.__origin__  # type: ignore[union-attr]
             args = getattr(expected_type, "__args__", ())
             if origin is not None and args:
-                inner = _unwrap_union(args[0])
-                if is_dataclass(inner):
-                    restored_kwargs[name] = _restore_from_dataclass_json(value, inner)
-                elif isinstance(inner, type) and issubclass(inner, Decimal):
-                    restored_kwargs[name] = Decimal(str(value))
-                elif isinstance(inner, type) and issubclass(inner, datetime):
-                    restored_kwargs[name] = datetime.fromisoformat(value)
-                elif isinstance(inner, type) and issubclass(inner, Enum):
-                    restored_kwargs[name] = inner(value)
+                if origin is dict and len(args) == 2:
+                    value_type = _unwrap_union(args[1])
+                    if is_dataclass(value_type) and isinstance(value, dict):
+                        restored_kwargs[name] = {
+                            k: _restore_from_dataclass_json(v, value_type)
+                            for k, v in value.items()
+                        }
+                    else:
+                        restored_kwargs[name] = value
                 else:
-                    restored_kwargs[name] = value
+                    inner = _unwrap_union(args[0])
+                    if is_dataclass(inner):
+                        restored_kwargs[name] = _restore_from_dataclass_json(
+                            value, inner
+                        )
+                    elif isinstance(inner, type) and issubclass(inner, Decimal):
+                        restored_kwargs[name] = Decimal(str(value))
+                    elif isinstance(inner, type) and issubclass(inner, datetime):
+                        restored_kwargs[name] = datetime.fromisoformat(value)
+                    elif isinstance(inner, type) and issubclass(inner, Enum):
+                        restored_kwargs[name] = inner(value)
+                    else:
+                        restored_kwargs[name] = value
             else:
                 restored_kwargs[name] = value
         else:
@@ -455,7 +474,8 @@ def test_analysis_request_serialization_round_trip() -> None:
     assert restored.idempotency_key == request.idempotency_key
     assert restored.context.correlation_id == request.context.correlation_id
     assert restored.budget_decision.remaining_cost == Decimal("5.00")
-    assert restored.features["ema_50"] == "50000.00"
+    assert restored.features["ema_50"].value == "50000.00"
+    assert restored.features["ema_50"].unit == "USD"
     assert restored.freshness_quality is not None
     assert restored.freshness_quality.outcome == FreshnessPolicy.ACCEPTED
     assert restored.feature_calculation is not None

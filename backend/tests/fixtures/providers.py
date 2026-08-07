@@ -17,6 +17,7 @@ from app.infrastructure.ai.protocol import (
     AnalysisRequest,
     BudgetEvaluationRequest,
     FeatureCalculationReference,
+    FeatureValue,
     FreshnessPolicy,
     FreshnessQualityOutcome,
     ProviderAnalysisResponse,
@@ -24,6 +25,7 @@ from app.infrastructure.ai.protocol import (
     ProviderCandidate,
     ProviderOutcome,
     SafetySeverity,
+    TrustedSummaryReference,
 )
 from app.infrastructure.exchange.binance.fakes import (
     FakeBinanceConfig,
@@ -111,11 +113,18 @@ def make_analysis_request(
         logical_request_id="logical-001",
         idempotency_key="fixture-test-value",
         features={
-            "ema_50": "50000.00",
-            "ema_200": "49000.00",
-            "rsi_14": "55.0",
-            "atr_14": "500.00",
+            "ema_50": FeatureValue(value="50000.00", unit="USD", version="1.0"),
+            "ema_200": FeatureValue(value="49000.00", unit="USD", version="1.0"),
+            "rsi_14": FeatureValue(value="55.0", unit="index", version="1.0"),
+            "atr_14": FeatureValue(value="500.00", unit="USD", version="1.0"),
         },
+        trusted_summary_references=[
+            TrustedSummaryReference(
+                source_id="summary-001",
+                summary_type="market_context",
+                reference="summary-ref-001",
+            )
+        ],
         budget_decision=AiBudgetDecision(
             allowed=True,
             reason="Fixture budget",

@@ -114,6 +114,20 @@ class FeatureCalculationReference:
 
 
 @dataclass(frozen=True, slots=True)
+class FeatureValue:
+    value: JsonValue
+    unit: str = ""
+    version: str = "1.0"
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedSummaryReference:
+    source_id: str
+    summary_type: str
+    reference: str
+
+
+@dataclass(frozen=True, slots=True)
 class BudgetEvaluationRequest:
     analysis_run_id: str
     snapshot_id: str
@@ -142,18 +156,21 @@ class AnalysisRequest:
     interval: str
     analysis_time: datetime
     context: ExecutionContext
-    latest_candle_time: datetime | None = None
-    freshness_quality: FreshnessQualityOutcome | None = None
-    feature_calculation: FeatureCalculationReference | None = None
+    latest_candle_time: datetime
+    freshness_quality: FreshnessQualityOutcome
+    feature_calculation: FeatureCalculationReference
+    logical_request_id: str
+    idempotency_key: str
     allowed_evidence_ids: list[str] = field(default_factory=list)
     prompt_version: str = "1.0"
     schema_version: str = "1.0"
     safety_version: str = "1.0"
     validation_version: str = "1.0"
     provider_config_version: str = "1.0"
-    logical_request_id: str = ""
-    idempotency_key: str = ""
-    features: dict[str, JsonValue] = field(default_factory=dict)
+    features: dict[str, FeatureValue] = field(default_factory=dict)
+    trusted_summary_references: list[TrustedSummaryReference] = field(
+        default_factory=list
+    )
     budget_decision: AiBudgetDecision | None = None
 
 

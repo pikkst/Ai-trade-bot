@@ -60,8 +60,8 @@ class FakeBinanceConfig:
 class FakeBinanceProvider:
     _clock: Clock | None
 
-    def __init__(self, config: FakeBinanceConfig | None = None) -> None:
-        self.config = config or FakeBinanceConfig()
+    def __init__(self, config: FakeBinanceConfig) -> None:
+        self.config = config
         if self.config.fixed_clock_time is not None:
             self._clock = FixedClock(self.config.fixed_clock_time)
         else:
