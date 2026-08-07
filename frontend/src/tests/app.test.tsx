@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -8,13 +9,13 @@ import { formatCurrency, formatPercent } from '../lib/format';
 import { getContent } from '../lib/content';
 import { contrastRatio } from './contrast';
 
-const appCss = readFileSync(new URL('../App.css', import.meta.url), 'utf8');
+const appCss = readFileSync(resolve(process.cwd(), 'src/App.css'), 'utf8');
 const baseTokensCss = readFileSync(
-  new URL('../styles/tokens.css', import.meta.url),
+  resolve(process.cwd(), 'src/styles/tokens.css'),
   'utf8'
 );
 const statusTokensCss = readFileSync(
-  new URL('../styles/status-tokens.css', import.meta.url),
+  resolve(process.cwd(), 'src/styles/status-tokens.css'),
   'utf8'
 );
 
