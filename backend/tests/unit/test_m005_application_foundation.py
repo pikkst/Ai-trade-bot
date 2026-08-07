@@ -191,10 +191,7 @@ def test_context_binding_and_recursive_redaction() -> None:
         {
             "password": "hidden",
             "sessionId": "operational-id",
-            "message": (
-                "Bearer abc.def and "
-                "postgresql://u:p@example.invalid/db"
-            ),
+            "message": ("Bearer abc.def and postgresql://u:p@example.invalid/db"),
         }
     )
     assert redacted["password"] == "[REDACTED]"
@@ -295,10 +292,13 @@ def test_readiness_reports_dependency_state() -> None:
         SessionFactory(ReadySession(fail=True)),
     )
 
-    assert readiness(
-        check_database=True,
-        factory=good_factory,
-    ).status == "ready"
+    assert (
+        readiness(
+            check_database=True,
+            factory=good_factory,
+        ).status
+        == "ready"
+    )
     unavailable = readiness(
         check_database=True,
         factory=bad_factory,
