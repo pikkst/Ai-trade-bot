@@ -79,6 +79,16 @@ class AppSettings(BaseModel):
             raise ValueError(
                 "GEMINI_ENABLED=true requires ALLOW_PAID_PROVIDER_USAGE=true"
             )
+        nonlocal_envs = {"free_cloud", "staging", "production"}
+        if self.environment in nonlocal_envs:
+            if "database_url" not in self.model_fields_set:
+                raise ValueError(
+                    f"{self.environment} environment requires an explicit DATABASE_URL"
+                )
+            if not self.health_database_check:
+                raise ValueError(
+                    f"{self.environment} environment requires HEALTH_DATABASE_CHECK=true"
+                )
         return self
 
     def safe_summary(self) -> dict[str, object]:

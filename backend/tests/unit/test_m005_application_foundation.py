@@ -429,3 +429,79 @@ def test_idempotency_completion_and_optimistic_concurrency() -> None:
             expected_version=1,
             values={"name": "x"},
         )
+
+
+def test_error_details_are_redacted() -> None:
+    app = FastAPI()
+    install_error_handlers(app)
+
+    @app.get("/leak")
+    def leak_endpoint() -> None:
+        raise ValidationAppError(
+            details={
+                "password": "secret",
+                "authorization": "Bearer abc123",
+                "database_url": "postgresql://user:pass@host/db",
+            }
+        )
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get("/leak")
+    assert response.status_code == 400
+    body = response.json()["error"]["details"]
+    assert body["password"] == "[REDACTED]"
+    assert body["authorization"] == "[REDACTED]"
+    assert body["database_url"] == "[REDACTED]"
+
+
+@pytest.mark.parametrize(
+    "env_name",
+    ["free_cloud", "staging", "production"],
+)
+def test_non_local_environments_require_explicit_database_url(env_name: str) -> None:
+    with pytest.raises(SettingsError, match="requires an explicit DATABASE_URL"):
+        load_settings({"APP_ENV": env_name})
+
+
+@pytest.mark.parametrize(
+    "env_name",
+    ["free_cloud", "staging", "production"],
+)
+def test_non_local_environments_require_database_readiness(env_name: str) -> None:
+    with pytest.raises(SettingsError, match="requires HEALTH_DATABASE_CHECK=true"):
+        load_settings({
+            "APP_ENV": env_name,
+            "DATABASE_URL": "postgresql://user:pass@host/db",
+        })
+
+
+def test_production_ready_returns_503_when_database_unavailable() -> None:
+    settings = load_settings({
+        "APP_ENV": "production",
+        "DATABASE_URL": "postgresql://user:pass@host/db",
+        "HEALTH_DATABASE_CHECK": "true",
+    })
+    app = create_app(settings)
+
+    class FailingSession:
+        def __enter__(self) -> FailingSession:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, _statement: object) -> None:
+            raise RuntimeError("database unavailable")
+
+    class FailingSessionFactory:
+        def __call__(self) -> FailingSession:
+            return FailingSession()
+
+    import app.main as app_main
+
+    app_main.get_session_factory = FailingSessionFactory()  # type: ignore[method-assign]
+
+    client = TestClient(app)
+    response = client.get("/health/ready")
+    assert response.status_code == 503
+    assert response.json()["checks"]["database"] == "unavailable"

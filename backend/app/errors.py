@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
+from app.observability import redact_value
 from app.request_context import current_context
 
 
@@ -79,12 +80,13 @@ class DependencyUnavailableError(AppError):
 
 def error_response(error: AppError) -> JSONResponse:
     context = current_context()
+    details = redact_value(error.details) if error.details is not None else None
     envelope = ErrorEnvelope(
         error=ErrorBody(
             code=error.code,
             message=error.public_message,
             correlation_id=context.correlation_id,
-            details=error.details,
+            details=details,
         )
     )
     return JSONResponse(status_code=error.status_code, content=envelope.model_dump())
