@@ -14,13 +14,6 @@ from app.infrastructure.ai.protocol import (
     AnalysisRequest,
     BudgetEvaluationRequest,
     JsonValue,
-    LLMEmptyResponseError,
-    LLMMalformedResponseError,
-    LLMRateLimitError,
-    LLMRefusalError,
-    LLMSafetyBlockError,
-    LLMStaleSourceError,
-    LLMTimeoutError,
     ProviderAnalysisResponse,
     ProviderAttemptResult,
     ProviderCandidate,
@@ -70,7 +63,6 @@ class FakeGeminiProvider:
             self._clock = FixedClock(self.config.fixed_clock_time)
         else:
             self._clock = None
-        self._request_count = 0
         self._analyze_counts: dict[str, int] = {}
 
     def _now(self) -> datetime:
@@ -78,41 +70,10 @@ class FakeGeminiProvider:
             return self._clock.now()
         return datetime.now(timezone.utc)
 
-    def _check_scenario(self, attempt_id: str) -> None:
-        self._request_count += 1
-        if self.config.scenario == FakeGeminiScenario.TIMEOUT:
-            raise LLMTimeoutError(
-                "Fake Gemini timeout", details={"attempt_id": attempt_id}
-            )
-        if self.config.scenario == FakeGeminiScenario.RATE_LIMIT:
-            raise LLMRateLimitError(
-                "Fake Gemini rate limit", details={"attempt_id": attempt_id}
-            )
-        if self.config.scenario == FakeGeminiScenario.REFUSAL:
-            raise LLMRefusalError(
-                "Fake Gemini refusal", details={"attempt_id": attempt_id}
-            )
-        if self.config.scenario == FakeGeminiScenario.SAFETY_BLOCK:
-            raise LLMSafetyBlockError(
-                "Fake Gemini safety block", details={"attempt_id": attempt_id}
-            )
-        if self.config.scenario == FakeGeminiScenario.EMPTY_RESPONSE:
-            raise LLMEmptyResponseError(
-                "Fake Gemini empty response", details={"attempt_id": attempt_id}
-            )
-        if self.config.scenario == FakeGeminiScenario.MALFORMED:
-            raise LLMMalformedResponseError(
-                "Fake Gemini malformed response", details={"attempt_id": attempt_id}
-            )
-        if self.config.scenario == FakeGeminiScenario.STALE_SOURCE:
-            raise LLMStaleSourceError(
-                "Fake Gemini stale source", details={"attempt_id": attempt_id}
-            )
-
-    def _next_attempt(self, analysis_run_id: str) -> tuple[str, int]:
-        count = self._analyze_counts.get(analysis_run_id, 0) + 1
-        self._analyze_counts[analysis_run_id] = count
-        return f"{analysis_run_id}-attempt-{count:02d}", count - 1
+    def _next_attempt(self, logical_request_id: str) -> tuple[str, int]:
+        count = self._analyze_counts.get(logical_request_id, 0) + 1
+        self._analyze_counts[logical_request_id] = count
+        return f"{logical_request_id}-attempt-{count:02d}", count - 1
 
     async def check_budget(self, request: BudgetEvaluationRequest) -> AiBudgetDecision:
         return AiBudgetDecision(
@@ -124,8 +85,7 @@ class FakeGeminiProvider:
         )
 
     async def analyze(self, request: AnalysisRequest) -> ProviderAnalysisResponse:
-        attempt_id, retry_count = self._next_attempt(request.analysis_run_id)
-        self._check_scenario(attempt_id)
+        attempt_id, retry_count = self._next_attempt(request.logical_request_id)
 
         if self.config.scenario == FakeGeminiScenario.SUCCESS:
             evidence: list[JsonValue] = (
@@ -205,21 +165,23 @@ class FakeGeminiProvider:
                 candidate=candidate,
             )
 
-        attempt = ProviderAttemptResult(
-            attempt_id=attempt_id,
-            provider_code="fake-gemini",
-            configured_model="fake-model",
-            outcome={
-                FakeGeminiScenario.TIMEOUT: ProviderOutcome.TIMEOUT,
-                FakeGeminiScenario.RATE_LIMIT: ProviderOutcome.RATE_LIMITED,
-                FakeGeminiScenario.REFUSAL: ProviderOutcome.REFUSAL,
-                FakeGeminiScenario.SAFETY_BLOCK: ProviderOutcome.SAFETY_BLOCKED,
-                FakeGeminiScenario.EMPTY_RESPONSE: ProviderOutcome.EMPTY_CANDIDATE,
-                FakeGeminiScenario.MALFORMED: ProviderOutcome.MALFORMED_RESPONSE,
-                FakeGeminiScenario.STALE_SOURCE: ProviderOutcome.SUCCESS,
-            }[self.config.scenario],
-            error_message="Fake error",
-            latency_ms=self.config.latency_ms,
-            retry_count=retry_count,
+        outcome = {
+            FakeGeminiScenario.TIMEOUT: ProviderOutcome.TIMEOUT,
+            FakeGeminiScenario.RATE_LIMIT: ProviderOutcome.RATE_LIMITED,
+            FakeGeminiScenario.REFUSAL: ProviderOutcome.REFUSAL,
+            FakeGeminiScenario.SAFETY_BLOCK: ProviderOutcome.SAFETY_BLOCKED,
+            FakeGeminiScenario.EMPTY_RESPONSE: ProviderOutcome.EMPTY_CANDIDATE,
+            FakeGeminiScenario.MALFORMED: ProviderOutcome.MALFORMED_RESPONSE,
+            FakeGeminiScenario.STALE_SOURCE: ProviderOutcome.SUCCESS,
+        }[self.config.scenario]
+        return ProviderAnalysisResponse(
+            attempt=ProviderAttemptResult(
+                attempt_id=attempt_id,
+                provider_code="fake-gemini",
+                configured_model="fake-model",
+                outcome=outcome,
+                error_message="Fake error",
+                latency_ms=self.config.latency_ms,
+                retry_count=retry_count,
+            )
         )
-        return ProviderAnalysisResponse(attempt=attempt)

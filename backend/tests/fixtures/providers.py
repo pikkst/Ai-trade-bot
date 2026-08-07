@@ -186,7 +186,7 @@ def make_provider_analysis_response(
 ) -> ProviderAnalysisResponse:
     if request is None:
         request = make_analysis_request()
-    if candidate is None:
+    if candidate is None and outcome == ProviderOutcome.SUCCESS:
         evidence: list[JsonValue] = (
             [{"feature": request.allowed_evidence_ids[0], "observation": "true"}]
             if request.allowed_evidence_ids
@@ -212,7 +212,7 @@ def make_provider_analysis_response(
             raw_response_reference="fixture-response-ref",
         )
     if attempt_id is None:
-        attempt_id = f"{request.analysis_run_id}-attempt-01"
+        attempt_id = f"{request.logical_request_id}-attempt-01"
     attempt = ProviderAttemptResult(
         attempt_id=attempt_id,
         provider_code="fixture-provider",

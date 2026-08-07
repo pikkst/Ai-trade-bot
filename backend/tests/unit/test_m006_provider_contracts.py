@@ -37,13 +37,6 @@ from app.infrastructure.ai.protocol import (
     BudgetEvaluationRequest,
     FreshnessPolicy,
     JsonValue,
-    LLMEmptyResponseError,
-    LLMMalformedResponseError,
-    LLMRateLimitError,
-    LLMRefusalError,
-    LLMSafetyBlockError,
-    LLMStaleSourceError,
-    LLMTimeoutError,
     ProviderAnalysisResponse,
     ProviderAttemptResult,
     ProviderCandidate,
@@ -347,50 +340,78 @@ def test_fake_gemini_invalid_schema_scenario_returns_success_with_candidate() ->
 def test_fake_gemini_timeout_scenario() -> None:
     provider = make_gemini_provider(FakeGeminiScenario.TIMEOUT)
     request = make_analysis_request()
-    with pytest.raises(LLMTimeoutError):
-        asyncio.run(provider.analyze(request))
+    response = asyncio.run(provider.analyze(request))
+    assert isinstance(response, ProviderAnalysisResponse)
+    assert response.attempt.outcome == ProviderOutcome.TIMEOUT
+    assert response.attempt.attempt_id.endswith("-attempt-01")
+    assert response.attempt.retry_count == 0
+    assert response.candidate is None
 
 
 def test_fake_gemini_rate_limit_scenario() -> None:
     provider = make_gemini_provider(FakeGeminiScenario.RATE_LIMIT)
     request = make_analysis_request()
-    with pytest.raises(LLMRateLimitError):
-        asyncio.run(provider.analyze(request))
+    response = asyncio.run(provider.analyze(request))
+    assert isinstance(response, ProviderAnalysisResponse)
+    assert response.attempt.outcome == ProviderOutcome.RATE_LIMITED
+    assert response.attempt.attempt_id.endswith("-attempt-01")
+    assert response.attempt.retry_count == 0
+    assert response.candidate is None
 
 
 def test_fake_gemini_refusal_scenario() -> None:
     provider = make_gemini_provider(FakeGeminiScenario.REFUSAL)
     request = make_analysis_request()
-    with pytest.raises(LLMRefusalError):
-        asyncio.run(provider.analyze(request))
+    response = asyncio.run(provider.analyze(request))
+    assert isinstance(response, ProviderAnalysisResponse)
+    assert response.attempt.outcome == ProviderOutcome.REFUSAL
+    assert response.attempt.attempt_id.endswith("-attempt-01")
+    assert response.attempt.retry_count == 0
+    assert response.candidate is None
 
 
 def test_fake_gemini_safety_block_scenario() -> None:
     provider = make_gemini_provider(FakeGeminiScenario.SAFETY_BLOCK)
     request = make_analysis_request()
-    with pytest.raises(LLMSafetyBlockError):
-        asyncio.run(provider.analyze(request))
+    response = asyncio.run(provider.analyze(request))
+    assert isinstance(response, ProviderAnalysisResponse)
+    assert response.attempt.outcome == ProviderOutcome.SAFETY_BLOCKED
+    assert response.attempt.attempt_id.endswith("-attempt-01")
+    assert response.attempt.retry_count == 0
+    assert response.candidate is None
 
 
 def test_fake_gemini_empty_response_scenario() -> None:
     provider = make_gemini_provider(FakeGeminiScenario.EMPTY_RESPONSE)
     request = make_analysis_request()
-    with pytest.raises(LLMEmptyResponseError):
-        asyncio.run(provider.analyze(request))
+    response = asyncio.run(provider.analyze(request))
+    assert isinstance(response, ProviderAnalysisResponse)
+    assert response.attempt.outcome == ProviderOutcome.EMPTY_CANDIDATE
+    assert response.attempt.attempt_id.endswith("-attempt-01")
+    assert response.attempt.retry_count == 0
+    assert response.candidate is None
 
 
 def test_fake_gemini_malformed_scenario() -> None:
     provider = make_gemini_provider(FakeGeminiScenario.MALFORMED)
     request = make_analysis_request()
-    with pytest.raises(LLMMalformedResponseError):
-        asyncio.run(provider.analyze(request))
+    response = asyncio.run(provider.analyze(request))
+    assert isinstance(response, ProviderAnalysisResponse)
+    assert response.attempt.outcome == ProviderOutcome.MALFORMED_RESPONSE
+    assert response.attempt.attempt_id.endswith("-attempt-01")
+    assert response.attempt.retry_count == 0
+    assert response.candidate is None
 
 
 def test_fake_gemini_stale_source_scenario() -> None:
     provider = make_gemini_provider(FakeGeminiScenario.STALE_SOURCE)
     request = make_analysis_request()
-    with pytest.raises(LLMStaleSourceError):
-        asyncio.run(provider.analyze(request))
+    response = asyncio.run(provider.analyze(request))
+    assert isinstance(response, ProviderAnalysisResponse)
+    assert response.attempt.outcome == ProviderOutcome.SUCCESS
+    assert response.attempt.attempt_id.endswith("-attempt-01")
+    assert response.attempt.retry_count == 0
+    assert response.candidate is None
 
 
 def _dataclass_to_json(obj: Any) -> str:
@@ -590,14 +611,28 @@ def test_fake_gemini_retry_creates_unique_attempt_identity() -> None:
 
 def test_fake_gemini_independent_requests_get_independent_sequences() -> None:
     provider = make_gemini_provider(FakeGeminiScenario.SUCCESS)
-    request_a = make_analysis_request(analysis_run_id="run-a")
-    request_b = make_analysis_request(analysis_run_id="run-b")
+    request_a = make_analysis_request()
+    request_b = replace(request_a, logical_request_id="logical-b")
     result_a = asyncio.run(provider.analyze(request_a))
     result_b = asyncio.run(provider.analyze(request_b))
-    assert result_a.attempt.attempt_id == "run-a-attempt-01"
-    assert result_b.attempt.attempt_id == "run-b-attempt-01"
+    assert result_a.attempt.attempt_id == "logical-001-attempt-01"
+    assert result_b.attempt.attempt_id == "logical-b-attempt-01"
     assert result_a.attempt.retry_count == 0
     assert result_b.attempt.retry_count == 0
+
+
+def test_fake_gemini_failure_preserves_attempt_metadata() -> None:
+    provider = make_gemini_provider(FakeGeminiScenario.TIMEOUT)
+    request = make_analysis_request()
+    response = asyncio.run(provider.analyze(request))
+    assert isinstance(response, ProviderAnalysisResponse)
+    assert response.attempt.outcome == ProviderOutcome.TIMEOUT
+    assert response.attempt.attempt_id == "logical-001-attempt-01"
+    assert response.attempt.retry_count == 0
+    assert response.attempt.provider_code == "fake-gemini"
+    assert response.attempt.configured_model == "fake-model"
+    assert response.attempt.error_message == "Fake error"
+    assert response.candidate is None
 
 
 def test_no_network_call_in_normal_unit_tests() -> None:
