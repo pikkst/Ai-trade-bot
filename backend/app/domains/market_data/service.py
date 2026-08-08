@@ -43,6 +43,31 @@ from app.transaction_guard import assert_network_call_allowed
 
 logger = logging.getLogger(__name__)
 
+# Explicit terminal transition map: blocker event type -> allowed terminal
+# (resolution) type. Only these transitions are legal; anything else fails
+# closed. Duplicate_conflict, provider_unavailable, rate_limited, and other
+# blocker types NOT listed here are non-resolvable and can never be cleared by
+# a terminal child.
+_TERMINAL_TRANSITIONS: dict[str, set[str]] = {
+    QualityState.GAP_DETECTED.value: {QualityState.GAP_REPAIRED.value},
+    QualityState.GAP_UNRESOLVED.value: {QualityState.GAP_REPAIRED.value},
+    QualityState.CORRECTION_PENDING.value: {QualityState.CORRECTION_APPLIED.value},
+    QualityState.CLOCK_DRIFT_EXCEEDED.value: {QualityState.CLOCK_DRIFT_RECOVERED.value},
+    # A valid replacement candle at the same open time resolves invalid
+    # evidence; correction_applied is the documented terminal for it.
+    QualityState.INVALID_VALUE.value: {QualityState.CORRECTION_APPLIED.value},
+    QualityState.INVALID_INTERVAL.value: {QualityState.CORRECTION_APPLIED.value},
+}
+
+# Terminal event types permitted in the structured supersedes child role.
+_TERMINAL_EVENT_TYPES = frozenset(
+    {
+        QualityState.GAP_REPAIRED.value,
+        QualityState.CORRECTION_APPLIED.value,
+        QualityState.CLOCK_DRIFT_RECOVERED.value,
+    }
+)
+
 _DEFAULT_BACKFILL_MAX_RANGE_DAYS = 30
 _DEFAULT_INCREMENTAL_MAX_RANGE_HOURS = 2
 _DEFAULT_INCREMENTAL_OVERLAP_HOURS = 1
@@ -94,24 +119,37 @@ class MarketDataService:
     def _validate_symbol_binding(self, symbol: str) -> None:
         """Reject a requested symbol that is not the configured symbol version.
 
-        The service hashes/persists every returned candle under
-        self._symbol_version_id, so the provider must fetch exactly that
-        native symbol or the canonical market identity would be corrupted.
+        Canonical candle identity includes exchange + symbol-version +
+        interval + open time. This requires the resolved symbol version to
+        match BOTH the configured symbol_version_id AND the configured
+        exchange, so provider data can never be attributed to a symbol version
+        owned by a different exchange.
         """
-        native_symbol = self._session.execute(
-            text(
-                """
-                    select native_symbol
+        row = (
+            self._session.execute(
+                text(
+                    """
+                    select native_symbol, exchange_id
                     from public.exchange_symbol_versions
                     where id = :symbol_version_id
                     """
-            ),
-            {"symbol_version_id": self._symbol_version_id},
-        ).scalar_one_or_none()
-        if native_symbol is None:
+                ),
+                {"symbol_version_id": self._symbol_version_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
             raise ValueError(
                 f"symbol_version_id {self._symbol_version_id} does not exist"
             )
+        if cast(UUID, row["exchange_id"]) != self._exchange_id:
+            raise ValueError(
+                f"symbol_version_id {self._symbol_version_id} is owned by "
+                f"exchange {row['exchange_id']}, not configured exchange "
+                f"{self._exchange_id}"
+            )
+        native_symbol = cast(str, row["native_symbol"])
         if native_symbol.upper() != symbol.upper():
             raise ValueError(
                 f"symbol {symbol!r} does not match configured native symbol "
@@ -241,19 +279,23 @@ class MarketDataService:
         server-time call itself fails (timeout/429/5xx).
 
         The ingestion range cannot be derived without exchange time, so a
-        provisional clock-aligned range is recorded; the FAILED status and
-        safe_error make it auditable evidence of the failed attempt rather
-        than an empty success.
+        provisional clock-aligned range is recorded. The attempt uses the
+        dedicated PREFLIGHT_FAILURE ingestion type and a derived delivery key
+        so it can never collide with, or rewrite, a canonical completed
+        incremental/backfill ingestion row: completed evidence stays
+        byte-for-byte immutable while this failure is separately auditable.
         """
         provisional_end = self._align_to_interval(self._clock.now())
         provisional_start = self._align_to_interval(
             provisional_end - timedelta(hours=self._incremental_max_range_hours)
         )
         ingestion_id = self._get_or_create_ingestion(
-            ingestion_type=IngestionType.INCREMENTAL,
+            ingestion_type=IngestionType.PREFLIGHT_FAILURE,
             start_time=provisional_start,
             end_time=provisional_end,
-            idempotency_key=idempotency_key,
+            idempotency_key=(
+                f"{idempotency_key}-preflight-failure-{provisional_end.isoformat()}"
+            ),
         )
         retry_count = max(0, getattr(self._provider, "retry_count", 0) - retry_before)
         self._update_ingestion(
@@ -340,10 +382,17 @@ class MarketDataService:
                 "detect_gaps requires explicit expected_start and expected_end "
                 "boundaries; completeness must never be inferred from existing data"
             )
+        expected_start, expected_end = self._validate_gap_bounds(
+            expected_start, expected_end
+        )
         existing_times = self._get_existing_candle_times()
         all_expected: list[datetime] = []
         current = expected_start
-        while current <= expected_end:
+        # Half-open range convention [expected_start, expected_end): an open
+        # time is expected when start <= open < end, matching the ingestion
+        # contract so a persisted ingestion's requested end never creates a
+        # false tail gap.
+        while current < expected_end:
             all_expected.append(current)
             current += timedelta(seconds=self._interval_seconds)
         if not all_expected:
@@ -379,6 +428,78 @@ class MarketDataService:
             missing=missing,
         )
 
+    def _validate_gap_bounds(
+        self, expected_start: datetime, expected_end: datetime
+    ) -> tuple[datetime, datetime]:
+        """Validate the half-open gap range [start, end).
+
+        Rejects inverted/zero ranges, requires timezone-aware UTC, and requires
+        interval-aligned boundaries so the expected open-time sequence is
+        deterministic.
+        """
+        if expected_start.tzinfo is None or expected_end.tzinfo is None:
+            raise ValueError("Gap bounds must be timezone-aware UTC")
+        expected_start = expected_start.astimezone(timezone.utc)
+        expected_end = expected_end.astimezone(timezone.utc)
+        if expected_start >= expected_end:
+            raise ValueError(
+                "Gap range requires expected_start < expected_end; "
+                f"got [{expected_start.isoformat()}, {expected_end.isoformat()})"
+            )
+        if expected_start != self._align_to_interval(expected_start):
+            raise ValueError(
+                "Gap expected_start must be aligned to an interval boundary"
+            )
+        if expected_end != self._align_to_interval(expected_end):
+            raise ValueError("Gap expected_end must be aligned to an interval boundary")
+        return expected_start, expected_end
+
+    def _validate_gap_report(self, gap_report: GapReport) -> None:
+        """Validate a caller-supplied GapReport before any repair work.
+
+        Rejects a foreign symbol/interval, mismatched interval_seconds,
+        unaligned/inverted bounds, and a missing_count that disagrees with the
+        reported missing ranges. A foreign or internally inconsistent report
+        must never drive this service's provider fetches or be certified
+        COMPLETED against the service's configured identity.
+        """
+        if gap_report.symbol_version_id != self._symbol_version_id:
+            raise ValueError("GapReport symbol_version_id does not match service scope")
+        if gap_report.interval_code != self._interval.value:
+            raise ValueError("GapReport interval_code does not match service scope")
+        if gap_report.interval_seconds != self._interval_seconds:
+            raise ValueError(
+                "GapReport interval_seconds does not match service interval"
+            )
+        self._validate_gap_bounds(gap_report.expected_start, gap_report.expected_end)
+        if gap_report.missing_count == 0:
+            if gap_report.missing_ranges:
+                raise ValueError(
+                    "GapReport missing_count=0 but missing_ranges is non-empty"
+                )
+            return
+        if not gap_report.missing_ranges:
+            raise ValueError("GapReport missing_count > 0 but missing_ranges is empty")
+        covered_count = 0
+        for range_start, range_end in gap_report.missing_ranges:
+            if range_start < gap_report.expected_start or range_end > (
+                gap_report.expected_end
+            ):
+                raise ValueError("GapReport missing range exceeds expected bounds")
+            if range_end <= range_start:
+                raise ValueError("GapReport missing range is not ordered")
+            if range_start != self._align_to_interval(range_start) or (
+                range_end != self._align_to_interval(range_end)
+            ):
+                raise ValueError("GapReport missing range is not interval-aligned")
+            covered_count += int(
+                (range_end - range_start).total_seconds() // gap_report.interval_seconds
+            )
+        if covered_count != gap_report.missing_count:
+            raise ValueError(
+                "GapReport missing_count disagrees with missing range widths"
+            )
+
     def _build_missing_report(
         self,
         symbol_version_id: UUID,
@@ -387,6 +508,8 @@ class MarketDataService:
         expected_end: datetime,
         missing: list[datetime],
     ) -> GapReport:
+        # Missing ranges are half-open [range_start, range_end) so repair_gaps
+        # can feed them straight into the half-open ingestion contract.
         missing_ranges: list[tuple[datetime, datetime]] = []
         range_start = missing[0]
         range_end = missing[0]
@@ -394,10 +517,14 @@ class MarketDataService:
             if t == range_end + timedelta(seconds=self._interval_seconds):
                 range_end = t
             else:
-                missing_ranges.append((range_start, range_end))
+                missing_ranges.append(
+                    (range_start, range_end + timedelta(seconds=self._interval_seconds))
+                )
                 range_start = t
                 range_end = t
-        missing_ranges.append((range_start, range_end))
+        missing_ranges.append(
+            (range_start, range_end + timedelta(seconds=self._interval_seconds))
+        )
         return GapReport(
             symbol_version_id=symbol_version_id,
             interval_code=interval_code,
@@ -418,6 +545,11 @@ class MarketDataService:
     ) -> IngestionResult:
         assert_network_call_allowed()
         self._validate_symbol_binding(symbol)
+        # Validate the complete caller-supplied report contract BEFORE any
+        # short-circuit or provider request: a foreign or internally
+        # inconsistent GapReport must never drive this service's fetches or be
+        # certified COMPLETED against the service's configured identity.
+        self._validate_gap_report(gap_report)
         if gap_report.missing_count == 0:
             return IngestionResult(
                 ingestion_type=IngestionType.GAP_REPAIR,
@@ -451,7 +583,7 @@ class MarketDataService:
                 ingestion_type=IngestionType.GAP_REPAIR,
                 symbol=symbol,
                 start_time=range_start,
-                end_time=range_end + timedelta(seconds=self._interval_seconds),
+                end_time=range_end,
                 idempotency_key=f"{idempotency_key}-{range_start.isoformat()}",
             )
             total_inserted += result.inserted_count
@@ -734,7 +866,9 @@ class MarketDataService:
                                 when 'gap_unresolved' then 'gap_repaired'
                                 when 'correction_pending' then 'correction_applied'
                                 when 'clock_drift_exceeded' then 'clock_drift_recovered'
-                                else terminal.event_type
+                                when 'invalid_value' then 'correction_applied'
+                                when 'invalid_interval' then 'correction_applied'
+                                else null
                             end
                         )
                         and terminal.supersedes_event_id = blocker.id
@@ -798,23 +932,22 @@ class MarketDataService:
         start_time: datetime,
         end_time: datetime,
     ) -> str:
-        """Claim a session-scoped advisory lock so overlapping duplicate
-        deliveries run a single ingestion owner.
+        """Claim a session-scoped advisory lock serializing all ingestion work
+        for this market+interval.
 
-        The lock identity is exactly the canonical ingestion identity used by
-        the database conflict key (exchange, symbol version, interval,
-        requested range, ingestion type) — NOT the caller-supplied delivery
-        key — so two workers requesting the same canonical range/type with
-        different idempotency keys contend on the same lock.
+        The lock identity is the market+interval scope (exchange, symbol
+        version, interval), NOT the caller-supplied delivery key and NOT the
+        exact requested range/type. Two workers whose ranges overlap — even
+        with different types (backfill vs incremental vs gap-repair) — contend
+        on the same lock, so overlapping writes/counters/corrections can never
+        race page persistence.
 
         Returns the lock key; the caller must release it in a finally block.
         A concurrent worker that cannot acquire the lock fails closed instead
         of racing page persistence.
         """
         lock_key = (
-            f"m007:{self._exchange_id}:{self._symbol_version_id}:"
-            f"{self._interval.value}:{start_time.isoformat()}:"
-            f"{end_time.isoformat()}:{ingestion_type.value}"
+            f"m007:{self._exchange_id}:{self._symbol_version_id}:{self._interval.value}"
         )
         acquired = self._session.execute(
             text("select pg_try_advisory_lock(hashtextextended(:key, 0))"),
@@ -1157,6 +1290,28 @@ class MarketDataService:
                             )
                         )
                         continue
+                    if result.duplicate_conflict:
+                        # Batch ambiguity is rejected BEFORE correction or
+                        # duplicate acceptance: an open time that appears twice
+                        # with different content within one provider page is
+                        # invalid evidence even when one version also matches
+                        # (or could correct) an existing database candle.
+                        self._fail_on_duplicate_conflict(
+                            result=result,
+                            ingestion_id=ingestion_id,
+                            quality_events=quality_events,
+                            inserted_total=inserted_total,
+                            duplicates_total=duplicates_total,
+                            invalid_total=invalid_total,
+                            corrected_total=corrected_total,
+                            request_count=request_count,
+                            retry_count=retry_count,
+                            provider_latency_ms=provider_latency_ms,
+                            start_time=start_time,
+                            end_time=end_time,
+                            current_start=current_start,
+                            accepted_by_time=accepted_by_time,
+                        )
                     if result.is_correction:
                         page_corrected += 1
                         self._apply_correction(
@@ -1188,67 +1343,6 @@ class MarketDataService:
                         accepted_by_time[result.candle.time] = result.content_hash
                         page_duplicates += 1
                         continue
-                    if result.duplicate_conflict:
-                        # M007 treats an inconsistent duplicate as invalid
-                        # evidence: fail the affected page/ingestion instead of
-                        # letting the boundary advance past a corrupted open
-                        # time. The conflict event is scoped to the exact open
-                        # time and is an explicit snapshot-gate blocker.
-                        quality_events.append(
-                            make_quality_event(
-                                event_type=QualityState.DUPLICATE_CONFLICT.value,
-                                severity="error",
-                                symbol_version_id=self._symbol_version_id,
-                                interval_code=self._interval.value,
-                                details={
-                                    "hash": result.content_hash,
-                                    "open_time": result.candle.time.isoformat(),
-                                    "reason": "same_page_conflict",
-                                },
-                                affected_range_start=result.candle.time,
-                                affected_range_end=result.candle.time,
-                                ingestion_id=ingestion_id,
-                            )
-                        )
-                        self._bulk_insert_quality_events(quality_events)
-                        self._persist_page_evidence(
-                            ingestion_id=ingestion_id,
-                            checkpoint=current_start,
-                            inserted=inserted_total,
-                            duplicates=duplicates_total,
-                            invalid=invalid_total,
-                            corrected=corrected_total,
-                            request_count=request_count,
-                            retry_count=retry_count,
-                            accepted_by_time=accepted_by_time,
-                        )
-                        self._update_ingestion(
-                            ingestion_id=ingestion_id,
-                            status=IngestionStatus.FAILED,
-                            inserted=inserted_total,
-                            duplicates=duplicates_total,
-                            invalid=invalid_total,
-                            corrected=corrected_total,
-                            request_count=request_count,
-                            retry_count=retry_count,
-                            provider_latency_ms=provider_latency_ms,
-                            safe_error=(
-                                "duplicate_conflict: inconsistent same-open-time "
-                                "candles within one provider page"
-                            ),
-                            content_hash=self._compute_ingestion_hash(
-                                start_time, end_time, accepted_by_time
-                            ),
-                            actual_start_time=start_time,
-                            actual_end_time=end_time,
-                            checkpoint=current_start,
-                            accepted_by_time=accepted_by_time,
-                        )
-                        self._session.commit()
-                        raise BinanceProviderUnavailableError(
-                            "duplicate_conflict: inconsistent same-open-time "
-                            "candles within one provider page"
-                        )
                     if result.out_of_order:
                         quality_events.append(
                             make_quality_event(
@@ -1567,6 +1661,87 @@ class MarketDataService:
         }
         serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    def _fail_on_duplicate_conflict(
+        self,
+        result: Any,
+        ingestion_id: UUID,
+        quality_events: list[QualityEvent],
+        inserted_total: int,
+        duplicates_total: int,
+        invalid_total: int,
+        corrected_total: int,
+        request_count: int,
+        retry_count: int,
+        provider_latency_ms: int | None,
+        start_time: datetime,
+        end_time: datetime,
+        current_start: datetime,
+        accepted_by_time: dict[datetime, str],
+    ) -> None:
+        """Fail the affected page/ingestion on an inconsistent same-open-time
+        duplicate (M007 invalid evidence).
+
+        The conflict event is scoped to the exact open time and is an explicit
+        snapshot-gate blocker. This is invoked before correction or duplicate
+        acceptance so batch ambiguity can never be resolved into a correction
+        or advance the durable boundary past a corrupted open time.
+        """
+        quality_events.append(
+            make_quality_event(
+                event_type=QualityState.DUPLICATE_CONFLICT.value,
+                severity="error",
+                symbol_version_id=self._symbol_version_id,
+                interval_code=self._interval.value,
+                details={
+                    "hash": result.content_hash,
+                    "open_time": result.candle.time.isoformat(),
+                    "reason": "same_page_conflict",
+                },
+                affected_range_start=result.candle.time,
+                affected_range_end=result.candle.time,
+                ingestion_id=ingestion_id,
+            )
+        )
+        self._bulk_insert_quality_events(quality_events)
+        self._persist_page_evidence(
+            ingestion_id=ingestion_id,
+            checkpoint=current_start,
+            inserted=inserted_total,
+            duplicates=duplicates_total,
+            invalid=invalid_total,
+            corrected=corrected_total,
+            request_count=request_count,
+            retry_count=retry_count,
+            accepted_by_time=accepted_by_time,
+        )
+        self._update_ingestion(
+            ingestion_id=ingestion_id,
+            status=IngestionStatus.FAILED,
+            inserted=inserted_total,
+            duplicates=duplicates_total,
+            invalid=invalid_total,
+            corrected=corrected_total,
+            request_count=request_count,
+            retry_count=retry_count,
+            provider_latency_ms=provider_latency_ms,
+            safe_error=(
+                "duplicate_conflict: inconsistent same-open-time "
+                "candles within one provider page"
+            ),
+            content_hash=self._compute_ingestion_hash(
+                start_time, end_time, accepted_by_time
+            ),
+            actual_start_time=start_time,
+            actual_end_time=end_time,
+            checkpoint=current_start,
+            accepted_by_time=accepted_by_time,
+        )
+        self._session.commit()
+        raise BinanceProviderUnavailableError(
+            "duplicate_conflict: inconsistent same-open-time "
+            "candles within one provider page"
+        )
 
     def _apply_correction(
         self,
@@ -1964,7 +2139,7 @@ class MarketDataService:
     ) -> None:
         accepted = accepted_by_time or {}
         pairs = [[t.isoformat(), accepted[t]] for t in sorted(accepted)]
-        self._session.execute(
+        result = self._session.execute(
             text(
                 """
                 update public.market_data_ingestions
@@ -1987,6 +2162,7 @@ class MarketDataService:
                         then timezone('utc', now()) else null end,
                     updated_at = timezone('utc', now())
                 where id = :id
+                  and status <> 'completed'
                 """
             ),
             {
@@ -2007,6 +2183,10 @@ class MarketDataService:
                 "page_hashes": json.dumps(pairs),
             },
         )
+        if result.rowcount == 0:  # type: ignore[attr-defined]
+            raise RuntimeError(
+                f"refusing to mutate completed ingestion evidence {ingestion_id}"
+            )
 
     def _persist_page_evidence(
         self,
@@ -2121,13 +2301,22 @@ class MarketDataService:
         """Append terminal quality evidence (append-only resolution).
 
         M007 quality/correction evidence is append-only: historical rows are
-        never rewritten. This inserts a terminal event (e.g. gap_repaired or
-        correction_applied) scoped to the repaired range/candle, and effective
-        state is derived from the event chain rather than by mutating the
-        original evidence.
+        never rewritten. This inserts a terminal event scoped to the repaired
+        range/candle, and effective state is derived from the event chain
+        rather than by mutating the original evidence. The requested
+        (blocker event_type -> resolution) transition must be in the explicit
+        transition map; unknown or non-resolvable combinations fail closed.
         """
         if not event_types:
             return
+        for event_type in event_types:
+            allowed = _TERMINAL_TRANSITIONS.get(event_type)
+            if allowed is None or resolution not in allowed:
+                raise ValueError(
+                    f"invalid terminal transition: {event_type!r} -> {resolution!r}"
+                )
+        if resolution not in _TERMINAL_EVENT_TYPES:
+            raise ValueError(f"unknown terminal event type {resolution!r}")
         matched = (
             self._session.execute(
                 text(
@@ -2160,7 +2349,8 @@ class MarketDataService:
                       )
                       -- Idempotent terminal resolution: only emit a terminal
                       -- event when this exact blocker has not already been
-                      -- superseded by the same terminal type.
+                      -- superseded by the same terminal type (structured
+                      -- parent identity).
                       and not exists (
                           select 1
                           from public.data_quality_events terminal
@@ -2168,8 +2358,7 @@ class MarketDataService:
                                     = blocker.symbol_version_id
                             and terminal.interval_code = blocker.interval_code
                             and terminal.event_type = :resolution
-                            and terminal.details ->> 'supersedes_event_id'
-                                    = blocker.id::text
+                            and terminal.supersedes_event_id = blocker.id
                       )
                     """
                 ),

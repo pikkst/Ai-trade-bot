@@ -10,8 +10,17 @@ All notable project changes are documented here.
 
 - Additive Supabase/Alembic migration `20260808150000_m007_quality_state_governance` adding the `clock_drift_recovered` terminal vocabulary and scoping authenticated snapshot reads to workspace membership.
 - Additive Supabase/Alembic migration `20260808160000_m007_terminal_resolution_idempotency` adding the structured `supersedes_event_id` column and a partial unique index `(supersedes_event_id, event_type)` so a blocker can never be superseded twice by the same terminal type.
+- Additive Supabase/Alembic migration `20260808170000_m007_preflight_identity_backfill` adding the dedicated `preflight_failure` ingestion type, backfilling `supersedes_event_id` from legacy JSON details (with deduplication), and enforcing valid terminal transitions with a database trigger.
 
 #### Fixed
+
+- A failed incremental preflight now records its own attempt identity (dedicated `preflight_failure` ingestion type and derived delivery key) so it can never collide with, or rewrite, a canonical completed ingestion row; `_update_ingestion` also refuses to mutate completed evidence (immutability guard).
+- Same-page batch ambiguity is rejected BEFORE correction/duplicate acceptance: an open time appearing twice with different content within one provider page fails closed even when one version matches (or could correct) an existing database candle.
+- Gap ranges use one half-open convention `[start, end)` end-to-end: `detect_gaps` enumerates open times `< expected_end`, missing ranges are emitted half-open, `repair_gaps` feeds them directly into the half-open ingestion contract, and inverted/zero/non-aligned bounds are rejected.
+- `repair_gaps` validates the complete caller-supplied `GapReport` contract (symbol identity, interval, interval_seconds, ordered/aligned bounds, and missing_count agreeing with range widths) before any short-circuit or provider work.
+- Symbol binding now also binds the configured exchange: the resolved symbol version must match both `symbol_version_id` and `exchange_id`, so provider data can never be attributed to a foreign exchange's symbol version.
+- Ingestion work for a market+interval is serialized by a single advisory lock (exchange + symbol version + interval), so overlapping ranges with different types contend and cannot race writes/counters/corrections.
+- Terminal transitions are explicit and fail closed: an allowed-transition map drives both the resolver and the snapshot gate (no tautological `ELSE`), and a database trigger rejects any terminal child whose parent blocker cannot legally resolve as that terminal type.
 
 - Incremental fetch ranges are now aligned to finalized interval boundaries using trusted exchange time: a 1h fetch at a non-hour wall clock never expects a not-yet-finalized candle, and the start is floored to an interval.
 - `detect_gaps` now requires explicit `expected_start`/`expected_end` boundaries; completeness is never inferred from whatever data exists, so an empty requested range and a missing leading candle are reported as gaps.

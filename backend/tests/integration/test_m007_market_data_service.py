@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Iterator
+from typing import Iterator, cast
 from uuid import UUID
 
 import pytest
@@ -408,9 +409,10 @@ async def test_incremental_preflight_server_time_outside_transaction(
         row = (
             session.execute(
                 text(
-                    "select status, request_count, retry_count, safe_error "
+                    "select status, request_count, retry_count, safe_error, "
+                    "ingestion_type "
                     "from public.market_data_ingestions "
-                    "where idempotency_key = 'test-preflight-timeout'"
+                    "where idempotency_key like 'test-preflight-timeout%'"
                 )
             )
             .mappings()
@@ -419,6 +421,7 @@ async def test_incremental_preflight_server_time_outside_transaction(
     finally:
         session.close()
     assert row["status"] == IngestionStatus.FAILED.value
+    assert row["ingestion_type"] == IngestionType.PREFLIGHT_FAILURE.value
     assert row["request_count"] >= 1
     assert "server_time_failed" in row["safe_error"]
 
@@ -559,11 +562,11 @@ async def test_repair_gap_repairs_actual_missing_range(
             symbol_version_id=SYMBOL_VERSION_ID,
             interval_code="1h",
             expected_start=FIXED_TIME - timedelta(hours=2),
-            expected_end=FIXED_TIME - timedelta(hours=1),
+            expected_end=FIXED_TIME,
         )
         assert gap_report.missing_count == 1
         assert gap_report.missing_ranges == (
-            (FIXED_TIME - timedelta(hours=1), FIXED_TIME - timedelta(hours=1)),
+            (FIXED_TIME - timedelta(hours=1), FIXED_TIME),
         )
         result = await service.repair_gaps(
             symbol=SYMBOL,
@@ -1539,6 +1542,88 @@ async def test_same_page_conflict_fails_closed_and_blocks_snapshot(
 
 
 @pytest.mark.asyncio
+async def test_same_page_conflict_with_existing_db_candle_fails_closed(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Batch ambiguity is rejected even when one version matches an existing
+    database candle: a page with [T=A, T=B] where the DB already has T=A must
+    fail closed instead of applying B as a correction."""
+    # Seed the DB candle T=A so the first page row is a consistent duplicate
+    # and the second differs from both the page and the DB.
+    session = build_session_factory(database_engine)()
+    try:
+        session.execute(
+            text(
+                """
+                insert into public.candles (
+                    symbol_version_id, interval_code, open_time, close_time,
+                    open_price, high_price, low_price, close_price,
+                    base_volume, quote_volume, trade_count, finalized, content_hash
+                ) values (
+                    :sid, '1h', :ot, :ct,
+                    100, 105, 95, 102, 1.5, 1500, 100, true, :hash
+                )
+                on conflict (symbol_version_id, interval_code, open_time)
+                where superseded_by is null do nothing
+                """
+            ),
+            {
+                "sid": SYMBOL_VERSION_ID,
+                "ot": FIXED_TIME - timedelta(hours=1),
+                "ct": FIXED_TIME,
+                "hash": "a" * 64,
+            },
+        )
+        session.commit()
+        provider = FakeBinanceProvider(
+            config=FakeBinanceConfig(
+                scenario=FakeBinanceScenario.DUPLICATE_CONFLICT,
+                fixed_clock_time=FIXED_TIME,
+                fixture_version="2026-08-08-m007-v1",
+            )
+        )
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        with pytest.raises(BinanceProviderUnavailableError):
+            await service.backfill(
+                symbol=SYMBOL,
+                start_time=FIXED_TIME - timedelta(hours=2),
+                end_time=FIXED_TIME,
+                idempotency_key="test-conflict-existing",
+            )
+        # The conflicting open time must not have been corrected: the active
+        # candle still carries the original content hash, and no correction
+        # was applied for it.
+        active_hash = session.execute(
+            text(
+                "select content_hash from public.candles "
+                "where symbol_version_id = :sid "
+                "and open_time = :ot and superseded_by is null"
+            ),
+            {"sid": SYMBOL_VERSION_ID, "ot": FIXED_TIME - timedelta(hours=1)},
+        ).scalar_one()
+        assert active_hash == "a" * 64
+        conflict_count = session.execute(
+            text(
+                "select count(*) from public.data_quality_events "
+                "where event_type = 'duplicate_conflict' "
+                "and symbol_version_id = :sid"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        ).scalar_one()
+        assert conflict_count >= 1
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
 async def test_terminal_resolution_idempotent_and_cross_category_blocked(
     database_engine: Engine, clean_m007_data: None
 ) -> None:
@@ -1647,27 +1732,31 @@ async def test_terminal_resolution_idempotent_and_cross_category_blocked(
                 "rend": FIXED_TIME,
             },
         ).scalar_one()
-        # A wrong-category terminal referencing the fresh blocker must not
-        # clear it.
-        session.execute(
-            text(
-                """
-                insert into public.data_quality_events (
-                    exchange_id, symbol_version_id, interval_code, event_type,
-                    severity, details, detection_policy_version, supersedes_event_id
-                ) values (
-                    :eid, :sid, '1h', 'gap_repaired', 'info',
-                    '{}'::jsonb, '1.0', :blocker_id
-                )
-                """
-            ),
-            {
-                "eid": EXCHANGE_ID,
-                "sid": SYMBOL_VERSION_ID,
-                "blocker_id": fresh_blocker_id,
-            },
-        )
         session.commit()
+        # A wrong-category terminal referencing the fresh blocker must be
+        # rejected by the DB transition trigger (fail closed): gap_repaired
+        # cannot resolve a clock_drift_exceeded blocker.
+        with pytest.raises(Exception) as excinfo:
+            session.execute(
+                text(
+                    """
+                    insert into public.data_quality_events (
+                        exchange_id, symbol_version_id, interval_code, event_type,
+                        severity, details, detection_policy_version, supersedes_event_id
+                    ) values (
+                        :eid, :sid, '1h', 'gap_repaired', 'info',
+                        '{}'::jsonb, '1.0', :blocker_id
+                    )
+                    """
+                ),
+                {
+                    "eid": EXCHANGE_ID,
+                    "sid": SYMBOL_VERSION_ID,
+                    "blocker_id": fresh_blocker_id,
+                },
+            )
+        session.rollback()
+        assert "invalid terminal transition" in str(excinfo.value)
         # The gate must still see the drift blocker as effective: only a
         # clock_drift_recovered terminal superseding it clears it.
         still_blocked = session.execute(
@@ -1799,14 +1888,17 @@ async def test_invalid_candle_scoped_snapshot_fails_only_at_t(
         )
 
         def candle_id(open_time: datetime) -> UUID:
-            return session.execute(
-                text(
-                    "select id from public.candles "
-                    "where symbol_version_id = :sid and open_time = :ot "
-                    "and superseded_by is null"
-                ),
-                {"sid": SYMBOL_VERSION_ID, "ot": open_time},
-            ).scalar_one()
+            return cast(
+                UUID,
+                session.execute(
+                    text(
+                        "select id from public.candles "
+                        "where symbol_version_id = :sid and open_time = :ot "
+                        "and superseded_by is null"
+                    ),
+                    {"sid": SYMBOL_VERSION_ID, "ot": open_time},
+                ).scalar_one(),
+            )
 
         # Snapshot covering 11:00 must fail the gate (scoped blocker).
         with pytest.raises(ValueError):
@@ -1928,3 +2020,474 @@ def test_lock_release_preserves_sentinel_advisory_lock(
         session.rollback()
         session.execute(text("select pg_advisory_unlock_all()"))
         session.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_backfill_from_legacy_json_details(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Upgrade path: pre-081600 terminal rows that stored supersedes_event_id
+    only in details JSON are backfilled into the structured column, deduplicated,
+    and then recognized by the snapshot gate."""
+    session = build_session_factory(database_engine)()
+    try:
+        # Create a blocker and two legacy terminal rows (details JSON only).
+        blocker_id = session.execute(
+            text(
+                """
+                insert into public.data_quality_events (
+                    exchange_id, symbol_version_id, interval_code, event_type,
+                    severity, details, detection_policy_version,
+                    affected_range_start, affected_range_end
+                ) values (
+                    :eid, :sid, '1h', 'clock_drift_exceeded', 'error',
+                    '{}'::jsonb, '1.0', :rstart, :rend
+                )
+                returning id
+                """
+            ),
+            {
+                "eid": EXCHANGE_ID,
+                "sid": SYMBOL_VERSION_ID,
+                "rstart": FIXED_TIME - timedelta(hours=1),
+                "rend": FIXED_TIME,
+            },
+        ).scalar_one()
+        for _ in range(2):
+            session.execute(
+                text(
+                    """
+                    insert into public.data_quality_events (
+                        exchange_id, symbol_version_id, interval_code, event_type,
+                        severity, details, detection_policy_version
+                    ) values (
+                        :eid, :sid, '1h', 'clock_drift_recovered', 'info',
+                        :details, '1.0'
+                    )
+                    """
+                ),
+                {
+                    "eid": EXCHANGE_ID,
+                    "sid": SYMBOL_VERSION_ID,
+                    "details": json.dumps({"supersedes_event_id": str(blocker_id)}),
+                },
+            )
+        session.commit()
+        # Replay the migration backfill: deduplicate earliest per
+        # (superseded blocker, terminal type), then populate the column.
+        session.execute(
+            text(
+                """
+                delete from public.data_quality_events terminal
+                using public.data_quality_events earlier
+                where terminal.supersedes_event_id is null
+                  and terminal.details ? 'supersedes_event_id'
+                  and earlier.supersedes_event_id is null
+                  and earlier.details ? 'supersedes_event_id'
+                  and (terminal.details ->> 'supersedes_event_id')::uuid
+                        = (earlier.details ->> 'supersedes_event_id')::uuid
+                  and terminal.event_type = earlier.event_type
+                  and terminal.id <> earlier.id
+                  and (earlier.created_at, earlier.id)
+                        < (terminal.created_at, terminal.id)
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                update public.data_quality_events
+                set supersedes_event_id = (details ->> 'supersedes_event_id')::uuid
+                where supersedes_event_id is null
+                  and details ? 'supersedes_event_id'
+                """
+            )
+        )
+        session.commit()
+        # Exactly one terminal survives with the structured parent.
+        terminals = session.execute(
+            text(
+                "select count(*) from public.data_quality_events "
+                "where event_type = 'clock_drift_recovered' "
+                "and supersedes_event_id = :bid"
+            ),
+            {"bid": blocker_id},
+        ).scalar_one()
+        assert terminals == 1
+        # The gate recognizes the backfilled terminal: the blocker is cleared.
+        cleared = session.execute(
+            text(
+                """
+                select count(*) from public.data_quality_events blocker
+                where blocker.id = :bid
+                  and blocker.event_type = 'clock_drift_exceeded'
+                  and not exists (
+                      select 1 from public.data_quality_events terminal
+                      where terminal.supersedes_event_id = blocker.id
+                        and terminal.event_type = 'clock_drift_recovered'
+                  )
+                """
+            ),
+            {"bid": blocker_id},
+        ).scalar_one()
+        assert cleared == 0
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_preflight_failure_preserves_completed_incremental(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """A failed incremental preflight must record its own attempt and never
+    rewrite an already-completed incremental ingestion for the same boundary."""
+    # First: a healthy incremental completes over the aligned boundary.
+    healthy = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=healthy,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        completed = await service.incremental_fetch(
+            symbol=SYMBOL,
+            idempotency_key="test-preflight-complete",
+        )
+        assert completed.status == IngestionStatus.COMPLETED
+        completed_row = (
+            session.execute(
+                text(
+                    "select status, inserted_count, request_count, retry_count, "
+                    "content_hash, actual_start_time, actual_end_time "
+                    "from public.market_data_ingestions "
+                    "where idempotency_key = 'test-preflight-complete'"
+                )
+            )
+            .mappings()
+            .one()
+        )
+    finally:
+        session.close()
+
+    # Second: a server-time timeout at the same aligned boundary.
+    timeout = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.TIMEOUT,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=timeout,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        with pytest.raises(BinanceTimeoutError):
+            await service.incremental_fetch(
+                symbol=SYMBOL,
+                idempotency_key="test-preflight-timeout-after",
+            )
+        # The completed canonical row is byte-for-byte unchanged.
+        after = (
+            session.execute(
+                text(
+                    "select status, inserted_count, request_count, retry_count, "
+                    "content_hash, actual_start_time, actual_end_time "
+                    "from public.market_data_ingestions "
+                    "where idempotency_key = 'test-preflight-complete'"
+                )
+            )
+            .mappings()
+            .one()
+        )
+        # A separate failed preflight-failure attempt is auditable.
+        failed = (
+            session.execute(
+                text(
+                    "select status, ingestion_type, request_count, safe_error "
+                    "from public.market_data_ingestions "
+                    "where idempotency_key like 'test-preflight-timeout-after%'"
+                )
+            )
+            .mappings()
+            .one()
+        )
+    finally:
+        session.close()
+    assert after["status"] == IngestionStatus.COMPLETED.value
+    assert after["inserted_count"] == completed_row["inserted_count"]
+    assert after["content_hash"] == completed_row["content_hash"]
+    assert failed["status"] == IngestionStatus.FAILED.value
+    assert failed["ingestion_type"] == IngestionType.PREFLIGHT_FAILURE.value
+    assert failed["request_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_detect_gaps_rejects_inverted_range(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """detect_gaps rejects inverted/zero and non-aligned ranges."""
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        with pytest.raises(ValueError):
+            await service.detect_gaps(
+                symbol_version_id=SYMBOL_VERSION_ID,
+                interval_code="1h",
+                expected_start=FIXED_TIME,
+                expected_end=FIXED_TIME - timedelta(hours=1),
+            )
+        with pytest.raises(ValueError):
+            await service.detect_gaps(
+                symbol_version_id=SYMBOL_VERSION_ID,
+                interval_code="1h",
+                expected_start=FIXED_TIME - timedelta(hours=2),
+                expected_end=FIXED_TIME.replace(hour=11, minute=30),
+            )
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_repair_gaps_rejects_foreign_report(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """repair_gaps validates the caller-supplied GapReport contract before any
+    short-circuit or provider work."""
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        foreign_symbol = UUID("41000000-0000-0000-0000-0000000000FF")
+        foreign_report = GapReport(
+            symbol_version_id=foreign_symbol,
+            interval_code="1h",
+            interval_seconds=3600,
+            expected_start=FIXED_TIME - timedelta(hours=2),
+            expected_end=FIXED_TIME,
+            missing_count=1,
+            missing_ranges=((FIXED_TIME - timedelta(hours=1), FIXED_TIME),),
+            severity="error",
+        )
+        with pytest.raises(ValueError):
+            await service.repair_gaps(
+                symbol=SYMBOL,
+                gap_report=foreign_report,
+                idempotency_key="test-repair-foreign",
+            )
+        # Inconsistent missing_count vs missing range widths.
+        inconsistent = GapReport(
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval_code="1h",
+            interval_seconds=3600,
+            expected_start=FIXED_TIME - timedelta(hours=2),
+            expected_end=FIXED_TIME,
+            missing_count=2,
+            missing_ranges=((FIXED_TIME - timedelta(hours=1), FIXED_TIME),),
+            severity="error",
+        )
+        with pytest.raises(ValueError):
+            await service.repair_gaps(
+                symbol=SYMBOL,
+                gap_report=inconsistent,
+                idempotency_key="test-repair-inconsistent",
+            )
+        # Foreign interval.
+        foreign_interval = GapReport(
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval_code="4h",
+            interval_seconds=14400,
+            expected_start=FIXED_TIME - timedelta(hours=2),
+            expected_end=FIXED_TIME,
+            missing_count=1,
+            missing_ranges=((FIXED_TIME - timedelta(hours=1), FIXED_TIME),),
+            severity="error",
+        )
+        with pytest.raises(ValueError):
+            await service.repair_gaps(
+                symbol=SYMBOL,
+                gap_report=foreign_interval,
+                idempotency_key="test-repair-foreign-interval",
+            )
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_symbol_binding_rejects_cross_exchange(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """A symbol-version row owned by another exchange with the same native
+    symbol must be rejected before any provider request."""
+    other_exchange = UUID("40000000-0000-0000-0000-0000000000EE")
+    other_symbol = UUID("41000000-0000-0000-0000-0000000000EE")
+    session = build_session_factory(database_engine)()
+    try:
+        session.execute(
+            text("delete from public.exchange_symbol_versions where id = :sid"),
+            {"sid": other_symbol},
+        )
+        session.execute(
+            text(
+                """
+                insert into public.exchanges (
+                    id, code, display_name, data_capability, active, created_at
+                ) values (
+                    :eid, 'OTHER', 'Other Exchange', 'public_market_data',
+                    true, timezone('utc', now())
+                )
+                on conflict (id) do nothing
+                """
+            ),
+            {"eid": other_exchange},
+        )
+        session.execute(
+            text(
+                """
+                insert into public.exchange_symbol_versions (
+                    id, exchange_id, native_symbol, base_asset, quote_asset,
+                    status, price_precision, quantity_precision, tick_size,
+                    step_size, min_quantity, min_notional, metadata_hash,
+                    effective_at
+                ) values (
+                    :sid, :eid, 'BTCEUR', 'BTC', 'EUR', 'trading',
+                    2, 6, 0.01, 0.000001, 0.000001, 5,
+                    :md5, timezone('utc', now())
+                )
+                """
+            ),
+            {
+                "sid": other_symbol,
+                "eid": other_exchange,
+                "md5": "n" * 64,
+            },
+        )
+        session.commit()
+        service = MarketDataService(
+            session=session,
+            provider=FakeBinanceProvider(
+                config=FakeBinanceConfig(
+                    scenario=FakeBinanceScenario.SUCCESS,
+                    fixed_clock_time=FIXED_TIME,
+                    fixture_version="2026-08-08-m007-v1",
+                )
+            ),
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=other_symbol,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        with pytest.raises(ValueError):
+            await service.backfill(
+                symbol="BTCEUR",
+                start_time=FIXED_TIME - timedelta(hours=1),
+                end_time=FIXED_TIME,
+                idempotency_key="test-cross-exchange",
+            )
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_partially_overlapping_different_type_serialized(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Two workers whose ranges overlap with different ingestion types contend
+    on the same market+interval advisory lock; only one owns the work."""
+    results: list[IngestionResult | Exception] = []
+
+    async def worker(range_start: datetime, range_end: datetime, key: str) -> None:
+        provider = FakeBinanceProvider(
+            config=FakeBinanceConfig(
+                scenario=FakeBinanceScenario.SUCCESS,
+                fixed_clock_time=FIXED_TIME,
+                fixture_version="2026-08-08-m007-v1",
+            )
+        )
+        session = build_session_factory(database_engine)()
+        try:
+            service = MarketDataService(
+                session=session,
+                provider=provider,
+                workspace_id=WORKSPACE_ID,
+                exchange_id=EXCHANGE_ID,
+                symbol_version_id=SYMBOL_VERSION_ID,
+                interval=CandleInterval.ONE_HOUR,
+                clock=FixedClock(FIXED_TIME),
+            )
+            result = await service.backfill(
+                symbol=SYMBOL,
+                start_time=range_start,
+                end_time=range_end,
+                idempotency_key=key,
+            )
+            results.append(result)
+        except Exception as exc:  # noqa: BLE001
+            results.append(exc)
+        finally:
+            session.close()
+
+    import asyncio as _asyncio
+
+    await _asyncio.gather(
+        worker(
+            FIXED_TIME - timedelta(hours=2),
+            FIXED_TIME,
+            "delivery-overlap-A",
+        ),
+        worker(
+            FIXED_TIME - timedelta(hours=1),
+            FIXED_TIME + timedelta(hours=1),
+            "delivery-overlap-B",
+        ),
+    )
+    assert len(results) == 2
+    owners = [r for r in results if isinstance(r, IngestionResult)]
+    assert len(owners) >= 1

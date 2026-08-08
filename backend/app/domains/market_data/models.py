@@ -44,6 +44,7 @@ class IngestionType(str, Enum):
     BACKFILL = "backfill"
     INCREMENTAL = "incremental"
     GAP_REPAIR = "gap_repair"
+    PREFLIGHT_FAILURE = "preflight_failure"
 
 
 @dataclass(frozen=True, slots=True)

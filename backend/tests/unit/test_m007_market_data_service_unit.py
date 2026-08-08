@@ -44,6 +44,7 @@ class MockResult:
         self._scalars_value: list[Any] = []
         self._scalar_one_value: Any = UUID("00000000-0000-0000-0000-000000000001")
         self._scalar_one_or_none_value: Any = None
+        self.rowcount = 1
 
     def scalar_one(self) -> Any:
         return self._scalar_one_value
@@ -123,8 +124,10 @@ class MockSession:
         if "update public.candles" in sql:
             return result
         if "from public.exchange_symbol_versions" in sql:
-            result._scalar_one_value = "BTCEUR"
-            result._scalar_one_or_none_value = "BTCEUR"
+            result._one_or_none_value = {
+                "native_symbol": "BTCEUR",
+                "exchange_id": EXCHANGE_ID,
+            }
             return result
         if "from public.market_data_ingestions where id" in sql:
             result._one_or_none_value = {
@@ -1076,7 +1079,7 @@ async def test_detect_gaps_empty_range_reports_all_missing() -> None:
     report = await service.detect_gaps(
         symbol_version_id=SYMBOL_VERSION_ID,
         interval_code="1h",
-        expected_start=FIXED_TIME - timedelta(hours=1),
+        expected_start=FIXED_TIME - timedelta(hours=2),
         expected_end=FIXED_TIME,
     )
     assert report.missing_count == 2
@@ -1116,11 +1119,10 @@ async def test_detect_gaps_missing_leading_candle() -> None:
         expected_start=FIXED_TIME - timedelta(hours=1),
         expected_end=FIXED_TIME,
     )
-    # The leading candle at FIXED_TIME-1h is missing.
+    # The leading candle at FIXED_TIME-1h is missing; half-open range
+    # [FIXED_TIME-1h, FIXED_TIME).
     assert report.missing_count == 1
-    assert report.missing_ranges == (
-        (FIXED_TIME - timedelta(hours=1), FIXED_TIME - timedelta(hours=1)),
-    )
+    assert report.missing_ranges == ((FIXED_TIME - timedelta(hours=1), FIXED_TIME),)
 
 
 def test_canonicalize_candle_ids_rejects_shrink() -> None:
