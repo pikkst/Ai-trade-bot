@@ -104,9 +104,7 @@ class MockSession:
             }
             return result
         if "select candle.open_time" in sql:
-            result._scalars_value = [
-                c["open_time"] for c in self.candles.values()
-            ]
+            result._scalars_value = [c["open_time"] for c in self.candles.values()]
             return result
         return result
 
@@ -132,9 +130,7 @@ def test_incremental_overlap_from_latest() -> None:
         interval=CandleInterval.ONE_HOUR,
         clock=FixedClock(FIXED_TIME),
     )
-    session.candles[(
-        SYMBOL_VERSION_ID, "1h", FIXED_TIME - timedelta(hours=1)
-    )] = {
+    session.candles[(SYMBOL_VERSION_ID, "1h", FIXED_TIME - timedelta(hours=1))] = {
         "symbol_version_id": SYMBOL_VERSION_ID,
         "interval_code": "1h",
         "open_time": FIXED_TIME - timedelta(hours=1),
@@ -167,9 +163,9 @@ async def test_gap_detection_bounded_by_latest() -> None:
         clock=FixedClock(FIXED_TIME),
     )
     for hour in range(3):
-        session.candles[(
-            SYMBOL_VERSION_ID, "1h", FIXED_TIME - timedelta(hours=hour)
-        )] = {
+        session.candles[
+            (SYMBOL_VERSION_ID, "1h", FIXED_TIME - timedelta(hours=hour))
+        ] = {
             "symbol_version_id": SYMBOL_VERSION_ID,
             "interval_code": "1h",
             "open_time": FIXED_TIME - timedelta(hours=hour),
@@ -269,9 +265,7 @@ def test_snapshot_membership_validated() -> None:
         clock=FixedClock(FIXED_TIME),
     )
     other_svid = UUID("41000000-0000-0000-0000-000000000002")
-    session.candles[(
-        other_svid, "1h", FIXED_TIME - timedelta(hours=1)
-    )] = {
+    session.candles[(other_svid, "1h", FIXED_TIME - timedelta(hours=1))] = {
         "symbol_version_id": other_svid,
         "interval_code": "1h",
         "open_time": FIXED_TIME - timedelta(hours=1),

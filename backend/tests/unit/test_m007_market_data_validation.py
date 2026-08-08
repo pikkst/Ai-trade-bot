@@ -78,17 +78,13 @@ def test_validate_candle_times_close_not_after_open() -> None:
 
 
 def test_validate_candle_volumes_valid() -> None:
-    valid, reasons = validate_candle_volumes(
-        Decimal("1.5"), Decimal("1500.00"), 100
-    )
+    valid, reasons = validate_candle_volumes(Decimal("1.5"), Decimal("1500.00"), 100)
     assert valid is True
     assert reasons == []
 
 
 def test_validate_candle_volumes_negative() -> None:
-    valid, reasons = validate_candle_volumes(
-        Decimal("-1.0"), Decimal("1500.00"), 100
-    )
+    valid, reasons = validate_candle_volumes(Decimal("-1.0"), Decimal("1500.00"), 100)
     assert valid is False
     assert "negative_volume" in reasons
 

@@ -37,9 +37,7 @@ _BINANCE_REST_BASE = "https://api.binance.com"
 _SERVER_TIME_PATH = "/api/v3/time"
 _EXCHANGE_INFO_PATH = "/api/v3/exchangeInfo"
 _KLINES_PATH = "/api/v3/klines"
-_REQUEST_TIMEOUT = httpx.Timeout(
-    connect=10.0, read=30.0, write=10.0, pool=10.0
-)
+_REQUEST_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
 _MAX_RETRIES = 3
 _RETRY_WAIT_MULTIPLIER = 1
 _RETRY_WAIT_MIN = 1.0
@@ -82,12 +80,8 @@ class BinanceRestProvider:
         local_time = self._clock.now()
         response = await self._request("GET", _SERVER_TIME_PATH)
         server_time_ms = int(response["serverTime"])
-        server_time = datetime.fromtimestamp(
-            server_time_ms / 1000.0, tz=timezone.utc
-        )
-        drift_ms = int(
-            (server_time - local_time).total_seconds() * 1000
-        )
+        server_time = datetime.fromtimestamp(server_time_ms / 1000.0, tz=timezone.utc)
+        drift_ms = int((server_time - local_time).total_seconds() * 1000)
         self._last_server_time = server_time
         self._last_clock_drift_ms = drift_ms
         if abs(drift_ms) > _CLOCK_DRIFT_THRESHOLD_MS:
@@ -111,9 +105,7 @@ class BinanceRestProvider:
                 symbol_info = s
                 break
         if symbol_info is None:
-            raise BinanceInvalidSymbolError(
-                f"Unknown symbol {symbol}"
-            )
+            raise BinanceInvalidSymbolError(f"Unknown symbol {symbol}")
         metadata = _parse_symbol_metadata(symbol_info)
         self._symbol_metadata_cache[cache_key] = metadata
         return metadata
@@ -147,9 +139,7 @@ class BinanceRestProvider:
                 "endTime": int(chunk_end.timestamp() * 1000),
                 "limit": max_candles_per_request,
             }
-            response = await self._request(
-                "GET", _KLINES_PATH, params=params
-            )
+            response = await self._request("GET", _KLINES_PATH, params=params)
             if not response:
                 break
             for row in response:
@@ -159,9 +149,7 @@ class BinanceRestProvider:
             if len(response) < max_candles_per_request:
                 break
             last_candle = _parse_kline(response[-1], interval)
-            next_start = last_candle.time + timedelta(
-                seconds=interval_seconds
-            )
+            next_start = last_candle.time + timedelta(seconds=interval_seconds)
             if next_start <= current_start:
                 break
             current_start = next_start
@@ -212,27 +200,17 @@ class BinanceRestProvider:
         )
         async def _do_request() -> Any:
             try:
-                response = await self._client.request(
-                    method, path, params=params
-                )
+                response = await self._client.request(method, path, params=params)
                 if response.status_code == 429:
                     retry_after = response.headers.get("Retry-After")
-                    wait = (
-                        float(retry_after)
-                        if retry_after
-                        else _RETRY_WAIT_MIN
-                    )
+                    wait = float(retry_after) if retry_after else _RETRY_WAIT_MIN
                     logger.warning(
                         "binance_rate_limited",
                         extra={"path": path, "retry_after": wait},
                     )
-                    raise BinanceRateLimitError(
-                        f"Binance rate limited on {path}"
-                    )
+                    raise BinanceRateLimitError(f"Binance rate limited on {path}")
                 if response.status_code == 418:
-                    raise BinanceRateLimitError(
-                        f"Binance IP ban on {path}"
-                    )
+                    raise BinanceRateLimitError(f"Binance IP ban on {path}")
                 if response.status_code >= 500:
                     logger.error(
                         "binance_server_error",
@@ -242,8 +220,7 @@ class BinanceRestProvider:
                         },
                     )
                     raise BinanceProviderUnavailableError(
-                        "Binance server error "
-                        f"{response.status_code} on {path}"
+                        f"Binance server error {response.status_code} on {path}"
                     )
                 if response.status_code == 400:
                     logger.error(
@@ -254,8 +231,7 @@ class BinanceRestProvider:
                         },
                     )
                     raise BinanceInvalidSymbolError(
-                        "Binance bad request on "
-                        f"{path}: {response.text[:200]}"
+                        f"Binance bad request on {path}: {response.text[:200]}"
                     )
                 response.raise_for_status()
                 return response.json()
@@ -273,8 +249,7 @@ class BinanceRestProvider:
                     },
                 )
                 raise BinanceExchangeError(
-                    "Binance HTTP error "
-                    f"{exc.response.status_code} on {path}"
+                    f"Binance HTTP error {exc.response.status_code} on {path}"
                 ) from exc
             except BinanceProviderUnavailableError:
                 raise
@@ -323,25 +298,15 @@ def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
     for filter_item in raw.get("filters", []):
         filter_type = filter_item.get("filterType", "")
         if filter_type == "PRICE_FILTER":
-            tick_size = Decimal(
-                str(filter_item.get("tickSize", "0.00000001"))
-            )
+            tick_size = Decimal(str(filter_item.get("tickSize", "0.00000001")))
             price_precision = _decimal_precision(tick_size)
         elif filter_type == "LOT_SIZE":
-            step_size = Decimal(
-                str(filter_item.get("stepSize", "0.00000001"))
-            )
+            step_size = Decimal(str(filter_item.get("stepSize", "0.00000001")))
             quantity_precision = _decimal_precision(step_size)
-            min_quantity = Decimal(
-                str(filter_item.get("minQty", "0"))
-            )
-            max_quantity = Decimal(
-                str(filter_item.get("maxQty", "9000"))
-            )
+            min_quantity = Decimal(str(filter_item.get("minQty", "0")))
+            max_quantity = Decimal(str(filter_item.get("maxQty", "9000")))
         elif filter_type == "MIN_NOTIONAL":
-            min_notional = Decimal(
-                str(filter_item.get("minNotional", "0"))
-            )
+            min_notional = Decimal(str(filter_item.get("minNotional", "0")))
     return SymbolMetadata(
         symbol=raw.get("symbol", ""),
         base_asset=raw.get("baseAsset", ""),
@@ -358,12 +323,8 @@ def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
 
 
 def _parse_kline(row: list[Any], interval: CandleInterval) -> Candle:
-    open_time = datetime.fromtimestamp(
-        int(row[0]) / 1000.0, tz=timezone.utc
-    )
-    close_time = datetime.fromtimestamp(
-        int(row[6]) / 1000.0, tz=timezone.utc
-    )
+    open_time = datetime.fromtimestamp(int(row[0]) / 1000.0, tz=timezone.utc)
+    close_time = datetime.fromtimestamp(int(row[6]) / 1000.0, tz=timezone.utc)
     return Candle(
         time=open_time,
         close_time=close_time,
@@ -398,4 +359,3 @@ _INTERVAL_SECONDS: dict[CandleInterval, int] = {
     CandleInterval.FOUR_HOURS: 14400,
     CandleInterval.ONE_DAY: 86400,
 }
-

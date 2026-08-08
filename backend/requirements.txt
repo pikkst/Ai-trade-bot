@@ -221,8 +221,6 @@ typing-inspection==0.4.2
     # via
     #   fastapi
     #   pydantic
-tzdata==2026.3
-    # via psycopg
 urllib3==2.7.0
     # via requests
 uvicorn==0.52.0

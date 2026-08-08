@@ -198,13 +198,15 @@ async def test_idempotent_backfill_reuses_ingestion(database_engine: Engine) -> 
     assert result1.status == IngestionStatus.COMPLETED
     assert result2.status == IngestionStatus.COMPLETED
     candle_count = int(
-        database_engine.connect().execute(
+        database_engine.connect()
+        .execute(
             text(
                 "select count(*) from public.candles "
                 "where symbol_version_id = :sid and interval_code = '1h'"
             ),
             {"sid": SYMBOL_VERSION_ID},
-        ).scalar_one()
+        )
+        .scalar_one()
     )
     assert candle_count == result1.inserted_count
 

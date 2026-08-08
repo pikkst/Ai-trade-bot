@@ -284,9 +284,7 @@ class MarketDataService:
             total_corrected += result.corrected_count
             total_request_count += result.request_count
             total_retry_count += result.retry_count
-            provider_latency_ms = (
-                provider_latency_ms or result.provider_latency_ms
-            )
+            provider_latency_ms = provider_latency_ms or result.provider_latency_ms
         verification = await self.detect_gaps(
             symbol_version_id=self._symbol_version_id,
             interval_code=self._interval.value,
@@ -305,9 +303,7 @@ class MarketDataService:
             retry_count=total_retry_count,
             request_count=total_request_count,
             provider_latency_ms=provider_latency_ms,
-            safe_error=None
-            if verification.missing_count == 0
-            else "incomplete_repair",
+            safe_error=None if verification.missing_count == 0 else "incomplete_repair",
             content_hash=self._compute_ingestion_hash(
                 gap_report.expected_start,
                 gap_report.expected_end,
@@ -400,16 +396,20 @@ class MarketDataService:
         self._session.commit()
 
         # Load ingestion state
-        row = self._session.execute(
-            text(
-                "select status, actual_start_time, actual_end_time, checkpoint, "
-                "inserted_count, duplicate_count, invalid_count, corrected_count, "
-                "request_count, retry_count, provider_latency_ms, safe_error, "
-                "content_hash "
-                "from public.market_data_ingestions where id = :id"
-            ),
-            {"id": ingestion_id},
-        ).mappings().one_or_none()
+        row = (
+            self._session.execute(
+                text(
+                    "select status, actual_start_time, actual_end_time, checkpoint, "
+                    "inserted_count, duplicate_count, invalid_count, corrected_count, "
+                    "request_count, retry_count, provider_latency_ms, safe_error, "
+                    "content_hash "
+                    "from public.market_data_ingestions where id = :id"
+                ),
+                {"id": ingestion_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
         if row and row["status"] == IngestionStatus.COMPLETED.value:
             return IngestionResult(
                 ingestion_type=ingestion_type,
@@ -434,9 +434,7 @@ class MarketDataService:
         retry_count = row["retry_count"] if row else 0
         provider_latency_ms = row["provider_latency_ms"] if row else None
         safe_error = row["safe_error"] if row else None
-        page_size = timedelta(
-            seconds=_MAX_PAGE_CANDLES * self._interval_seconds
-        )
+        page_size = timedelta(seconds=_MAX_PAGE_CANDLES * self._interval_seconds)
         inserted_total = 0
         duplicates_total = 0
         invalid_total = 0
@@ -449,22 +447,16 @@ class MarketDataService:
             while current_start < end_time:
                 page_end = min(current_start + page_size, end_time)
                 page_start_ns = self._clock.now()
-                raw_candles = (
-                    await self._provider.get_finalized_candles(
-                        symbol=symbol,
-                        interval=self._interval,
-                        start_time=current_start,
-                        end_time=page_end,
-                        server_time=server_time,
-                    )
+                raw_candles = await self._provider.get_finalized_candles(
+                    symbol=symbol,
+                    interval=self._interval,
+                    start_time=current_start,
+                    end_time=page_end,
+                    server_time=server_time,
                 )
                 page_end_ns = self._clock.now()
-                page_latency = int(
-                    (page_end_ns - page_start_ns).total_seconds() * 1000
-                )
-                provider_latency_ms = (
-                    provider_latency_ms or page_latency
-                )
+                page_latency = int((page_end_ns - page_start_ns).total_seconds() * 1000)
+                provider_latency_ms = provider_latency_ms or page_latency
                 request_count += 1
                 if not raw_candles:
                     gap_event = make_quality_event(
@@ -639,8 +631,13 @@ class MarketDataService:
                 extra={"ingestion_id": str(ingestion_id), "error": str(exc)},
             )
             content_hash = self._compute_ingestion_hash(
-                start_time, end_time, inserted_total, duplicates_total,
-                invalid_total, corrected_total, request_count
+                start_time,
+                end_time,
+                inserted_total,
+                duplicates_total,
+                invalid_total,
+                corrected_total,
+                request_count,
             )
             self._update_ingestion(
                 ingestion_id=ingestion_id,
@@ -731,81 +728,98 @@ class MarketDataService:
                 clock_drift_ms=clock_drift_ms,
             )
             results.append(
-                type("CandleValidationResult", (), {
-                    "candle": candle,
-                    "quality_state": quality_state,
-                    "is_valid": is_valid,
-                    "is_duplicate": is_duplicate,
-                    "duplicate_conflict": duplicate_conflict,
-                    "out_of_order": out_of_order,
-                    "invalid_reasons": tuple(all_reasons),
-                    "content_hash": content_hash,
-                })
+                type(
+                    "CandleValidationResult",
+                    (),
+                    {
+                        "candle": candle,
+                        "quality_state": quality_state,
+                        "is_valid": is_valid,
+                        "is_duplicate": is_duplicate,
+                        "duplicate_conflict": duplicate_conflict,
+                        "out_of_order": out_of_order,
+                        "invalid_reasons": tuple(all_reasons),
+                        "content_hash": content_hash,
+                    },
+                )
             )
             batch_seen_times.add(candle.time)
             batch_seen_hashes[content_hash] = candle.time
         return results
 
     def _get_latest_finalized_candle_time(self) -> datetime | None:
-        row = self._session.execute(
-            text(
-                """
+        row = (
+            self._session.execute(
+                text(
+                    """
                 select max(candle.open_time) as max_time
                 from public.candles candle
                 where candle.symbol_version_id = :symbol_version_id
                   and candle.interval_code = :interval_code
                   and candle.finalized = true
                 """
-            ),
-            {
-                "symbol_version_id": self._symbol_version_id,
-                "interval_code": self._interval.value,
-            },
-        ).mappings().one_or_none()
+                ),
+                {
+                    "symbol_version_id": self._symbol_version_id,
+                    "interval_code": self._interval.value,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
         return row["max_time"] if row and row["max_time"] is not None else None
 
     def _get_existing_candle_times(self) -> set[datetime]:
-        rows = self._session.execute(
-            text(
-                """
+        rows = (
+            self._session.execute(
+                text(
+                    """
                 select candle.open_time
                 from public.candles candle
                 where candle.symbol_version_id = :symbol_version_id
                   and candle.interval_code = :interval_code
                   and candle.finalized = true
                 """
-            ),
-            {
-                "symbol_version_id": self._symbol_version_id,
-                "interval_code": self._interval.value,
-            },
-        ).scalars().all()
+                ),
+                {
+                    "symbol_version_id": self._symbol_version_id,
+                    "interval_code": self._interval.value,
+                },
+            )
+            .scalars()
+            .all()
+        )
         return set(rows)
 
     def _get_existing_candle_hashes(self) -> set[str]:
-        rows = self._session.execute(
-            text(
-                """
+        rows = (
+            self._session.execute(
+                text(
+                    """
                 select candle.content_hash
                 from public.candles candle
                 where candle.symbol_version_id = :symbol_version_id
                   and candle.interval_code = :interval_code
                   and candle.finalized = true
                 """
-            ),
-            {
-                "symbol_version_id": self._symbol_version_id,
-                "interval_code": self._interval.value,
-            },
-        ).scalars().all()
+                ),
+                {
+                    "symbol_version_id": self._symbol_version_id,
+                    "interval_code": self._interval.value,
+                },
+            )
+            .scalars()
+            .all()
+        )
         return set(rows)
 
     def _get_existing_candle_by_time(
         self, open_time: datetime
     ) -> dict[str, Any] | None:
-        row = self._session.execute(
-            text(
-                """
+        row = (
+            self._session.execute(
+                text(
+                    """
                 select id, content_hash, open_time
                 from public.candles
                 where symbol_version_id = :symbol_version_id
@@ -814,21 +828,25 @@ class MarketDataService:
                   and finalized = true
                 limit 1
                 """
-            ),
-            {
-                "symbol_version_id": self._symbol_version_id,
-                "interval_code": self._interval.value,
-                "open_time": open_time,
-            },
-        ).mappings().one_or_none()
+                ),
+                {
+                    "symbol_version_id": self._symbol_version_id,
+                    "interval_code": self._interval.value,
+                    "open_time": open_time,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
         return dict(row) if row else None
 
     def _get_snapshot_candle_range(
         self, candle_ids: list[UUID]
     ) -> tuple[datetime, datetime, int]:
-        rows = self._session.execute(
-            text(
-                """
+        rows = (
+            self._session.execute(
+                text(
+                    """
                 select min(candle.open_time) as min_time,
                        max(candle.open_time) as max_time,
                        count(*) as cnt
@@ -838,13 +856,16 @@ class MarketDataService:
                   and candle.interval_code = :interval_code
                   and candle.finalized = true
                 """
-            ),
-            {
-                "ids": candle_ids,
-                "symbol_version_id": self._symbol_version_id,
-                "interval_code": self._interval.value,
-            },
-        ).mappings().one()
+                ),
+                {
+                    "ids": candle_ids,
+                    "symbol_version_id": self._symbol_version_id,
+                    "interval_code": self._interval.value,
+                },
+            )
+            .mappings()
+            .one()
+        )
         min_time = cast(datetime, rows["min_time"])
         max_time = cast(datetime, rows["max_time"])
         return min_time, max_time, int(rows["cnt"])
@@ -990,9 +1011,7 @@ class MarketDataService:
             },
         )
 
-    def _update_checkpoint(
-        self, ingestion_id: UUID, checkpoint: datetime
-    ) -> None:
+    def _update_checkpoint(self, ingestion_id: UUID, checkpoint: datetime) -> None:
         self._session.execute(
             text(
                 """
@@ -1020,22 +1039,24 @@ class MarketDataService:
                 f":{prefix}_ingestion_id, :{prefix}_snapshot_id, "
                 f":{prefix}_reviewer_user_id, :{prefix}_detected_at)"
             )
-            params.update({
-                f"{prefix}_exchange_id": self._exchange_id,
-                f"{prefix}_symbol_version_id": event.symbol_version_id,
-                f"{prefix}_interval_code": event.interval_code,
-                f"{prefix}_event_type": event.event_type,
-                f"{prefix}_severity": event.severity,
-                f"{prefix}_details": json.dumps(event.details),
-                f"{prefix}_detection_policy_version": (
-                    event.detection_policy_version
-                ),
-                f"{prefix}_resolution": event.resolution,
-                f"{prefix}_ingestion_id": event.ingestion_id,
-                f"{prefix}_snapshot_id": event.snapshot_id,
-                f"{prefix}_reviewer_user_id": event.reviewer_user_id,
-                f"{prefix}_detected_at": datetime.now(timezone.utc),
-            })
+            params.update(
+                {
+                    f"{prefix}_exchange_id": self._exchange_id,
+                    f"{prefix}_symbol_version_id": event.symbol_version_id,
+                    f"{prefix}_interval_code": event.interval_code,
+                    f"{prefix}_event_type": event.event_type,
+                    f"{prefix}_severity": event.severity,
+                    f"{prefix}_details": json.dumps(event.details),
+                    f"{prefix}_detection_policy_version": (
+                        event.detection_policy_version
+                    ),
+                    f"{prefix}_resolution": event.resolution,
+                    f"{prefix}_ingestion_id": event.ingestion_id,
+                    f"{prefix}_snapshot_id": event.snapshot_id,
+                    f"{prefix}_reviewer_user_id": event.reviewer_user_id,
+                    f"{prefix}_detected_at": datetime.now(timezone.utc),
+                }
+            )
         sql = (
             "insert into public.data_quality_events ("
             "exchange_id, symbol_version_id, interval_code, event_type, "
@@ -1106,14 +1127,15 @@ class MarketDataService:
         for idx, candle_id in enumerate(candle_ids):
             prefix = f"c{idx}"
             values.append(
-                f"(:{prefix}_snapshot_id, :{prefix}_candle_id, "
-                f":{prefix}_sequence)"
+                f"(:{prefix}_snapshot_id, :{prefix}_candle_id, :{prefix}_sequence)"
             )
-            params.update({
-                f"{prefix}_snapshot_id": snapshot_id,
-                f"{prefix}_candle_id": candle_id,
-                f"{prefix}_sequence": idx + 1,
-            })
+            params.update(
+                {
+                    f"{prefix}_snapshot_id": snapshot_id,
+                    f"{prefix}_candle_id": candle_id,
+                    f"{prefix}_sequence": idx + 1,
+                }
+            )
         sql = (
             "insert into public.market_snapshot_candles "
             "(snapshot_id, candle_id, sequence) "
