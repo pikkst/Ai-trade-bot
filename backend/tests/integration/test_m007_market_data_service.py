@@ -47,8 +47,60 @@ def database_engine() -> Iterator[Engine]:
     engine.dispose()
 
 
+@pytest.fixture
+def clean_m007_data(database_engine: Engine) -> Iterator[None]:
+    """Remove M007 test data before each test so tests are isolated.
+
+    The service commits per page, so rows persist in the shared database
+    across tests within this module. Delete in foreign-key-safe order.
+    """
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                delete from public.market_snapshot_candles
+                where candle_id in (
+                    select id from public.candles
+                    where symbol_version_id = :sid
+                )
+                """
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text("delete from public.market_snapshots where symbol_version_id = :sid"),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text(
+                "delete from public.candle_corrections where symbol_version_id = :sid"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text(
+                "delete from public.data_quality_events where symbol_version_id = :sid"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text(
+                "delete from public.market_data_ingestions "
+                "where symbol_version_id = :sid"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text("delete from public.candles where symbol_version_id = :sid"),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+    yield
+
+
 @pytest.mark.asyncio
-async def test_backfill_inserts_candles(database_engine: Engine) -> None:
+async def test_backfill_inserts_candles(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
     provider = FakeBinanceProvider(
         config=FakeBinanceConfig(
             scenario=FakeBinanceScenario.SUCCESS,
@@ -82,7 +134,9 @@ async def test_backfill_inserts_candles(database_engine: Engine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_incremental_fetch_overlaps_latest(database_engine: Engine) -> None:
+async def test_incremental_fetch_overlaps_latest(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
     provider = FakeBinanceProvider(
         config=FakeBinanceConfig(
             scenario=FakeBinanceScenario.SUCCESS,
@@ -134,7 +188,9 @@ async def test_incremental_fetch_overlaps_latest(database_engine: Engine) -> Non
 
 
 @pytest.mark.asyncio
-async def test_detect_gaps_bounded_by_latest(database_engine: Engine) -> None:
+async def test_detect_gaps_bounded_by_latest(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
     provider = FakeBinanceProvider(
         config=FakeBinanceConfig(
             scenario=FakeBinanceScenario.SUCCESS,
@@ -170,7 +226,9 @@ async def test_detect_gaps_bounded_by_latest(database_engine: Engine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_idempotent_backfill_reuses_ingestion(database_engine: Engine) -> None:
+async def test_idempotent_backfill_reuses_ingestion(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
     provider = FakeBinanceProvider(
         config=FakeBinanceConfig(
             scenario=FakeBinanceScenario.SUCCESS,
