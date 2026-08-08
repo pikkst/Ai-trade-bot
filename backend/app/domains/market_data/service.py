@@ -1916,8 +1916,8 @@ class MarketDataService:
             "ingestion_id, snapshot_id, reviewer_user_id, detected_at, "
             "affected_candle_id, affected_range_start, affected_range_end, "
             "replacement_candle_id, invalidated_candle_id"
-            f") values {','.join(values)}"  # nosec B608
-        )  # nosec B608
+            f") values {','.join(values)}"
+        )
         self._session.execute(text(sql), params)
 
     def _resolve_quality_events(
@@ -2048,8 +2048,8 @@ class MarketDataService:
         sql = (
             "insert into public.market_snapshot_candles "
             "(snapshot_id, candle_id, sequence) "
-            f"values {','.join(values)}"  # nosec B608
-        )  # nosec B608
+            f"values {','.join(values)}"
+        )
         self._session.execute(text(sql), params)
 
     def _compute_ingestion_hash(

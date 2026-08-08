@@ -133,7 +133,7 @@ quality: format-check lint type-check test contract-test frontend-build docs-che
 all-checks: quality ## Run the local pre-push quality gate
 
 security-test: ## Run static analysis and Python dependency audit
-	cd backend && bandit -r app/ ../infrastructure/scripts/
+	cd backend && bandit -c pyproject.toml -r app/ ../infrastructure/scripts/
 	cd backend && pip-audit --requirement requirements.txt
 
 frontend-audit: ## Fail on moderate-or-higher frontend dependency findings
