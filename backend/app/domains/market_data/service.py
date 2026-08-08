@@ -518,6 +518,30 @@ class MarketDataService:
                             )
                         )
                         continue
+                    if result.is_correction:
+                        page_corrected += 1
+                        quality_events.append(
+                            make_quality_event(
+                                event_type=QualityState.CORRECTION_PENDING.value,
+                                severity="warning",
+                                symbol_version_id=self._symbol_version_id,
+                                interval_code=self._interval.value,
+                                details={
+                                    "original_hash": result.existing_hash,
+                                    "replacement_hash": result.content_hash,
+                                    "open_time": result.candle.time.isoformat(),
+                                },
+                                ingestion_id=ingestion_id,
+                            )
+                        )
+                        self._insert_candle(
+                            result.candle, result.content_hash, is_correction=True
+                        )
+                        existing_hashes.add(result.content_hash)
+                        existing_times.add(result.candle.time)
+                        batch_seen_times.add(result.candle.time)
+                        batch_seen_hashes[result.content_hash] = result.candle.time
+                        continue
                     if result.is_duplicate:
                         if result.duplicate_conflict:
                             quality_events.append(
@@ -684,6 +708,7 @@ class MarketDataService:
         clock_drift_ms: int,
     ) -> list[Any]:
         results = []
+        previous_open_time: datetime | None = None
         for candle in candles:
             ohlc_valid, ohlc_reasons = validate_candle_ohlc(
                 candle.open, candle.high, candle.low, candle.close
@@ -709,14 +734,23 @@ class MarketDataService:
                 quote_volume=candle.quote_volume,
                 trade_count=candle.trade_count,
             )
+            existing_row = self._get_existing_candle_by_time(candle.time)
             is_duplicate = content_hash in existing_hashes
+            is_correction = False
+            existing_hash = ""
             duplicate_conflict = False
             out_of_order = False
-            if not is_duplicate:
+            if existing_row and existing_row.get("content_hash") != content_hash:
+                is_correction = True
+                existing_hash = existing_row.get("content_hash", "")
+            if not is_duplicate and not is_correction:
                 if candle.time in batch_seen_times:
                     out_of_order = True
                 if content_hash in batch_seen_hashes:
                     duplicate_conflict = True
+            if previous_open_time is not None and candle.time < previous_open_time:
+                out_of_order = True
+            previous_open_time = candle.time
             quality_state, _ = assess_quality(
                 candle=candle,
                 is_duplicate=is_duplicate,
@@ -736,6 +770,8 @@ class MarketDataService:
                         "quality_state": quality_state,
                         "is_valid": is_valid,
                         "is_duplicate": is_duplicate,
+                        "is_correction": is_correction,
+                        "existing_hash": existing_hash,
                         "duplicate_conflict": duplicate_conflict,
                         "out_of_order": out_of_order,
                         "invalid_reasons": tuple(all_reasons),
@@ -870,47 +906,80 @@ class MarketDataService:
         max_time = cast(datetime, rows["max_time"])
         return min_time, max_time, int(rows["cnt"])
 
-    def _insert_candle(self, candle: Candle, content_hash: str) -> None:
-        self._session.execute(
-            text(
-                """
-                insert into public.candles (
-                    symbol_version_id, interval_code, open_time, close_time,
-                    open_price, high_price, low_price, close_price,
-                    base_volume, quote_volume, trade_count, finalized, content_hash
-                ) values (
-                    :symbol_version_id, :interval_code, :open_time, :close_time,
-                    :open_price, :high_price, :low_price, :close_price,
-                    :base_volume, :quote_volume, :trade_count, true, :content_hash
-                )
-                on conflict (symbol_version_id, interval_code, open_time) do update
-                set close_time = excluded.close_time,
-                    high_price = greatest(candles.high_price, excluded.high_price),
-                    low_price = least(candles.low_price, excluded.low_price),
-                    close_price = excluded.close_price,
-                    base_volume = candles.base_volume + excluded.base_volume,
-                    quote_volume = candles.quote_volume + excluded.quote_volume,
-                    trade_count = candles.trade_count + excluded.trade_count,
-                    content_hash = excluded.content_hash
-                where candles.content_hash <> excluded.content_hash
-                returning id
-                """
-            ),
-            {
-                "symbol_version_id": self._symbol_version_id,
-                "interval_code": self._interval.value,
-                "open_time": candle.time,
-                "close_time": candle.close_time,
-                "open_price": candle.open,
-                "high_price": candle.high,
-                "low_price": candle.low,
-                "close_price": candle.close,
-                "base_volume": candle.volume,
-                "quote_volume": candle.quote_volume,
-                "trade_count": candle.trade_count,
-                "content_hash": content_hash,
-            },
-        )
+    def _insert_candle(
+        self, candle: Candle, content_hash: str, is_correction: bool = False
+    ) -> None:
+        if is_correction:
+            self._session.execute(
+                text(
+                    """
+                    insert into public.candles (
+                        symbol_version_id, interval_code, open_time, close_time,
+                        open_price, high_price, low_price, close_price,
+                        base_volume, quote_volume, trade_count, finalized, content_hash
+                    ) values (
+                        :symbol_version_id, :interval_code, :open_time, :close_time,
+                        :open_price, :high_price, :low_price, :close_price,
+                        :base_volume, :quote_volume, :trade_count, true, :content_hash
+                    )
+                    on conflict (symbol_version_id, interval_code, open_time) do update
+                    set close_time = excluded.close_time,
+                        high_price = excluded.high_price,
+                        low_price = excluded.low_price,
+                        close_price = excluded.close_price,
+                        base_volume = excluded.base_volume,
+                        quote_volume = excluded.quote_volume,
+                        trade_count = excluded.trade_count,
+                        content_hash = excluded.content_hash
+                    where candles.content_hash <> excluded.content_hash
+                    """
+                ),
+                {
+                    "symbol_version_id": self._symbol_version_id,
+                    "interval_code": self._interval.value,
+                    "open_time": candle.time,
+                    "close_time": candle.close_time,
+                    "open_price": candle.open,
+                    "high_price": candle.high,
+                    "low_price": candle.low,
+                    "close_price": candle.close,
+                    "base_volume": candle.volume,
+                    "quote_volume": candle.quote_volume,
+                    "trade_count": candle.trade_count,
+                    "content_hash": content_hash,
+                },
+            )
+        else:
+            self._session.execute(
+                text(
+                    """
+                    insert into public.candles (
+                        symbol_version_id, interval_code, open_time, close_time,
+                        open_price, high_price, low_price, close_price,
+                        base_volume, quote_volume, trade_count, finalized, content_hash
+                    ) values (
+                        :symbol_version_id, :interval_code, :open_time, :close_time,
+                        :open_price, :high_price, :low_price, :close_price,
+                        :base_volume, :quote_volume, :trade_count, true, :content_hash
+                    )
+                    on conflict (symbol_version_id, interval_code, open_time) do nothing
+                    """
+                ),
+                {
+                    "symbol_version_id": self._symbol_version_id,
+                    "interval_code": self._interval.value,
+                    "open_time": candle.time,
+                    "close_time": candle.close_time,
+                    "open_price": candle.open,
+                    "high_price": candle.high,
+                    "low_price": candle.low,
+                    "close_price": candle.close,
+                    "base_volume": candle.volume,
+                    "quote_volume": candle.quote_volume,
+                    "trade_count": candle.trade_count,
+                    "content_hash": content_hash,
+                },
+            )
 
     def _get_or_create_ingestion(
         self,
