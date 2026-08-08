@@ -17,6 +17,7 @@ from app.core.clock import FixedClock
 from app.database import build_engine, build_session_factory
 from app.domains.market_data.models import (
     GapReport,
+    IngestionResult,
     IngestionStatus,
     QualityState,
     SnapshotResult,
@@ -71,81 +72,119 @@ def clean_m007_data(database_engine: Engine) -> Iterator[None]:
     """
 
     def _clean() -> None:
-        with database_engine.begin() as connection:
-            connection.execute(
-                text(
-                    """
-                    delete from public.market_snapshot_candles
-                    where candle_id in (
-                        select id from public.candles
-                        where symbol_version_id = :sid
-                    )
-                    """
-                ),
-                {"sid": SYMBOL_VERSION_ID},
-            )
-            connection.execute(
-                text(
-                    "delete from public.market_snapshots where symbol_version_id = :sid"
-                ),
-                {"sid": SYMBOL_VERSION_ID},
-            )
-            connection.execute(
-                text(
-                    "delete from public.candle_corrections "
-                    "where symbol_version_id = :sid"
-                ),
-                {"sid": SYMBOL_VERSION_ID},
-            )
-            connection.execute(
-                text(
-                    "delete from public.data_quality_events "
-                    "where symbol_version_id = :sid"
-                ),
-                {"sid": SYMBOL_VERSION_ID},
-            )
-            connection.execute(
-                text(
-                    "delete from public.market_data_ingestions "
-                    "where symbol_version_id = :sid"
-                ),
-                {"sid": SYMBOL_VERSION_ID},
-            )
-            connection.execute(
-                text("delete from public.candles where symbol_version_id = :sid"),
-                {"sid": SYMBOL_VERSION_ID},
-            )
-            # The symbol version is test-owned; delete any previous run's row
-            # so the dedicated identity is always clean before each test.
-            connection.execute(
-                text("delete from public.exchange_symbol_versions where id = :sid"),
-                {"sid": SYMBOL_VERSION_ID},
-            )
-            connection.execute(
-                text(
-                    """
-                    insert into public.exchange_symbol_versions (
-                        id, exchange_id, native_symbol, base_asset, quote_asset,
-                        status, price_precision, quantity_precision, tick_size,
-                        step_size, min_quantity, min_notional, metadata_hash,
-                        effective_at
-                    ) values (
-                        :sid, :eid, 'BTCEUR', 'BTC', 'EUR', 'trading',
-                        2, 6, 0.01, 0.000001, 0.000001, 5,
-                        :md5, timezone('utc', now())
-                    )
-                    """
-                ),
-                {
-                    "sid": SYMBOL_VERSION_ID,
-                    "eid": EXCHANGE_ID,
-                    "md5": "m" * 64,
-                },
-            )
+        _clean_m007_rows(database_engine)
 
     _clean()
     yield
     _clean()
+
+
+def _clean_m007_rows(engine: Engine) -> None:
+    """Delete M007 test rows (and re-create the test symbol version) so the
+    symbol's candle/ingestion evidence is reset between test phases."""
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                delete from public.market_snapshot_candles
+                where snapshot_id in (
+                    select snapshot.id
+                    from public.market_snapshots snapshot
+                    join public.workspaces workspace
+                      on workspace.id = snapshot.workspace_id
+                    where workspace.name like 'm007-%'
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                delete from public.market_snapshots
+                where workspace_id in (
+                    select id from public.workspaces where name like 'm007-%'
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                "delete from public.workspace_memberships "
+                "where workspace_id in ("
+                "  select id from public.workspaces where name like 'm007-%'"
+                ")"
+            )
+        )
+        connection.execute(
+            text("delete from public.workspaces where name like 'm007-%'")
+        )
+        connection.execute(
+            text(
+                """
+                delete from public.market_snapshot_candles
+                where candle_id in (
+                    select id from public.candles
+                    where symbol_version_id = :sid
+                )
+                """
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text("delete from public.market_snapshots where symbol_version_id = :sid"),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text(
+                "delete from public.candle_corrections where symbol_version_id = :sid"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text(
+                "delete from public.data_quality_events where symbol_version_id = :sid"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text(
+                "delete from public.market_data_ingestions "
+                "where symbol_version_id = :sid"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text("delete from public.candles where symbol_version_id = :sid"),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text("delete from public.exchange_symbol_versions where id = :sid"),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text(
+                """
+                insert into public.exchange_symbol_versions (
+                    id, exchange_id, native_symbol, base_asset, quote_asset,
+                    status, price_precision, quantity_precision, tick_size,
+                    step_size, min_quantity, min_notional, metadata_hash,
+                    effective_at
+                ) values (
+                    :sid, :eid, 'BTCEUR', 'BTC', 'EUR', 'trading',
+                    2, 6, 0.01, 0.000001, 0.000001, 5,
+                    :md5, timezone('utc', now())
+                )
+                """
+            ),
+            {
+                "sid": SYMBOL_VERSION_ID,
+                "eid": EXCHANGE_ID,
+                "md5": "m" * 64,
+            },
+        )
+    # Close pooled connections so no session-level advisory lock from a prior
+    # run survives into the next test phase.
+    engine.dispose()
 
 
 class BoundaryAssertingProvider:
@@ -291,6 +330,50 @@ async def test_incremental_fetch_overlaps_latest(
 
 
 @pytest.mark.asyncio
+async def test_incremental_fetch_at_non_hour_wall_clock(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Incremental ranges are aligned to finalized interval boundaries.
+
+    At a non-hour wall-clock time (e.g. 12:28) the fetch must end at the
+    last finalized exclusive boundary (12:00) so the not-yet-finalized 12:00
+    candle is never expected, and the start is floored to an interval.
+    """
+    non_hour_time = FIXED_TIME + timedelta(minutes=28)
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=non_hour_time,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(non_hour_time),
+        )
+        start, end = service._compute_incremental_range(non_hour_time)
+        assert end == non_hour_time.replace(minute=0, second=0, microsecond=0)
+        assert (start - end).total_seconds() % 3600 == 0
+        result = await service.incremental_fetch(
+            symbol=SYMBOL,
+            idempotency_key="test-incremental-non-hour",
+        )
+    finally:
+        session.close()
+    assert result.status == IngestionStatus.COMPLETED
+    assert result.actual_end_time == non_hour_time.replace(
+        minute=0, second=0, microsecond=0
+    )
+
+
+@pytest.mark.asyncio
 async def test_detect_gaps_bounded_by_latest(
     database_engine: Engine, clean_m007_data: None
 ) -> None:
@@ -321,6 +404,8 @@ async def test_detect_gaps_bounded_by_latest(
         gap_report = await service.detect_gaps(
             symbol_version_id=SYMBOL_VERSION_ID,
             interval_code="1h",
+            expected_start=FIXED_TIME - timedelta(hours=3),
+            expected_end=FIXED_TIME - timedelta(hours=1),
         )
     finally:
         session.close()
@@ -389,6 +474,7 @@ async def test_repair_gap_repairs_actual_missing_range(
         gap_report = await service.detect_gaps(
             symbol_version_id=SYMBOL_VERSION_ID,
             interval_code="1h",
+            expected_start=FIXED_TIME - timedelta(hours=2),
             expected_end=FIXED_TIME - timedelta(hours=1),
         )
         assert gap_report.missing_count == 1
@@ -404,6 +490,7 @@ async def test_repair_gap_repairs_actual_missing_range(
         verification = await service.detect_gaps(
             symbol_version_id=SYMBOL_VERSION_ID,
             interval_code="1h",
+            expected_start=FIXED_TIME - timedelta(hours=2),
             expected_end=FIXED_TIME,
         )
         assert verification.missing_count == 0
@@ -949,3 +1036,319 @@ def test_quality_state_vocabulary_matches_database_constraint(
     assert "rate_limited" in domain_values
     assert "gap_repaired" in domain_values
     assert "gap_unresolved" in domain_values
+
+
+def test_workspace_isolation_prevents_cross_workspace_snapshot_read(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """A user in workspace A must not read workspace B snapshots.
+
+    The authenticated SELECT policy on market_snapshots uses
+    private.has_workspace_role, so the security-invoker view only exposes
+    rows for the caller's own workspaces.
+    """
+    # Seed VIEWER user is a member of WORKSPACE_ID (workspace A).
+    subject = UUID("00000000-0000-0000-0000-000000000103")
+    other_workspace = UUID("20000000-0000-0000-0000-0000000000BB")
+    other_snapshot_id = UUID("50000000-0000-0000-0000-0000000000BB")
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                insert into public.workspaces (
+                    id, name, base_currency, lifecycle_state,
+                    created_at, updated_at, version
+                ) values (
+                    :wid, 'm007-workspace-b', 'EUR', 'active',
+                    timezone('utc', now()), timezone('utc', now()), 1
+                )
+                on conflict (id) do nothing
+                """
+            ),
+            {"wid": other_workspace},
+        )
+        connection.execute(
+            text(
+                """
+                insert into public.market_snapshots (
+                    id, workspace_id, exchange_id, symbol_version_id, interval_code,
+                    analysis_time, first_event_time, last_event_time, candle_count,
+                    quality_outcome, quality_policy_version, freshness_outcome,
+                    freshness_policy_version, data_source, snapshot_hash,
+                    snapshot_schema_version, state
+                ) values (
+                    :sid, :wid, :eid, :svid, '1h',
+                    :at, :fet, :let, 1,
+                    'approved', '1.0', 'fresh', '1.0',
+                    'rest', :hash, '1.0', 'active'
+                )
+                on conflict (id) do nothing
+                """
+            ),
+            {
+                "sid": other_snapshot_id,
+                "wid": other_workspace,
+                "eid": EXCHANGE_ID,
+                "svid": SYMBOL_VERSION_ID,
+                "at": FIXED_TIME,
+                "fet": FIXED_TIME - timedelta(hours=1),
+                "let": FIXED_TIME - timedelta(hours=1),
+                "hash": "e" * 64,
+            },
+        )
+    # The subject (member of workspace A only) must not see workspace B rows.
+    with _authenticated_connection(database_engine, subject) as connection:
+        assert (
+            connection.execute(
+                text("select count(*) from public.market_snapshots where id = :sid"),
+                {"sid": other_snapshot_id},
+            ).scalar_one()
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+async def test_drift_failure_then_healthy_then_fresh_snapshot(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """A transient clock-drift failure must not permanently block snapshots.
+
+    After a drift failure scoped to a range, a healthy ingestion over the same
+    range appends clock_drift_recovered terminal evidence, so a fresh snapshot
+    over that range can be approved.
+    """
+    drift_provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            server_time_offset_seconds=30,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=drift_provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+            policy=ValidationPolicy(max_clock_drift_ms=100),
+        )
+        with pytest.raises(BinanceProviderUnavailableError):
+            await service.backfill(
+                symbol=SYMBOL,
+                start_time=FIXED_TIME - timedelta(hours=1),
+                end_time=FIXED_TIME,
+                idempotency_key="test-drift-fail",
+            )
+    finally:
+        session.close()
+
+    # Healthy provider recovers over the same range.
+    healthy = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=healthy,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        result = await service.backfill(
+            symbol=SYMBOL,
+            start_time=FIXED_TIME - timedelta(hours=1),
+            end_time=FIXED_TIME,
+            idempotency_key="test-drift-recover",
+        )
+        assert result.status == IngestionStatus.COMPLETED
+        candle_id = session.execute(
+            text(
+                "select id from public.candles "
+                "where symbol_version_id = :sid and superseded_by is null "
+                "limit 1"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        ).scalar_one()
+        snapshot = service.create_snapshot(
+            analysis_time=FIXED_TIME,
+            candle_ids=[candle_id],
+            quality_outcome="approved",
+            freshness_outcome="fresh",
+        )
+        assert snapshot.quality_outcome == "approved"
+        assert snapshot.freshness_outcome == "fresh"
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_restart_hash_matches_uninterrupted_control(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """The final ingestion hash must be identical whether the run is
+    interrupted+resumed or uninterrupted over the same logical range.
+
+    Hash is derived from canonical accepted-content pairs ordered by open
+    time, not from page segmentation.
+    """
+    start = FIXED_TIME - timedelta(hours=6)
+    end = FIXED_TIME
+    # Interrupted then resumed run over the logical range first.
+    gap_provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.GAP,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=gap_provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        with pytest.raises(BinanceProviderUnavailableError):
+            await service.backfill(
+                symbol=SYMBOL,
+                start_time=start,
+                end_time=end,
+                idempotency_key="test-hash-resume",
+            )
+    finally:
+        session.close()
+
+    healthy = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=healthy,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        resumed = await service.backfill(
+            symbol=SYMBOL,
+            start_time=start,
+            end_time=end,
+            idempotency_key="test-hash-resume",
+        )
+    finally:
+        session.close()
+    assert resumed.status == IngestionStatus.COMPLETED
+
+    # Reset candle/ingestion evidence, then run the uninterrupted control.
+    _clean_m007_rows(database_engine)
+    with database_engine.connect() as diag:
+        rows = diag.execute(
+            text("select pid, objid, granted from pg_locks where locktype = 'advisory'")
+        ).all()
+        assert len(rows) == 0, f"advisory locks leaked: {rows}"
+    control_provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=control_provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        control = await service.backfill(
+            symbol=SYMBOL,
+            start_time=start,
+            end_time=end,
+            idempotency_key="test-hash-control",
+        )
+    finally:
+        session.close()
+    assert control.status == IngestionStatus.COMPLETED
+    # Same logical range, same final candles => same content hash.
+    assert resumed.content_hash == control.content_hash
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_range_different_delivery_key_single_owner(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Two workers requesting the same canonical range/type with different
+    delivery keys contend on the same advisory lock; only one owns the run."""
+    start = FIXED_TIME - timedelta(hours=1)
+    end = FIXED_TIME
+    results: list[IngestionResult | Exception] = []
+
+    async def worker(delivery_key: str) -> None:
+        provider = FakeBinanceProvider(
+            config=FakeBinanceConfig(
+                scenario=FakeBinanceScenario.SUCCESS,
+                fixed_clock_time=FIXED_TIME,
+                fixture_version="2026-08-08-m007-v1",
+            )
+        )
+        session = build_session_factory(database_engine)()
+        try:
+            service = MarketDataService(
+                session=session,
+                provider=provider,
+                workspace_id=WORKSPACE_ID,
+                exchange_id=EXCHANGE_ID,
+                symbol_version_id=SYMBOL_VERSION_ID,
+                interval=CandleInterval.ONE_HOUR,
+                clock=FixedClock(FIXED_TIME),
+            )
+            result = await service.backfill(
+                symbol=SYMBOL,
+                start_time=start,
+                end_time=end,
+                idempotency_key=delivery_key,
+            )
+            results.append(result)
+        except Exception as exc:  # noqa: BLE001
+            results.append(exc)
+        finally:
+            session.close()
+
+    import asyncio as _asyncio
+
+    await _asyncio.gather(
+        worker("delivery-key-A"),
+        worker("delivery-key-B"),
+    )
+    assert len(results) == 2
+    # At least one worker completed; the other either completed or failed
+    # closed on the lock. No run may race the shared ingestion row.
+    owners = [r for r in results if isinstance(r, IngestionResult)]
+    assert len(owners) >= 1

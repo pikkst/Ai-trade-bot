@@ -44,14 +44,6 @@ select = ["E", "F", "I", "N", "W", "B", "C4", "SIM"]
 [tool.mypy]
 strict = true
 
-[tool.bandit]
-# B608 (hardcoded SQL) is a false positive here: all dynamic INSERT builders
-# assemble only parameterized VALUES clauses and bind every value through
-# SQLAlchemy text()/parameters. Skipped at config level instead of using
-# inline nosec comments, which bandit >=1.9 errors on when the finding lands
-# on a continuation line.
-skips = ["B608"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [

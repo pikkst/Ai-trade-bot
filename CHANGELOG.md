@@ -4,6 +4,29 @@ All notable project changes are documented here.
 
 ## Unreleased
 
+### M007 — Binance REST Market-Data Ingestion and Quality Controls — 2026-08-08
+
+#### Added
+
+- Additive Supabase/Alembic migration `20260808150000_m007_quality_state_governance` adding the `clock_drift_recovered` terminal vocabulary and scoping authenticated snapshot reads to workspace membership.
+
+#### Fixed
+
+- Incremental fetch ranges are now aligned to finalized interval boundaries using trusted exchange time: a 1h fetch at a non-hour wall clock never expects a not-yet-finalized candle, and the start is floored to an interval.
+- `detect_gaps` now requires explicit `expected_start`/`expected_end` boundaries; completeness is never inferred from whatever data exists, so an empty requested range and a missing leading candle are reported as gaps.
+- The advisory-lock identity now matches the database ingestion identity (exchange, symbol version, interval, requested range, ingestion type — not the caller delivery key), so two workers requesting the same canonical range/type with different idempotency keys contend on the same lock.
+- Clock-drift failures are scoped to the attempted range, and a later healthy server-time check appends `clock_drift_recovered` terminal evidence so one transient drift incident cannot block future fresh snapshots forever.
+- The ingestion content hash is now derived from canonical accepted-content pairs ordered by open time (not page segmentation or operational counters), so an interrupted+resumed run and an uninterrupted run over the same logical range produce the identical hash.
+- Quality evidence resolution is now append-only: repairing a gap or applying a correction inserts a terminal `gap_repaired`/`correction_applied` event linked to the original range/candle instead of rewriting prior evidence, and effective snapshot-gate state is derived from the event chain.
+- Retry/attempt metadata for provider page calls is captured in `try/finally`, so exhausted-timeout and rate-limit failures persist the real counters instead of pre-call values.
+- Snapshot creation is atomic: `INSERT ... ON CONFLICT (snapshot_hash) DO NOTHING RETURNING` with a follow-up lookup removes the check-then-insert race, and membership inserts are idempotent.
+- Bandit B608 suppression is narrowed to the audited parameterized SQL builders via a checked-in baseline instead of a repository-wide config skip.
+
+#### Safety
+
+- Authenticated users may only read snapshots of workspaces they belong to; cross-workspace snapshot and membership rows are invisible, verified by a negative RLS test.
+- `app_workflow` no longer holds UPDATE on `data_quality_events`, enforcing append-only quality evidence.
+
 ### M003 — Local Supabase, Auth, Migrations, and RLS — 2026-08-01
 
 #### Added

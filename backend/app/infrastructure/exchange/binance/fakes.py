@@ -138,6 +138,9 @@ class FakeBinanceProvider:
         if start_time > self._base_time:
             current = start_time
 
+        # Price is a deterministic function of absolute open time so a resumed
+        # fetch at a later checkpoint produces identical candles to a run that
+        # started earlier over the same interval.
         interval_minutes = {
             CandleInterval.ONE_MINUTE: 1,
             CandleInterval.FIVE_MINUTES: 5,
@@ -146,8 +149,9 @@ class FakeBinanceProvider:
             CandleInterval.FOUR_HOURS: 240,
             CandleInterval.ONE_DAY: 1440,
         }[interval]
+        base_epoch = int(self._base_time.timestamp())
+        step_seconds = interval_minutes * 60
 
-        price = Decimal("50000.00")
         while current + timedelta(minutes=interval_minutes) <= end_time:
             if (
                 self.config.gap_start is not None
@@ -157,8 +161,9 @@ class FakeBinanceProvider:
                 current += timedelta(minutes=interval_minutes)
                 continue
 
-            open_price = price
-            close_price = price + Decimal("100.00")
+            steps = (int(current.timestamp()) - base_epoch) // step_seconds
+            open_price = Decimal("50000.00") + Decimal(steps) * Decimal("100.00")
+            close_price = open_price + Decimal("100.00")
             high_price = max(open_price, close_price) + Decimal("50.00")
             low_price = min(open_price, close_price) - Decimal("50.00")
             volume = Decimal("1.5")
@@ -176,7 +181,6 @@ class FakeBinanceProvider:
                     trade_count=100,
                 )
             )
-            price = close_price
             current += timedelta(minutes=interval_minutes)
 
         if not candles:

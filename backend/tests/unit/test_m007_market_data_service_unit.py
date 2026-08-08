@@ -235,7 +235,7 @@ def test_incremental_overlap_from_latest() -> None:
         "content_hash": "a" * 64,
         "finalized": True,
     }
-    start, end = service._compute_incremental_range()
+    start, end = service._compute_incremental_range(FIXED_TIME)
     assert start == FIXED_TIME - timedelta(hours=2)
     assert end == FIXED_TIME
 
@@ -271,6 +271,8 @@ async def test_gap_detection_bounded_by_latest() -> None:
     report = await service.detect_gaps(
         symbol_version_id=SYMBOL_VERSION_ID,
         interval_code="1h",
+        expected_start=FIXED_TIME - timedelta(hours=2),
+        expected_end=FIXED_TIME,
     )
     assert report.missing_count == 0
     assert report.expected_end == FIXED_TIME
@@ -324,20 +326,16 @@ def test_ingestion_hash_deterministic() -> None:
     hash1 = service._compute_ingestion_hash(
         FIXED_TIME - timedelta(hours=1),
         FIXED_TIME,
-        1,
-        0,
-        0,
-        0,
-        1,
+        {
+            FIXED_TIME - timedelta(hours=1): "a" * 64,
+        },
     )
     hash2 = service._compute_ingestion_hash(
         FIXED_TIME - timedelta(hours=1),
         FIXED_TIME,
-        1,
-        0,
-        0,
-        0,
-        1,
+        {
+            FIXED_TIME - timedelta(hours=1): "a" * 64,
+        },
     )
     assert hash1 == hash2
     assert len(hash1) == 64
@@ -940,12 +938,15 @@ def test_snapshot_idempotent_replay_returns_existing(
         def __init__(self) -> None:
             super().__init__()
             self._scalar_one_or_none_value = existing_id
+            self._scalar_one_value = existing_id
 
     def fake_execute(statement: Any, params: dict[str, Any] | None = None) -> Any:
         if params is None:
             params = {}
         sql = str(statement).lower()
         if "from public.market_snapshots" in sql:
+            return ExistingSnapshotResult()
+        if "into public.market_snapshots" in sql:
             return ExistingSnapshotResult()
         return original_execute(statement, params)
 
