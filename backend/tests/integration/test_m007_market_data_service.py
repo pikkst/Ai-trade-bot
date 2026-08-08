@@ -12,7 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.core.clock import FixedClock
-from app.database import build_engine, build_session_factory, transactional_session
+from app.database import build_engine, build_session_factory
 from app.domains.market_data.models import (
     GapReport,
     IngestionStatus,
@@ -58,7 +58,8 @@ async def test_backfill_inserts_candles(database_engine: Engine) -> None:
     )
     start = FIXED_TIME - timedelta(hours=2)
     end = FIXED_TIME
-    with transactional_session(build_session_factory(database_engine)) as session:
+    session = build_session_factory(database_engine)()
+    try:
         service = MarketDataService(
             session=session,
             provider=provider,
@@ -74,6 +75,8 @@ async def test_backfill_inserts_candles(database_engine: Engine) -> None:
             end_time=end,
             idempotency_key="test-backfill-1",
         )
+    finally:
+        session.close()
     assert result.status == IngestionStatus.COMPLETED
     assert result.inserted_count > 0
 
@@ -87,7 +90,8 @@ async def test_incremental_fetch_overlaps_latest(database_engine: Engine) -> Non
             fixture_version="2026-08-08-m007-v1",
         )
     )
-    with transactional_session(build_session_factory(database_engine)) as session:
+    session = build_session_factory(database_engine)()
+    try:
         session.execute(
             text(
                 """
@@ -123,6 +127,8 @@ async def test_incremental_fetch_overlaps_latest(database_engine: Engine) -> Non
             symbol=SYMBOL,
             idempotency_key="test-incremental-1",
         )
+    finally:
+        session.close()
     assert result.status == IngestionStatus.COMPLETED
     assert result.duplicate_count >= 1
 
@@ -136,7 +142,8 @@ async def test_detect_gaps_bounded_by_latest(database_engine: Engine) -> None:
             fixture_version="2026-08-08-m007-v1",
         )
     )
-    with transactional_session(build_session_factory(database_engine)) as session:
+    session = build_session_factory(database_engine)()
+    try:
         service = MarketDataService(
             session=session,
             provider=provider,
@@ -152,11 +159,12 @@ async def test_detect_gaps_bounded_by_latest(database_engine: Engine) -> None:
             end_time=FIXED_TIME,
             idempotency_key="test-gap-1",
         )
-        session.commit()
         gap_report = await service.detect_gaps(
             symbol_version_id=SYMBOL_VERSION_ID,
             interval_code="1h",
         )
+    finally:
+        session.close()
     assert gap_report.missing_count == 0
     assert gap_report.expected_end == FIXED_TIME
 
@@ -172,7 +180,8 @@ async def test_idempotent_backfill_reuses_ingestion(database_engine: Engine) -> 
     )
     start = FIXED_TIME - timedelta(hours=2)
     end = FIXED_TIME
-    with transactional_session(build_session_factory(database_engine)) as session:
+    session = build_session_factory(database_engine)()
+    try:
         service = MarketDataService(
             session=session,
             provider=provider,
@@ -188,13 +197,14 @@ async def test_idempotent_backfill_reuses_ingestion(database_engine: Engine) -> 
             end_time=end,
             idempotency_key="test-idempotent-1",
         )
-        session.commit()
         result2 = await service.backfill(
             symbol=SYMBOL,
             start_time=start,
             end_time=end,
             idempotency_key="test-idempotent-1",
         )
+    finally:
+        session.close()
     assert result1.status == IngestionStatus.COMPLETED
     assert result2.status == IngestionStatus.COMPLETED
     candle_count = int(
