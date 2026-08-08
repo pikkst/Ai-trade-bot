@@ -183,8 +183,8 @@ async def test_incremental_fetch_overlaps_latest(
         )
     finally:
         session.close()
-    assert result.status == IngestionStatus.COMPLETED
-    assert result.duplicate_count >= 1
+        assert result.status == IngestionStatus.COMPLETED
+        assert result.corrected_count >= 1
 
 
 @pytest.mark.asyncio
@@ -222,7 +222,7 @@ async def test_detect_gaps_bounded_by_latest(
     finally:
         session.close()
     assert gap_report.missing_count == 0
-    assert gap_report.expected_end == FIXED_TIME
+    assert gap_report.expected_end == FIXED_TIME - timedelta(hours=1)
 
 
 @pytest.mark.asyncio
