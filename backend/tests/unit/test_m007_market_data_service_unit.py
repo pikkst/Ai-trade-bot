@@ -9,6 +9,11 @@ from uuid import UUID
 import pytest
 
 from app.core.clock import FixedClock
+from app.domains.market_data.models import (
+    GapReport,
+    IngestionStatus,
+    SnapshotResult,
+)
 from app.domains.market_data.service import MarketDataService
 from app.domains.market_data.validation import ValidationPolicy
 from app.infrastructure.exchange.binance.fakes import (
@@ -91,10 +96,42 @@ class MockSession:
             ingestion_id = UUID("00000000-0000-0000-0000-000000000002")
             self.ingestions[ingestion_id] = {"id": ingestion_id, "status": "running"}
             return result
-        if "max(candle.open_time)" in sql:
+        if "from public.market_data_ingestions where id" in sql:
+            result._one_or_none_value = {
+                "status": "running",
+                "checkpoint": None,
+                "inserted_count": 0,
+                "duplicate_count": 0,
+                "invalid_count": 0,
+                "corrected_count": 0,
+                "request_count": 0,
+                "retry_count": 0,
+                "provider_latency_ms": None,
+                "safe_error": None,
+                "content_hash": "",
+                "actual_start_time": None,
+                "actual_end_time": None,
+            }
+            return result
+        if "update public.market_data_ingestions" in sql:
+            return result
+        if "max(candle.open_time)" in sql and "min(candle.open_time)" not in sql:
             times = [c["open_time"] for c in self.candles.values()]
             max_time = max(times) if times else None
             result._one_or_none_value = {"max_time": max_time} if max_time else None
+            return result
+        if "min(candle.open_time)" in sql:
+            matched = [
+                c
+                for c in self.candles.values()
+                if c.get("symbol_version_id") == params.get("symbol_version_id")
+            ]
+            times = [c["open_time"] for c in matched]
+            result._one_value = {
+                "cnt": len(matched),
+                "min_time": min(times) if times else None,
+                "max_time": max(times) if times else None,
+            }
             return result
         if "count(*)" in sql and "candles" in sql:
             result._one_value = {
@@ -102,6 +139,12 @@ class MockSession:
                 "min_time": None,
                 "max_time": None,
             }
+            return result
+        if "select id, content_hash, open_time" in sql:
+            result._one_or_none_value = None
+            return result
+        if "select candle.content_hash" in sql:
+            result._scalars_value = [c["content_hash"] for c in self.candles.values()]
             return result
         if "select candle.open_time" in sql:
             result._scalars_value = [c["open_time"] for c in self.candles.values()]
@@ -279,3 +322,175 @@ def test_snapshot_membership_validated() -> None:
             quality_outcome="approved",
             freshness_outcome="fresh",
         )
+
+
+@pytest.mark.asyncio
+async def test_backfill_persists_candles() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    result = await service.backfill(
+        symbol="BTCEUR",
+        start_time=FIXED_TIME - timedelta(hours=2),
+        end_time=FIXED_TIME,
+        idempotency_key="test-backfill-persist",
+    )
+    assert result.status == IngestionStatus.COMPLETED
+    assert result.inserted_count == 2
+    assert len(session.candles) == 2
+
+
+@pytest.mark.asyncio
+async def test_backfill_resumes_from_checkpoint() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    result = await service.backfill(
+        symbol="BTCEUR",
+        start_time=FIXED_TIME - timedelta(hours=2),
+        end_time=FIXED_TIME,
+        idempotency_key="test-backfill-resume",
+    )
+    assert result.status == IngestionStatus.COMPLETED
+    assert result.request_count >= 1
+    assert result.provider_latency_ms is not None
+
+
+@pytest.mark.asyncio
+async def test_repair_gaps_no_missing() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    report = GapReport(
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval_code="1h",
+        interval_seconds=3600,
+        expected_start=FIXED_TIME - timedelta(hours=1),
+        expected_end=FIXED_TIME,
+        missing_count=0,
+        missing_ranges=(),
+        severity="info",
+        detection_policy_version="1.0",
+    )
+    result = await service.repair_gaps(
+        symbol="BTCEUR",
+        gap_report=report,
+        idempotency_key="test-repair-none",
+    )
+    assert result.status == IngestionStatus.COMPLETED
+    assert result.inserted_count == 0
+
+
+def test_create_snapshot_success() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    session.candles[(SYMBOL_VERSION_ID, "1h", FIXED_TIME - timedelta(hours=1))] = {
+        "symbol_version_id": SYMBOL_VERSION_ID,
+        "interval_code": "1h",
+        "open_time": FIXED_TIME - timedelta(hours=1),
+        "close_time": FIXED_TIME,
+        "content_hash": "a" * 64,
+        "finalized": True,
+    }
+    snapshot = service.create_snapshot(
+        analysis_time=FIXED_TIME,
+        candle_ids=[UUID("42000000-0000-0000-0000-000000000001")],
+        quality_outcome="approved",
+        freshness_outcome="fresh",
+    )
+    assert isinstance(snapshot, SnapshotResult)
+    assert snapshot.candle_count == 1
+    assert snapshot.snapshot_hash is not None
+    assert snapshot.quality_outcome == "approved"
+
+
+def test_snapshot_validation_uses_derived_outcomes() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    session.candles[(SYMBOL_VERSION_ID, "1h", FIXED_TIME - timedelta(hours=1))] = {
+        "symbol_version_id": SYMBOL_VERSION_ID,
+        "interval_code": "1h",
+        "open_time": FIXED_TIME - timedelta(hours=1),
+        "close_time": FIXED_TIME,
+        "content_hash": "a" * 64,
+        "finalized": True,
+    }
+    snapshot = service.create_snapshot(
+        analysis_time=FIXED_TIME,
+        candle_ids=[UUID("42000000-0000-0000-0000-000000000001")],
+        quality_outcome="approved",
+        freshness_outcome="fresh",
+    )
+    assert snapshot.freshness_outcome == "fresh"

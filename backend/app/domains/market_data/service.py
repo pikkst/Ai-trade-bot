@@ -923,7 +923,8 @@ class MarketDataService:
                         :base_volume, :quote_volume, :trade_count, true, :content_hash
                     )
                     on conflict (symbol_version_id, interval_code, open_time) do update
-                    set close_time = excluded.close_time,
+                    set open_price = excluded.open_price,
+                        close_time = excluded.close_time,
                         high_price = excluded.high_price,
                         low_price = excluded.low_price,
                         close_price = excluded.close_price,

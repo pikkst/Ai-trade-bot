@@ -183,8 +183,8 @@ async def test_incremental_fetch_overlaps_latest(
         )
     finally:
         session.close()
-        assert result.status == IngestionStatus.COMPLETED
-        assert result.corrected_count >= 1
+    assert result.status == IngestionStatus.COMPLETED
+    assert result.corrected_count >= 1
 
 
 @pytest.mark.asyncio
