@@ -9,6 +9,7 @@ All notable project changes are documented here.
 #### Added
 
 - Additive Supabase/Alembic migration `20260808150000_m007_quality_state_governance` adding the `clock_drift_recovered` terminal vocabulary and scoping authenticated snapshot reads to workspace membership.
+- Additive Supabase/Alembic migration `20260808160000_m007_terminal_resolution_idempotency` adding the structured `supersedes_event_id` column and a partial unique index `(supersedes_event_id, event_type)` so a blocker can never be superseded twice by the same terminal type.
 
 #### Fixed
 
@@ -21,6 +22,14 @@ All notable project changes are documented here.
 - Retry/attempt metadata for provider page calls is captured in `try/finally`, so exhausted-timeout and rate-limit failures persist the real counters instead of pre-call values.
 - Snapshot creation is atomic: `INSERT ... ON CONFLICT (snapshot_hash) DO NOTHING RETURNING` with a follow-up lookup removes the check-then-insert race, and membership inserts are idempotent.
 - Bandit B608 suppression is localized to the audited parameterized SQL builders: precisely placed `# nosec B608` comments on the exact flagged lines, and the `_resolve_quality_events` query was refactored to `event_type = any(:event_types)` so no dynamic placeholder list is assembled at all.
+- The incremental preflight server-time provider call now runs with no active SQLAlchemy transaction (the symbol-binding read is committed first), and its failure persists a durable FAILED ingestion attempt with the real request/retry counters; a successful preflight's telemetry is carried into the resulting ingestion.
+- Backfill rejects zero-length and inverted ranges and normalizes non-aligned boundaries to interval-aligned UTC boundaries so the expected open-time sequence is deterministic.
+- Terminal quality resolution is correlated to the exact blocker via the structured `supersedes_event_id` column with valid transitions enforced (gap→gap_repaired, drift→clock_drift_recovered, correction→correction_applied); a wrong-category terminal event can no longer clear an unrelated blocker.
+- Invalid candle evidence is scoped to the exact failed open-time/range so one malformed historical candle cannot block unrelated future snapshots; a valid candle at the same open time appends terminal resolution.
+- A same-page inconsistent duplicate now fails the ingestion closed (scoped error event + FAILED status) instead of completing successfully, and `duplicate_conflict` is an explicit snapshot-gate blocker.
+- The canonical ingestion content hash is built only at the exact acceptance points (inserted row, consistent duplicate, applied correction), so rejected content can never participate in the content identity.
+- The advisory-lock release unlocks only the exact ingestion key after rolling back the aborted transaction, never unrelated session-level locks on the same pooled connection.
+- The aggregate gap-repair hash is derived from the ordered child ingestion content hashes plus stable range metadata, so identical repairs replay to the same hash and different repairs over the same range differ.
 
 #### Safety
 

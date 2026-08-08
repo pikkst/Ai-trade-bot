@@ -33,6 +33,7 @@ class FakeBinanceScenario(str, Enum):
     UNAVAILABLE = "unavailable"
     STALE = "stale"
     GAP = "gap"
+    DUPLICATE_CONFLICT = "duplicate_conflict"
     INVALID_SYMBOL = "invalid_symbol"
 
 
@@ -188,6 +189,26 @@ class FakeBinanceProvider:
 
         if self.config.scenario == FakeBinanceScenario.GAP and len(candles) > 2:
             candles = candles[: len(candles) // 2]
+
+        if self.config.scenario == FakeBinanceScenario.DUPLICATE_CONFLICT:
+            # Emit two different candles at the same open time so the page
+            # contains an inconsistent duplicate (M007 invalid evidence).
+            conflicting = candles[0]
+            candles = [
+                conflicting,
+                Candle(
+                    time=conflicting.time,
+                    close_time=conflicting.close_time,
+                    open=conflicting.open + Decimal("1.00"),
+                    high=conflicting.high + Decimal("1.00"),
+                    low=conflicting.low,
+                    close=conflicting.close + Decimal("1.00"),
+                    volume=conflicting.volume,
+                    quote_volume=conflicting.quote_volume,
+                    trade_count=conflicting.trade_count,
+                ),
+                *candles[1:],
+            ]
 
         return candles
 

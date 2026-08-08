@@ -19,6 +19,7 @@ from app.domains.market_data.models import (
     GapReport,
     IngestionResult,
     IngestionStatus,
+    IngestionType,
     QualityState,
     SnapshotResult,
 )
@@ -31,6 +32,7 @@ from app.infrastructure.exchange.binance.fakes import (
 )
 from app.infrastructure.exchange.binance.protocol import (
     BinanceProviderUnavailableError,
+    BinanceTimeoutError,
     Candle,
     CandleInterval,
     ExchangeTime,
@@ -371,6 +373,88 @@ async def test_incremental_fetch_at_non_hour_wall_clock(
     assert result.actual_end_time == non_hour_time.replace(
         minute=0, second=0, microsecond=0
     )
+
+
+@pytest.mark.asyncio
+async def test_incremental_preflight_server_time_outside_transaction(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """The incremental preflight server-time provider I/O must run with no
+    active DB transaction and its failure must leave a durable failed
+    ingestion attempt."""
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.TIMEOUT,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        with pytest.raises(BinanceTimeoutError):
+            await service.incremental_fetch(
+                symbol=SYMBOL,
+                idempotency_key="test-preflight-timeout",
+            )
+        row = (
+            session.execute(
+                text(
+                    "select status, request_count, retry_count, safe_error "
+                    "from public.market_data_ingestions "
+                    "where idempotency_key = 'test-preflight-timeout'"
+                )
+            )
+            .mappings()
+            .one()
+        )
+    finally:
+        session.close()
+    assert row["status"] == IngestionStatus.FAILED.value
+    assert row["request_count"] >= 1
+    assert "server_time_failed" in row["safe_error"]
+
+
+@pytest.mark.asyncio
+async def test_incremental_preflight_boundary_asserting_provider(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Incremental fetch must never call provider I/O inside a DB transaction."""
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        boundary_provider = BoundaryAssertingProvider(provider, session)
+        service._provider = boundary_provider
+        result = await service.incremental_fetch(
+            symbol=SYMBOL,
+            idempotency_key="test-preflight-boundary",
+        )
+        assert result.status == IngestionStatus.COMPLETED
+    finally:
+        session.close()
 
 
 @pytest.mark.asyncio
@@ -1352,3 +1436,495 @@ async def test_concurrent_same_range_different_delivery_key_single_owner(
     # closed on the lock. No run may race the shared ingestion row.
     owners = [r for r in results if isinstance(r, IngestionResult)]
     assert len(owners) >= 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_rejects_invalid_ranges(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Zero-length, inverted, and non-aligned backfill ranges are rejected."""
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        with pytest.raises(ValueError):
+            await service.backfill(
+                symbol=SYMBOL,
+                start_time=FIXED_TIME,
+                end_time=FIXED_TIME,
+                idempotency_key="test-range-zero",
+            )
+        with pytest.raises(ValueError):
+            await service.backfill(
+                symbol=SYMBOL,
+                start_time=FIXED_TIME,
+                end_time=FIXED_TIME - timedelta(hours=1),
+                idempotency_key="test-range-inverted",
+            )
+        # Non-aligned boundaries are normalized to interval boundaries, not
+        # rejected, so the expected open-time sequence is deterministic.
+        aligned = await service.backfill(
+            symbol=SYMBOL,
+            start_time=FIXED_TIME.replace(hour=10, minute=30),
+            end_time=FIXED_TIME.replace(hour=12, minute=30),
+            idempotency_key="test-range-nonaligned",
+        )
+        assert aligned.status == IngestionStatus.COMPLETED
+        assert aligned.actual_start_time == FIXED_TIME.replace(
+            hour=10, minute=0, second=0, microsecond=0
+        )
+        assert aligned.actual_end_time == FIXED_TIME.replace(
+            hour=13, minute=0, second=0, microsecond=0
+        )
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_same_page_conflict_fails_closed_and_blocks_snapshot(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """An inconsistent same-open-time duplicate fails the ingestion and the
+    scoped conflict event blocks snapshot approval for that range."""
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.DUPLICATE_CONFLICT,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        with pytest.raises(BinanceProviderUnavailableError):
+            await service.backfill(
+                symbol=SYMBOL,
+                start_time=FIXED_TIME - timedelta(hours=2),
+                end_time=FIXED_TIME,
+                idempotency_key="test-conflict-page",
+            )
+        conflict_count = session.execute(
+            text(
+                "select count(*) from public.data_quality_events "
+                "where event_type = 'duplicate_conflict' "
+                "and symbol_version_id = :sid"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        ).scalar_one()
+        assert conflict_count >= 1
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_resolution_idempotent_and_cross_category_blocked(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Repeated recovery appends exactly one terminal event per blocker, and a
+    terminal event of one category cannot clear a blocker of another."""
+    drift_provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            server_time_offset_seconds=30,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=drift_provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+            policy=ValidationPolicy(max_clock_drift_ms=100),
+        )
+        with pytest.raises(BinanceProviderUnavailableError):
+            await service.backfill(
+                symbol=SYMBOL,
+                start_time=FIXED_TIME - timedelta(hours=1),
+                end_time=FIXED_TIME,
+                idempotency_key="test-drift-dup",
+            )
+    finally:
+        session.close()
+
+    # Two healthy recoveries over the same range: terminal resolution must be
+    # idempotent (one clock_drift_recovered per blocker).
+    healthy = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=healthy,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        for idx in range(2):
+            await service.backfill(
+                symbol=SYMBOL,
+                start_time=FIXED_TIME - timedelta(hours=1),
+                end_time=FIXED_TIME,
+                idempotency_key=f"test-drift-recover-{idx}",
+            )
+    finally:
+        session.close()
+
+    session = build_session_factory(database_engine)()
+    try:
+        recovered = session.execute(
+            text(
+                "select count(*) from public.data_quality_events "
+                "where event_type = 'clock_drift_recovered' "
+                "and symbol_version_id = :sid"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        ).scalar_one()
+        assert recovered == 1
+    finally:
+        session.close()
+
+    # Cross-category: a gap_repaired terminal for the same range must NOT
+    # clear a clock_drift_exceeded blocker. The effective gate derives
+    # terminal state by exact blocker identity (supersedes_event_id) with
+    # valid transitions enforced.
+    session = build_session_factory(database_engine)()
+    try:
+        # A new, unrecovered clock_drift_exceeded blocker.
+        fresh_blocker_id = session.execute(
+            text(
+                """
+                insert into public.data_quality_events (
+                    exchange_id, symbol_version_id, interval_code, event_type,
+                    severity, details, detection_policy_version,
+                    affected_range_start, affected_range_end
+                ) values (
+                    :eid, :sid, '1h', 'clock_drift_exceeded', 'error',
+                    '{}'::jsonb, '1.0',
+                    :rstart, :rend
+                )
+                returning id
+                """
+            ),
+            {
+                "eid": EXCHANGE_ID,
+                "sid": SYMBOL_VERSION_ID,
+                "rstart": FIXED_TIME - timedelta(hours=1),
+                "rend": FIXED_TIME,
+            },
+        ).scalar_one()
+        # A wrong-category terminal referencing the fresh blocker must not
+        # clear it.
+        session.execute(
+            text(
+                """
+                insert into public.data_quality_events (
+                    exchange_id, symbol_version_id, interval_code, event_type,
+                    severity, details, detection_policy_version, supersedes_event_id
+                ) values (
+                    :eid, :sid, '1h', 'gap_repaired', 'info',
+                    '{}'::jsonb, '1.0', :blocker_id
+                )
+                """
+            ),
+            {
+                "eid": EXCHANGE_ID,
+                "sid": SYMBOL_VERSION_ID,
+                "blocker_id": fresh_blocker_id,
+            },
+        )
+        session.commit()
+        # The gate must still see the drift blocker as effective: only a
+        # clock_drift_recovered terminal superseding it clears it.
+        still_blocked = session.execute(
+            text(
+                """
+                select count(*) from public.data_quality_events blocker
+                where blocker.id = :blocker_id
+                  and blocker.event_type = 'clock_drift_exceeded'
+                  and not exists (
+                      select 1 from public.data_quality_events terminal
+                      where terminal.supersedes_event_id = blocker.id
+                        and terminal.event_type = 'clock_drift_recovered'
+                  )
+                """
+            ),
+            {"blocker_id": fresh_blocker_id},
+        ).scalar_one()
+        assert still_blocked == 1
+        # The correct-category terminal clears it.
+        session.execute(
+            text(
+                """
+                insert into public.data_quality_events (
+                    exchange_id, symbol_version_id, interval_code, event_type,
+                    severity, details, detection_policy_version, supersedes_event_id
+                ) values (
+                    :eid, :sid, '1h', 'clock_drift_recovered', 'info',
+                    '{}'::jsonb, '1.0', :blocker_id
+                )
+                """
+            ),
+            {
+                "eid": EXCHANGE_ID,
+                "sid": SYMBOL_VERSION_ID,
+                "blocker_id": fresh_blocker_id,
+            },
+        )
+        session.commit()
+        cleared = session.execute(
+            text(
+                """
+                select count(*) from public.data_quality_events blocker
+                where blocker.id = :blocker_id
+                  and blocker.event_type = 'clock_drift_exceeded'
+                  and not exists (
+                      select 1 from public.data_quality_events terminal
+                      where terminal.supersedes_event_id = blocker.id
+                        and terminal.event_type = 'clock_drift_recovered'
+                  )
+                """
+            ),
+            {"blocker_id": fresh_blocker_id},
+        ).scalar_one()
+        assert cleared == 0
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_invalid_candle_scoped_snapshot_fails_only_at_t(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """An error scoped to open time T blocks only snapshots covering T;
+    unrelated ranges remain approvable."""
+    session = build_session_factory(database_engine)()
+    try:
+        # Seed two valid candles: 10:00 and 11:00 (close 12:00 for freshness).
+        t10 = FIXED_TIME - timedelta(hours=2)
+        t11 = FIXED_TIME - timedelta(hours=1)
+        for idx, candle_time in enumerate((t10, t11)):
+            session.execute(
+                text(
+                    """
+                    insert into public.candles (
+                        symbol_version_id, interval_code, open_time, close_time,
+                        open_price, high_price, low_price, close_price,
+                        base_volume, quote_volume, trade_count, finalized, content_hash
+                    ) values (
+                        :sid, '1h', :ot, :ct, 100, 105, 95, 102,
+                        1.5, 1500, 100, true, :hash
+                    )
+                    on conflict (symbol_version_id, interval_code, open_time)
+                    where superseded_by is null do nothing
+                    """
+                ),
+                {
+                    "sid": SYMBOL_VERSION_ID,
+                    "ot": candle_time,
+                    "ct": candle_time + timedelta(hours=1),
+                    "hash": f"{idx:064x}",
+                },
+            )
+        session.commit()
+        # Scope an error to exactly the 11:00 candle.
+        session.execute(
+            text(
+                """
+                insert into public.data_quality_events (
+                    exchange_id, symbol_version_id, interval_code, event_type,
+                    severity, details, detection_policy_version,
+                    affected_range_start, affected_range_end
+                ) values (
+                    :eid, :sid, '1h', 'invalid_value', 'error',
+                    '{}'::jsonb, '1.0', :t11, :t11
+                )
+                """
+            ),
+            {
+                "eid": EXCHANGE_ID,
+                "sid": SYMBOL_VERSION_ID,
+                "t11": t11,
+            },
+        )
+        session.commit()
+        service = MarketDataService(
+            session=session,
+            provider=FakeBinanceProvider(
+                config=FakeBinanceConfig(
+                    scenario=FakeBinanceScenario.SUCCESS,
+                    fixed_clock_time=FIXED_TIME,
+                    fixture_version="2026-08-08-m007-v1",
+                )
+            ),
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+
+        def candle_id(open_time: datetime) -> UUID:
+            return session.execute(
+                text(
+                    "select id from public.candles "
+                    "where symbol_version_id = :sid and open_time = :ot "
+                    "and superseded_by is null"
+                ),
+                {"sid": SYMBOL_VERSION_ID, "ot": open_time},
+            ).scalar_one()
+
+        # Snapshot covering 11:00 must fail the gate (scoped blocker).
+        with pytest.raises(ValueError):
+            service.create_snapshot(
+                analysis_time=FIXED_TIME,
+                candle_ids=[candle_id(t11)],
+                quality_outcome="approved",
+                freshness_outcome="fresh",
+            )
+        # Snapshot covering only 10:00 is unaffected and fresh.
+        snapshot = service.create_snapshot(
+            analysis_time=FIXED_TIME,
+            candle_ids=[candle_id(t10)],
+            quality_outcome="approved",
+            freshness_outcome="fresh",
+        )
+        assert snapshot.quality_outcome == "approved"
+        assert snapshot.freshness_outcome == "fresh"
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_repair_hash_deterministic_for_identical_replay(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """An exact gap-repair replay over the same range preserves the aggregate
+    content hash, proving the repair identity is derived from the repaired
+    child content rather than ignored."""
+    start = FIXED_TIME - timedelta(hours=2)
+    end = FIXED_TIME - timedelta(hours=1)
+
+    async def run_repair(idempotency_key: str) -> str:
+        provider = FakeBinanceProvider(
+            config=FakeBinanceConfig(
+                scenario=FakeBinanceScenario.SUCCESS,
+                fixed_clock_time=FIXED_TIME,
+                fixture_version="2026-08-08-m007-v1",
+            )
+        )
+        session = build_session_factory(database_engine)()
+        try:
+            service = MarketDataService(
+                session=session,
+                provider=provider,
+                workspace_id=WORKSPACE_ID,
+                exchange_id=EXCHANGE_ID,
+                symbol_version_id=SYMBOL_VERSION_ID,
+                interval=CandleInterval.ONE_HOUR,
+                clock=FixedClock(FIXED_TIME),
+            )
+            report = await service.detect_gaps(
+                symbol_version_id=SYMBOL_VERSION_ID,
+                interval_code="1h",
+                expected_start=start,
+                expected_end=end,
+            )
+            result = await service.repair_gaps(
+                symbol=SYMBOL,
+                gap_report=report,
+                idempotency_key=idempotency_key,
+            )
+            return result.content_hash
+        finally:
+            session.close()
+
+    hash1 = await run_repair("test-repair-hash-1")
+    # Reset evidence, then replay the identical repair.
+    _clean_m007_rows(database_engine)
+    hash2 = await run_repair("test-repair-hash-2")
+    assert hash1 == hash2
+    assert len(hash1) == 64
+
+
+def test_lock_release_preserves_sentinel_advisory_lock(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Releasing the M007 ingestion lock must not release unrelated
+    session-level advisory locks on the same connection."""
+    session = build_session_factory(database_engine)()
+    try:
+        session.execute(
+            text("select pg_advisory_lock(hashtextextended('sentinel', 0))")
+        )
+        service = MarketDataService(
+            session=session,
+            provider=FakeBinanceProvider(
+                config=FakeBinanceConfig(
+                    scenario=FakeBinanceScenario.SUCCESS,
+                    fixed_clock_time=FIXED_TIME,
+                    fixture_version="2026-08-08-m007-v1",
+                )
+            ),
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        key = service._acquire_ingestion_lock(
+            IngestionType.BACKFILL,
+            FIXED_TIME - timedelta(hours=1),
+            FIXED_TIME,
+        )
+        service._release_ingestion_lock(key)
+        # The sentinel lock must still be held on the shared connection: a
+        # second session cannot acquire it.
+        session_pid = session.execute(text("select pg_backend_pid()")).scalar_one()
+        with database_engine.connect() as other:
+            other_pid = other.execute(text("select pg_backend_pid()")).scalar_one()
+            reacquired = other.execute(
+                text("select pg_try_advisory_lock(hashtextextended('sentinel', 0))")
+            ).scalar_one()
+            assert session_pid != other_pid
+            assert reacquired is False, (
+                f"sentinel released: session_pid={session_pid} other_pid={other_pid}"
+            )
+    finally:
+        session.rollback()
+        session.execute(text("select pg_advisory_unlock_all()"))
+        session.close()

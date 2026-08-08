@@ -72,6 +72,7 @@ class QualityEvent:
     resolution: str | None = None
     replacement_candle_id: UUID | None = None
     invalidated_candle_id: UUID | None = None
+    supersedes_event_id: UUID | None = None
     ingestion_id: UUID | None = None
     snapshot_id: UUID | None = None
     reviewer_user_id: UUID | None = None
