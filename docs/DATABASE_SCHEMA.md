@@ -255,7 +255,7 @@ Constraints:
 
 ### `data_quality_events`
 
-Append-only event type, severity, affected candle/range/dataset, details, detection, resolution, replacement, invalidation, reviewer, and timestamps.
+Append-only event type (canonical QualityState vocabulary), severity, affected candle/range/dataset, details, detection, resolution, replacement, invalidation, reviewer, and timestamps. Resolution updates require app_workflow UPDATE; authenticated may read via the security-invoker read view over a SELECT policy on the base table.
 
 ### `candle_corrections`
 

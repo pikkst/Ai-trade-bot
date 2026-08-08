@@ -201,25 +201,72 @@ class MarketDataService:
         symbol_version_id: UUID,
         interval_code: str,
         expected_end: datetime | None = None,
+        expected_start: datetime | None = None,
     ) -> GapReport:
+        """Detect gaps over the requested identity/range.
+
+        Validates the requested market identity against the service scope and
+        derives the expected range from the explicit boundaries. An empty
+        dataset is NOT an empty success: it means the entire expected range is
+        missing and must be reported as gaps so evidence cannot be mistaken for
+        a complete dataset.
+        """
+        if symbol_version_id != self._symbol_version_id:
+            raise ValueError(
+                "detect_gaps identity mismatch: requested "
+                f"{symbol_version_id} does not match service scope "
+                f"{self._symbol_version_id}"
+            )
+        if interval_code != self._interval.value:
+            raise ValueError(
+                "detect_gaps identity mismatch: requested interval "
+                f"{interval_code!r} does not match service scope "
+                f"{self._interval.value!r}"
+            )
         existing_times = self._get_existing_candle_times()
         latest = max(existing_times) if existing_times else None
         if latest is None:
-            return GapReport(
+            if expected_start is None or expected_end is None:
+                return GapReport(
+                    symbol_version_id=symbol_version_id,
+                    interval_code=interval_code,
+                    interval_seconds=self._interval_seconds,
+                    expected_start=datetime.min.replace(tzinfo=timezone.utc),
+                    expected_end=datetime.min.replace(tzinfo=timezone.utc),
+                    missing_count=0,
+                    missing_ranges=(),
+                    severity="info",
+                    detection_policy_version=self._policy.policy_version,
+                )
+            all_expected: list[datetime] = []
+            current = expected_start
+            while current <= expected_end:
+                all_expected.append(current)
+                current += timedelta(seconds=self._interval_seconds)
+            if not all_expected:
+                return GapReport(
+                    symbol_version_id=symbol_version_id,
+                    interval_code=interval_code,
+                    interval_seconds=self._interval_seconds,
+                    expected_start=expected_start,
+                    expected_end=expected_end,
+                    missing_count=0,
+                    missing_ranges=(),
+                    severity="info",
+                    detection_policy_version=self._policy.policy_version,
+                )
+            return self._build_missing_report(
                 symbol_version_id=symbol_version_id,
                 interval_code=interval_code,
-                interval_seconds=self._interval_seconds,
-                expected_start=datetime.min.replace(tzinfo=timezone.utc),
-                expected_end=datetime.min.replace(tzinfo=timezone.utc),
-                missing_count=0,
-                missing_ranges=(),
-                severity="info",
-                detection_policy_version=self._policy.policy_version,
+                expected_start=expected_start,
+                expected_end=expected_end,
+                missing=all_expected,
             )
-        expected_start = min(existing_times)
+        if expected_start is None:
+            expected_start = min(existing_times)
         if expected_end is None:
             expected_end = latest
-        all_expected: list[datetime] = []
+        all_expected = []
         current = expected_start
         while current <= expected_end:
             all_expected.append(current)
@@ -237,6 +284,22 @@ class MarketDataService:
                 severity="info",
                 detection_policy_version=self._policy.policy_version,
             )
+        return self._build_missing_report(
+            symbol_version_id=symbol_version_id,
+            interval_code=interval_code,
+            expected_start=expected_start,
+            expected_end=expected_end,
+            missing=missing,
+        )
+
+    def _build_missing_report(
+        self,
+        symbol_version_id: UUID,
+        interval_code: str,
+        expected_start: datetime,
+        expected_end: datetime,
+        missing: list[datetime],
+    ) -> GapReport:
         missing_ranges: list[tuple[datetime, datetime]] = []
         range_start = missing[0]
         range_end = missing[0]
@@ -319,8 +382,19 @@ class MarketDataService:
         verification = await self.detect_gaps(
             symbol_version_id=self._symbol_version_id,
             interval_code=self._interval.value,
+            expected_start=gap_report.expected_start,
             expected_end=gap_report.expected_end,
         )
+        # Resolve the gap evidence for the repaired range so snapshots are not
+        # permanently blocked by a gap that has since been filled.
+        if verification.missing_count == 0:
+            self._resolve_quality_events(
+                event_types=(QualityState.GAP_DETECTED.value,),
+                resolution="gap_repaired",
+                range_start=gap_report.expected_start,
+                range_end=gap_report.expected_end,
+            )
+            self._session.commit()
         return IngestionResult(
             ingestion_type=IngestionType.GAP_REPAIR,
             status=IngestionStatus.COMPLETED
@@ -446,8 +520,6 @@ class MarketDataService:
         requires count == len(candle_ids); this only orders the provided set so
         hashing and persistence are canonical and idempotent.
         """
-        if len(candle_ids) <= 1:
-            return list(candle_ids)
         rows = (
             self._session.execute(
                 text(
@@ -471,6 +543,17 @@ class MarketDataService:
             .all()
         )
         by_id = {row["id"]: row["open_time"] for row in rows}
+        # Canonicalization may only reorder, never shrink or replace: the
+        # caller's exact multiset of IDs must be present and valid for this
+        # symbol/interval, otherwise the request is rejected rather than
+        # silently downgraded to a subset.
+        found = [cid for cid in candle_ids if cid in by_id]
+        if len(found) != len(candle_ids) or len(set(found)) != len(candle_ids):
+            raise ValueError(
+                "Snapshot membership must be an exact set of valid finalized "
+                "candles for this symbol and interval; received "
+                f"{len(candle_ids)} ids, resolved {len(found)}"
+            )
         ordered = [cid for cid in candle_ids if cid in by_id]
         ordered.sort(key=lambda cid: by_id[cid])
         return ordered
@@ -535,15 +618,19 @@ class MarketDataService:
                   and (
                       event_type in (
                           'gap_detected', 'gap_unresolved',
-                          'correction_pending', 'correction_applied',
-                          'invalidated', 'quarantined'
+                          'correction_pending', 'invalidated', 'quarantined',
+                          'provider_unavailable', 'rate_limited'
                       )
                       or severity in ('error', 'critical')
                   )
                   and (
                       (affected_range_start is null and affected_range_end is null)
-                      or affected_range_start <= :last_time
-                      and affected_range_end >= :first_time
+                      or (
+                          affected_range_start is not null
+                          and affected_range_end is not null
+                          and affected_range_start <= :last_time
+                          and affected_range_end >= :first_time
+                      )
                   )
                 """
             ),
@@ -598,7 +685,68 @@ class MarketDataService:
             return "clock_drift_exceeded"
         return "fresh"
 
+    def _acquire_ingestion_lock(
+        self,
+        ingestion_type: IngestionType,
+        start_time: datetime,
+        end_time: datetime,
+        idempotency_key: str,
+    ) -> str:
+        """Claim a session-scoped advisory lock so overlapping duplicate
+        deliveries run a single ingestion owner.
+
+        Returns the lock key; the caller must release it in a finally block.
+        A concurrent worker that cannot acquire the lock fails closed instead
+        of racing page persistence.
+        """
+        lock_key = (
+            f"m007:{self._exchange_id}:{self._symbol_version_id}:"
+            f"{self._interval.value}:{start_time.isoformat()}:"
+            f"{end_time.isoformat()}:{idempotency_key}"
+        )
+        acquired = self._session.execute(
+            text("select pg_try_advisory_lock(hashtextextended(:key, 0))"),
+            {"key": lock_key},
+        ).scalar_one()
+        if not acquired:
+            raise BinanceProviderUnavailableError(
+                "ingestion already owned by a concurrent worker; "
+                "overlapping duplicate delivery rejected"
+            )
+        return lock_key
+
+    def _release_ingestion_lock(self, lock_key: str) -> None:
+        try:
+            self._session.execute(
+                text("select pg_advisory_unlock(hashtextextended(:key, 0))"),
+                {"key": lock_key},
+            )
+        except Exception:
+            logger.warning("ingestion_lock_release_failed", extra={"key": lock_key})
+
     async def _ingest_pages(
+        self,
+        ingestion_type: IngestionType,
+        symbol: str,
+        start_time: datetime,
+        end_time: datetime,
+        idempotency_key: str,
+    ) -> IngestionResult:
+        lock_key = self._acquire_ingestion_lock(
+            ingestion_type, start_time, end_time, idempotency_key
+        )
+        try:
+            return await self._ingest_pages_locked(
+                ingestion_type,
+                symbol,
+                start_time,
+                end_time,
+                idempotency_key,
+            )
+        finally:
+            self._release_ingestion_lock(lock_key)
+
+    async def _ingest_pages_locked(
         self,
         ingestion_type: IngestionType,
         symbol: str,
@@ -787,6 +935,8 @@ class MarketDataService:
                             "range_end": page_end.isoformat(),
                             "reason": "empty_page",
                         },
+                        affected_range_start=current_start,
+                        affected_range_end=page_end,
                         ingestion_id=ingestion_id,
                     )
                     self._bulk_insert_quality_events([gap_event])
@@ -968,6 +1118,8 @@ class MarketDataService:
                             "range_end": missing_range[1].isoformat(),
                             "reason": "partial_page",
                         },
+                        affected_range_start=missing_range[0],
+                        affected_range_end=missing_range[1],
                         ingestion_id=ingestion_id,
                     )
                     self._bulk_insert_quality_events([gap_event])
@@ -1343,6 +1495,13 @@ class MarketDataService:
             .scalars()
             .all()
         )
+        # Resolve any outstanding correction_pending evidence for this candle
+        # so snapshots built from the replacement are not blocked forever.
+        self._resolve_quality_events(
+            event_types=(QualityState.CORRECTION_PENDING.value,),
+            resolution="correction_applied",
+            candle_id=result.existing_id,
+        )
         quality_events.append(
             make_quality_event(
                 event_type=QualityState.CORRECTION_APPLIED.value,
@@ -1356,6 +1515,10 @@ class MarketDataService:
                     "replacement_candle_id": str(replacement_id),
                     "invalidated_snapshot_ids": [str(s) for s in invalidated_snapshots],
                 },
+                affected_candle_id=result.existing_id,
+                replacement_candle_id=replacement_id,
+                invalidated_candle_id=result.existing_id,
+                resolution="correction_applied",
                 ingestion_id=ingestion_id,
             )
         )
@@ -1707,6 +1870,7 @@ class MarketDataService:
     def _bulk_insert_quality_events(self, events: list[QualityEvent]) -> None:
         if not events:
             return
+        detected_at = self._clock.now()
         values = []
         params: dict[str, Any] = {}
         for idx, event in enumerate(events):
@@ -1717,7 +1881,10 @@ class MarketDataService:
                 f":{prefix}_severity, :{prefix}_details, "
                 f":{prefix}_detection_policy_version, :{prefix}_resolution, "
                 f":{prefix}_ingestion_id, :{prefix}_snapshot_id, "
-                f":{prefix}_reviewer_user_id, :{prefix}_detected_at)"
+                f":{prefix}_reviewer_user_id, :{prefix}_detected_at, "
+                f":{prefix}_affected_candle_id, :{prefix}_affected_range_start, "
+                f":{prefix}_affected_range_end, :{prefix}_replacement_candle_id, "
+                f":{prefix}_invalidated_candle_id)"
             )
             params.update(
                 {
@@ -1734,17 +1901,79 @@ class MarketDataService:
                     f"{prefix}_ingestion_id": event.ingestion_id,
                     f"{prefix}_snapshot_id": event.snapshot_id,
                     f"{prefix}_reviewer_user_id": event.reviewer_user_id,
-                    f"{prefix}_detected_at": datetime.now(timezone.utc),
+                    f"{prefix}_detected_at": detected_at,
+                    f"{prefix}_affected_candle_id": event.affected_candle_id,
+                    f"{prefix}_affected_range_start": event.affected_range_start,
+                    f"{prefix}_affected_range_end": event.affected_range_end,
+                    f"{prefix}_replacement_candle_id": event.replacement_candle_id,
+                    f"{prefix}_invalidated_candle_id": event.invalidated_candle_id,
                 }
             )
         sql = (
             "insert into public.data_quality_events ("
             "exchange_id, symbol_version_id, interval_code, event_type, "
             "severity, details, detection_policy_version, resolution, "
-            "ingestion_id, snapshot_id, reviewer_user_id, detected_at"
+            "ingestion_id, snapshot_id, reviewer_user_id, detected_at, "
+            "affected_candle_id, affected_range_start, affected_range_end, "
+            "replacement_candle_id, invalidated_candle_id"
             f") values {','.join(values)}"  # nosec B608
         )  # nosec B608
         self._session.execute(text(sql), params)
+
+    def _resolve_quality_events(
+        self,
+        event_types: tuple[str, ...],
+        resolution: str,
+        range_start: datetime | None = None,
+        range_end: datetime | None = None,
+        candle_id: UUID | None = None,
+    ) -> None:
+        """Resolve outstanding quality events so snapshots are not
+        permanently blocked by evidence that has since been repaired or
+        applied. Only resolves events whose resolution is still null."""
+        if not event_types:
+            return
+        resolved_at = self._clock.now()
+        placeholders = ", ".join(f":et{idx}" for idx in range(len(event_types)))
+        self._session.execute(
+            text(
+                f"""
+                update public.data_quality_events
+                set resolution = :resolution,
+                    resolved_at = :resolved_at
+                where symbol_version_id = :symbol_version_id
+                  and interval_code = :interval_code
+                  and event_type in ({placeholders})
+                  and resolution is null
+                  and (
+                      (cast(:range_start as timestamptz) is null
+                       and cast(:range_end as timestamptz) is null
+                       and cast(:candle_id as uuid) is null)
+                      or (
+                          cast(:range_start as timestamptz) is not null
+                          and affected_range_start is not null
+                          and affected_range_end is not null
+                          and affected_range_start >= cast(:range_start as timestamptz)
+                          and affected_range_end <= cast(:range_end as timestamptz)
+                      )
+                      or (
+                          cast(:candle_id as uuid) is not null
+                          and affected_candle_id = cast(:candle_id as uuid)
+                      )
+                  )
+                """
+            ),
+            {
+                "symbol_version_id": self._symbol_version_id,
+                "interval_code": self._interval.value,
+                **{f"et{idx}": et for idx, et in enumerate(event_types)},
+                "resolution": resolution,
+                "resolved_at": resolved_at,
+                "range_start": range_start,
+                "range_end": range_end,
+                "candle_id": candle_id,
+            },
+        )
 
     def _insert_snapshot(
         self,

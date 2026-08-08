@@ -20,6 +20,8 @@ class QualityState(str, Enum):
     OUT_OF_ORDER = "out_of_order"
     GAP_DETECTED = "gap_detected"
     GAP_REPAIR_PENDING = "gap_repair_pending"
+    GAP_REPAIRED = "gap_repaired"
+    GAP_UNRESOLVED = "gap_unresolved"
     PROVIDER_UNAVAILABLE = "provider_unavailable"
     RATE_LIMITED = "rate_limited"
     CLOCK_DRIFT_EXCEEDED = "clock_drift_exceeded"

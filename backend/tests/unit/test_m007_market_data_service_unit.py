@@ -101,6 +101,12 @@ class MockSession:
                 "content_hash": params["content_hash"],
             }
             return result
+        if "pg_try_advisory_lock" in sql:
+            result._scalar_one_value = True
+            return result
+        if "pg_advisory_unlock" in sql:
+            result._scalar_one_value = True
+            return result
         if "insert into public.market_data_ingestions" in sql:
             ingestion_id = UUID("00000000-0000-0000-0000-000000000002")
             self.ingestions[ingestion_id] = {"id": ingestion_id, "status": "running"}
@@ -1013,6 +1019,140 @@ def test_validate_candles_same_page_conflict() -> None:
     assert results[0].is_duplicate is False
     assert results[1].duplicate_conflict is True
     assert results[1].is_duplicate is False
+
+
+@pytest.mark.asyncio
+async def test_detect_gaps_rejects_identity_mismatch() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    other_svid = UUID("41000000-0000-0000-0000-000000000099")
+    with pytest.raises(ValueError):
+        await service.detect_gaps(
+            symbol_version_id=other_svid,
+            interval_code="1h",
+        )
+    with pytest.raises(ValueError):
+        await service.detect_gaps(
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval_code="5m",
+        )
+
+
+@pytest.mark.asyncio
+async def test_detect_gaps_empty_range_reports_all_missing() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    report = await service.detect_gaps(
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval_code="1h",
+        expected_start=FIXED_TIME - timedelta(hours=1),
+        expected_end=FIXED_TIME,
+    )
+    assert report.missing_count == 2
+    assert report.severity == "error"
+
+
+@pytest.mark.asyncio
+async def test_detect_gaps_missing_leading_candle() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    session.candles[(SYMBOL_VERSION_ID, "1h", FIXED_TIME)] = {
+        "symbol_version_id": SYMBOL_VERSION_ID,
+        "interval_code": "1h",
+        "open_time": FIXED_TIME,
+        "close_time": FIXED_TIME + timedelta(hours=1),
+        "content_hash": "a" * 64,
+        "finalized": True,
+    }
+    report = await service.detect_gaps(
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval_code="1h",
+        expected_start=FIXED_TIME - timedelta(hours=1),
+        expected_end=FIXED_TIME,
+    )
+    # The leading candle at FIXED_TIME-1h is missing.
+    assert report.missing_count == 1
+    assert report.missing_ranges == (
+        (FIXED_TIME - timedelta(hours=1), FIXED_TIME - timedelta(hours=1)),
+    )
+
+
+def test_canonicalize_candle_ids_rejects_shrink() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    session.candles[(SYMBOL_VERSION_ID, "1h", FIXED_TIME - timedelta(hours=1))] = {
+        "symbol_version_id": SYMBOL_VERSION_ID,
+        "interval_code": "1h",
+        "open_time": FIXED_TIME - timedelta(hours=1),
+        "close_time": FIXED_TIME,
+        "content_hash": "a" * 64,
+        "finalized": True,
+    }
+    valid_id = UUID("42000000-0000-0000-0000-000000000001")
+    foreign_id = UUID("42000000-0000-0000-0000-0000000000FF")
+    # Foreign id cannot be canonicalized to the same multiset.
+    with pytest.raises(ValueError):
+        service._canonicalize_candle_ids([valid_id, foreign_id])
 
 
 @pytest.mark.asyncio

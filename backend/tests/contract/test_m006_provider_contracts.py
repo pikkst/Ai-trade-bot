@@ -736,3 +736,138 @@ def test_bounded_exponential_wait_is_deterministic_and_exponential() -> None:
     # Retry-After is honored when larger, and bounded by the after cap.
     assert _bounded_exponential_wait(_Attempt(1), 5.0) == 5.0  # type: ignore[arg-type]
     assert _bounded_exponential_wait(_Attempt(1), 5000.0) == _RETRY_AFTER_MAX  # type: ignore[arg-type]
+
+
+def _kline_row(open_ms: int, close_ms: int, *, fields: int = 12) -> list[Any]:
+    row = [
+        open_ms,
+        "50000.0",
+        "50100.0",
+        "49900.0",
+        "50050.0",
+        "1.5",
+        close_ms,
+        "75150.0",
+        100,
+        "0",
+        "0",
+        "0",
+    ]
+    return row[:fields]
+
+
+def test_binance_rest_rejects_row_at_exclusive_end() -> None:
+    from app.infrastructure.exchange.binance.rest import BinanceRestProvider
+
+    start = FIXED_TIME
+    end = FIXED_TIME + timedelta(hours=2)
+    interval_ms = 3600_000
+    # The requested range is [start, end); a kline whose open time equals end
+    # must be rejected even if the provider (with inclusive endTime) returns it.
+    boundary_row = _kline_row(
+        int(end.timestamp() * 1000), int(end.timestamp() * 1000) + interval_ms
+    )
+
+    async def fake_request(
+        method: str, path: str, params: dict[str, Any] | None
+    ) -> Any:
+        return [boundary_row]
+
+    provider = BinanceRestProvider(clock=FixedClock(FIXED_TIME + timedelta(hours=1)))
+    provider._request = fake_request  # type: ignore[assignment]
+    candles = asyncio.run(
+        provider.get_finalized_candles(
+            "BTCEUR",
+            CandleInterval.ONE_HOUR,
+            start,
+            end,
+            server_time=FIXED_TIME + timedelta(hours=3),
+        )
+    )
+    assert candles == []
+
+
+def test_binance_rest_accepts_row_inside_exclusive_range() -> None:
+    from app.infrastructure.exchange.binance.rest import BinanceRestProvider
+
+    start = FIXED_TIME
+    end = FIXED_TIME + timedelta(hours=2)
+    interval_ms = 3600_000
+    inside_row = _kline_row(
+        int(start.timestamp() * 1000), int(start.timestamp() * 1000) + interval_ms
+    )
+
+    async def fake_request(
+        method: str, path: str, params: dict[str, Any] | None
+    ) -> Any:
+        return [inside_row]
+
+    provider = BinanceRestProvider(clock=FixedClock(FIXED_TIME + timedelta(hours=1)))
+    provider._request = fake_request  # type: ignore[assignment]
+    candles = asyncio.run(
+        provider.get_finalized_candles(
+            "BTCEUR",
+            CandleInterval.ONE_HOUR,
+            start,
+            end,
+            server_time=FIXED_TIME + timedelta(hours=3),
+        )
+    )
+    assert len(candles) == 1
+    assert candles[0].time == start
+
+
+def test_binance_rest_rejects_truncated_kline_row() -> None:
+    from app.infrastructure.exchange.binance.rest import _parse_kline
+
+    short = _kline_row(1700000000000, 1700003600000, fields=7)
+    with pytest.raises(BinanceMalformedDataError):
+        _parse_kline(short, CandleInterval.ONE_HOUR)
+
+
+def test_binance_rest_rejects_invalid_decimal_kline_row() -> None:
+    from app.infrastructure.exchange.binance.rest import _parse_kline
+
+    row = _kline_row(1700000000000, 1700003600000)
+    row[1] = "not-a-number"
+    with pytest.raises(BinanceMalformedDataError):
+        _parse_kline(row, CandleInterval.ONE_HOUR)
+
+
+def test_binance_rest_rejects_unknown_symbol_status() -> None:
+    from app.infrastructure.exchange.binance.rest import _parse_symbol_metadata
+
+    raw = {
+        "symbol": "BTCEUR",
+        "status": "SOME_NEW_STATUS",
+        "baseAsset": "BTC",
+        "quoteAsset": "EUR",
+        "filters": [
+            {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+            {
+                "filterType": "LOT_SIZE",
+                "stepSize": "0.000001",
+                "minQty": "0.000001",
+                "maxQty": "9000",
+            },
+            {"filterType": "MIN_NOTIONAL", "minNotional": "5"},
+        ],
+    }
+    with pytest.raises(BinanceMalformedDataError):
+        _parse_symbol_metadata(raw)
+
+
+def test_binance_rest_rejects_missing_required_filters() -> None:
+    from app.infrastructure.exchange.binance.rest import _parse_symbol_metadata
+
+    raw = {
+        "symbol": "BTCEUR",
+        "status": "TRADING",
+        "baseAsset": "BTC",
+        "quoteAsset": "EUR",
+        "filters": [
+            {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+        ],
+    }
+    with pytest.raises(BinanceMalformedDataError):
+        _parse_symbol_metadata(raw)

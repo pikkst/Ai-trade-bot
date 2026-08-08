@@ -19,6 +19,7 @@ from app.core.clock import Clock, get_clock
 from app.infrastructure.exchange.binance.protocol import (
     BinanceExchangeError,
     BinanceInvalidSymbolError,
+    BinanceMalformedDataError,
     BinanceProviderUnavailableError,
     BinanceRateLimitError,
     BinanceTimeoutError,
@@ -157,11 +158,17 @@ class BinanceRestProvider:
                 current_start + timedelta(seconds=max_range_seconds),
                 end_time,
             )
+            # Binance endTime is inclusive, so request through the last
+            # millisecond before the exclusive end to avoid pulling the
+            # boundary kline that was not requested.
+            inclusive_end_ms = int(chunk_end.timestamp() * 1000) - 1
+            if inclusive_end_ms < int(current_start.timestamp() * 1000):
+                break
             params = {
                 "symbol": symbol.upper(),
                 "interval": interval.value,
                 "startTime": int(current_start.timestamp() * 1000),
-                "endTime": int(chunk_end.timestamp() * 1000),
+                "endTime": inclusive_end_ms,
                 "limit": max_candles_per_request,
             }
             response = await self._request("GET", _KLINES_PATH, params=params)
@@ -169,6 +176,10 @@ class BinanceRestProvider:
                 break
             for row in response:
                 candle = _parse_kline(row, interval)
+                # Defensively enforce the exclusive range even if the provider
+                # returns a row at or after end_time.
+                if not (start_time <= candle.time < chunk_end):
+                    continue
                 if candle.close_time <= server_time:
                     all_candles.append(candle)
             if len(response) < max_candles_per_request:
@@ -233,17 +244,29 @@ class BinanceRestProvider:
         async def _do_request() -> Any:
             try:
                 response = await self._client.request(method, path, params=params)
-                if response.status_code == 429:
+                if response.status_code in (429, 418):
                     retry_after = response.headers.get("Retry-After")
                     wait = float(retry_after) if retry_after else _RETRY_WAIT_MIN
+                    # Never shorten a provider-required backoff. If it exceeds
+                    # the local execution budget, fail closed without another
+                    # request instead of retrying an active ban too early.
+                    if wait > _RETRY_AFTER_MAX:
+                        raise BinanceProviderUnavailableError(
+                            f"Binance requested backoff {wait}s on {path} "
+                            f"exceeds configured bound {_RETRY_AFTER_MAX}s; "
+                            "failing closed without another request"
+                        )
                     retry_after_holder["value"] = wait
                     logger.warning(
                         "binance_rate_limited",
-                        extra={"path": path, "retry_after": wait},
+                        extra={
+                            "path": path,
+                            "status": response.status_code,
+                            "retry_after": wait,
+                        },
                     )
-                    raise BinanceRateLimitError(f"Binance rate limited on {path}")
-                if response.status_code == 418:
-                    raise BinanceRateLimitError(f"Binance IP ban on {path}")
+                    kind = "IP ban" if response.status_code == 418 else "rate limited"
+                    raise BinanceRateLimitError(f"Binance {kind} on {path}")
                 if response.status_code >= 500:
                     logger.error(
                         "binance_server_error",
@@ -316,30 +339,40 @@ class BinanceRestProvider:
 
 
 def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
-    status_str = raw.get("status", "TRADING").upper()
+    status_str = raw.get("status")
+    if status_str is None:
+        raise BinanceMalformedDataError("symbol metadata is missing status")
     try:
-        status = SymbolStatus(status_str)
-    except ValueError:
-        status = SymbolStatus.TRADING
-    price_precision = 0
-    quantity_precision = 0
-    tick_size = Decimal("0.00000000000000000001")
-    step_size = Decimal("0.00000000000000000001")
-    min_quantity = Decimal("0")
-    max_quantity = Decimal("9000")
-    min_notional = Decimal("0")
-    for filter_item in raw.get("filters", []):
-        filter_type = filter_item.get("filterType", "")
-        if filter_type == "PRICE_FILTER":
-            tick_size = Decimal(str(filter_item.get("tickSize", "0.00000001")))
-            price_precision = _decimal_precision(tick_size)
-        elif filter_type == "LOT_SIZE":
-            step_size = Decimal(str(filter_item.get("stepSize", "0.00000001")))
-            quantity_precision = _decimal_precision(step_size)
-            min_quantity = Decimal(str(filter_item.get("minQty", "0")))
-            max_quantity = Decimal(str(filter_item.get("maxQty", "9000")))
-        elif filter_type == "MIN_NOTIONAL":
-            min_notional = Decimal(str(filter_item.get("minNotional", "0")))
+        status = SymbolStatus(status_str.upper())
+    except ValueError as exc:
+        raise BinanceMalformedDataError(
+            f"unknown symbol status {status_str!r}"
+        ) from exc
+    filters = raw.get("filters") or []
+    price_filter = next(
+        (f for f in filters if f.get("filterType") == "PRICE_FILTER"), None
+    )
+    lot_filter = next((f for f in filters if f.get("filterType") == "LOT_SIZE"), None)
+    notional_filter = next(
+        (f for f in filters if f.get("filterType") == "MIN_NOTIONAL"), None
+    )
+    if price_filter is None or lot_filter is None or notional_filter is None:
+        raise BinanceMalformedDataError(
+            "symbol metadata is missing required filters "
+            "(PRICE_FILTER, LOT_SIZE, MIN_NOTIONAL)"
+        )
+    try:
+        tick_size = Decimal(str(price_filter.get("tickSize")))
+        price_precision = _decimal_precision(tick_size)
+        step_size = Decimal(str(lot_filter.get("stepSize")))
+        quantity_precision = _decimal_precision(step_size)
+        min_quantity = Decimal(str(lot_filter.get("minQty")))
+        max_quantity = Decimal(str(lot_filter.get("maxQty", "9000")))
+        min_notional = Decimal(str(notional_filter.get("minNotional")))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise BinanceMalformedDataError(
+            f"symbol metadata has invalid filter values: {exc}"
+        ) from exc
     return SymbolMetadata(
         symbol=raw.get("symbol", ""),
         base_asset=raw.get("baseAsset", ""),
@@ -356,19 +389,35 @@ def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
 
 
 def _parse_kline(row: list[Any], interval: CandleInterval) -> Candle:
-    open_time = datetime.fromtimestamp(int(row[0]) / 1000.0, tz=timezone.utc)
-    close_time = datetime.fromtimestamp(int(row[6]) / 1000.0, tz=timezone.utc)
-    return Candle(
-        time=open_time,
-        close_time=close_time,
-        open=Decimal(str(row[1])),
-        high=Decimal(str(row[2])),
-        low=Decimal(str(row[3])),
-        close=Decimal(str(row[4])),
-        volume=Decimal(str(row[5])),
-        quote_volume=Decimal(str(row[7])) if len(row) > 7 else Decimal("0"),
-        trade_count=int(row[8]) if len(row) > 8 else 0,
-    )
+    """Parse a Binance Spot kline row with the exact bounded schema.
+
+    A row shorter than the documented 12 fields is malformed, never coerced
+    into zero-volume evidence. Decimal/int conversion failures raise
+    BinanceMalformedDataError rather than leaking built-in exceptions.
+    """
+    if not isinstance(row, list) or len(row) < 12:
+        raise BinanceMalformedDataError(
+            f"kline row has {len(row) if isinstance(row, list) else 'non-list'} "
+            "fields; expected at least 12"
+        )
+    try:
+        open_time = datetime.fromtimestamp(int(row[0]) / 1000.0, tz=timezone.utc)
+        close_time = datetime.fromtimestamp(int(row[6]) / 1000.0, tz=timezone.utc)
+        return Candle(
+            time=open_time,
+            close_time=close_time,
+            open=Decimal(str(row[1])),
+            high=Decimal(str(row[2])),
+            low=Decimal(str(row[3])),
+            close=Decimal(str(row[4])),
+            volume=Decimal(str(row[5])),
+            quote_volume=Decimal(str(row[7])),
+            trade_count=int(row[8]),
+        )
+    except (ValueError, TypeError, InvalidOperation, OverflowError) as exc:
+        raise BinanceMalformedDataError(
+            f"kline row has invalid numeric/time fields: {exc}"
+        ) from exc
 
 
 def _decimal_precision(value: Decimal) -> int:

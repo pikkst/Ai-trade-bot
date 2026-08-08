@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Iterator
 from uuid import UUID
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
 from app.core.clock import FixedClock
@@ -17,6 +18,7 @@ from app.database import build_engine, build_session_factory
 from app.domains.market_data.models import (
     GapReport,
     IngestionStatus,
+    QualityState,
     SnapshotResult,
 )
 from app.domains.market_data.service import MarketDataService
@@ -866,3 +868,84 @@ async def test_restart_resumes_from_committed_page_evidence(
     assert len(result2.content_hash) == 64
     # The resume began after the persisted checkpoint, not from the start.
     assert checkpoint == result2.actual_start_time or checkpoint > start
+
+
+@contextmanager
+def _authenticated_connection(
+    engine: Engine, auth_subject: UUID
+) -> Iterator[Connection]:
+    with engine.connect() as connection:
+        transaction = connection.begin()
+        try:
+            connection.exec_driver_sql("set local role authenticated")
+            connection.execute(
+                text(
+                    "select set_config('request.jwt.claim.role', 'authenticated', true)"
+                ),
+            )
+            connection.execute(
+                text("select set_config('request.jwt.claim.sub', :subject, true)"),
+                {"subject": str(auth_subject)},
+            )
+            yield connection
+        finally:
+            transaction.rollback()
+
+
+def test_authenticated_can_read_m007_views_but_not_mutate_base(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Security-invoker read views must be readable by authenticated while the
+    base M007 tables remain read-only for browsers (matching M003)."""
+    subject = UUID("30000000-0000-0000-0000-000000000001")
+    with _authenticated_connection(database_engine, subject) as connection:
+        assert (
+            connection.execute(
+                text("select count(*) from public.market_snapshot_read")
+            ).scalar_one()
+            >= 0
+        )
+        assert (
+            connection.execute(
+                text("select count(*) from public.data_quality_event_read")
+            ).scalar_one()
+            >= 0
+        )
+        with pytest.raises(Exception) as excinfo:
+            connection.execute(
+                text("insert into public.market_snapshots (snapshot_hash) values (:h)"),
+                {"h": "d" * 64},
+            )
+        # The write must fail due to missing privileges/RLS, not a data error.
+        assert "permission denied" in str(excinfo.value).lower() or (
+            "row-level security" in str(excinfo.value).lower()
+        )
+
+
+def test_quality_state_vocabulary_matches_database_constraint(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Every canonical QualityState value must be persistable and every
+    constraint value must be represented by the domain enum."""
+    import re
+
+    domain_values = {state.value for state in QualityState}
+    with database_engine.connect() as connection:
+        constraint_text = connection.execute(
+            text(
+                """
+                select pg_get_constraintdef(oid)
+                from pg_constraint
+                where conrelid = 'public.data_quality_events'::regclass
+                  and contype = 'c'
+                  and conname = 'data_quality_events_event_type_check'
+                """
+            )
+        ).scalar_one()
+    constraint_values = set(re.findall(r"'([a-z_]+)'", constraint_text))
+    assert domain_values == constraint_values
+    assert "stale" in domain_values
+    assert "provider_unavailable" in domain_values
+    assert "rate_limited" in domain_values
+    assert "gap_repaired" in domain_values
+    assert "gap_unresolved" in domain_values
