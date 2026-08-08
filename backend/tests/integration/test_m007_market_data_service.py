@@ -105,7 +105,7 @@ async def test_incremental_fetch_overlaps_latest(database_engine: Engine) -> Non
             {
                 "symbol_version_id": SYMBOL_VERSION_ID,
                 "open_time": FIXED_TIME - timedelta(hours=1),
-                "close_time": FIXED_TIME - timedelta(hours=1),
+                "close_time": FIXED_TIME,
                 "content_hash": "a" * 64,
             },
         )

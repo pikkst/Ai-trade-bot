@@ -31,9 +31,6 @@ from app.domains.market_data.validation import (
     validate_candle_times,
     validate_candle_volumes,
 )
-from app.infrastructure.exchange.binance.fakes import (
-    FakeBinanceProvider,
-)
 from app.infrastructure.exchange.binance.protocol import (
     BinanceProviderUnavailableError,
     Candle,
@@ -266,12 +263,63 @@ class MarketDataService:
                 actual_start_time=gap_report.expected_start,
                 actual_end_time=gap_report.expected_end,
             )
-        return await self._ingest_pages(
+        total_inserted = 0
+        total_duplicates = 0
+        total_invalid = 0
+        total_corrected = 0
+        total_request_count = 0
+        total_retry_count = 0
+        provider_latency_ms: int | None = None
+        for range_start, range_end in gap_report.missing_ranges:
+            result = await self._ingest_pages(
+                ingestion_type=IngestionType.GAP_REPAIR,
+                symbol=symbol,
+                start_time=range_start,
+                end_time=range_end + timedelta(seconds=1),
+                idempotency_key=f"{idempotency_key}-{range_start.isoformat()}",
+            )
+            total_inserted += result.inserted_count
+            total_duplicates += result.duplicate_count
+            total_invalid += result.invalid_count
+            total_corrected += result.corrected_count
+            total_request_count += result.request_count
+            total_retry_count += result.retry_count
+            provider_latency_ms = (
+                provider_latency_ms or result.provider_latency_ms
+            )
+        verification = await self.detect_gaps(
+            symbol_version_id=self._symbol_version_id,
+            interval_code=self._interval.value,
+            expected_end=gap_report.expected_end,
+        )
+        return IngestionResult(
             ingestion_type=IngestionType.GAP_REPAIR,
-            symbol=symbol,
-            start_time=gap_report.expected_start,
-            end_time=gap_report.expected_end,
+            status=IngestionStatus.COMPLETED
+            if verification.missing_count == 0
+            else IngestionStatus.FAILED,
+            inserted_count=total_inserted,
+            duplicate_count=total_duplicates,
+            invalid_count=total_invalid,
+            corrected_count=total_corrected,
+            gap_count=verification.missing_count,
+            retry_count=total_retry_count,
+            request_count=total_request_count,
+            provider_latency_ms=provider_latency_ms,
+            safe_error=None
+            if verification.missing_count == 0
+            else "incomplete_repair",
+            content_hash=self._compute_ingestion_hash(
+                gap_report.expected_start,
+                gap_report.expected_end,
+                total_inserted,
+                total_duplicates,
+                total_invalid,
+                total_corrected,
+                total_request_count,
+            ),
             idempotency_key=idempotency_key,
+            actual_start_time=gap_report.expected_start,
+            actual_end_time=gap_report.expected_end,
         )
 
     def create_snapshot(
@@ -333,106 +381,62 @@ class MarketDataService:
         end_time: datetime,
         idempotency_key: str,
     ) -> IngestionResult:
+        # Provider I/O BEFORE any DB transaction
+        st = await self._provider.get_server_time()
+        if abs(st.clock_drift_ms) > self._policy.max_clock_drift_ms:
+            raise BinanceProviderUnavailableError(
+                f"clock drift {st.clock_drift_ms}ms exceeds policy"
+            )
+        server_time = st.server_time
+        clock_drift_ms = st.clock_drift_ms
+
+        # DB transaction for ingestion row
         ingestion_id = self._get_or_create_ingestion(
             ingestion_type=ingestion_type,
             start_time=start_time,
             end_time=end_time,
             idempotency_key=idempotency_key,
         )
+        self._session.commit()
+
+        # Load ingestion state
         row = self._session.execute(
             text(
-                "select status, actual_start_time, actual_end_time, checkpoint "
+                "select status, actual_start_time, actual_end_time, checkpoint, "
+                "inserted_count, duplicate_count, invalid_count, corrected_count, "
+                "request_count, retry_count, provider_latency_ms, safe_error, "
+                "content_hash "
                 "from public.market_data_ingestions where id = :id"
             ),
             {"id": ingestion_id},
         ).mappings().one_or_none()
-        if row and row["status"] in (
-            IngestionStatus.COMPLETED.value,
-            IngestionStatus.FAILED.value,
-            IngestionStatus.CANCELLED.value,
-        ):
+        if row and row["status"] == IngestionStatus.COMPLETED.value:
             return IngestionResult(
                 ingestion_type=ingestion_type,
-                status=IngestionStatus(row["status"]),
-                inserted_count=0,
-                duplicate_count=0,
-                invalid_count=0,
-                corrected_count=0,
+                status=IngestionStatus.COMPLETED,
+                inserted_count=row["inserted_count"],
+                duplicate_count=row["duplicate_count"],
+                invalid_count=row["invalid_count"],
+                corrected_count=row["corrected_count"],
                 gap_count=0,
-                retry_count=0,
-                request_count=0,
-                provider_latency_ms=None,
-                safe_error=None,
-                content_hash="",
+                retry_count=row["retry_count"],
+                request_count=row["request_count"],
+                provider_latency_ms=row["provider_latency_ms"],
+                safe_error=row["safe_error"],
+                content_hash=row["content_hash"],
                 idempotency_key=idempotency_key,
                 actual_start_time=row["actual_start_time"],
                 actual_end_time=row["actual_end_time"],
             )
         checkpoint = row["checkpoint"] if row else None
-        if checkpoint is not None:
-            current_start = checkpoint
-        request_count = 0
-        retry_count = 0
-        provider_latency_ms: int | None = None
-        safe_error: str | None = None
-        server_time = self._clock.now()
-        clock_drift_ms = 0
-        if not isinstance(self._provider, FakeBinanceProvider):
-            try:
-                st = await self._provider.get_server_time()
-                clock_drift_ms = st.clock_drift_ms
-                server_time = st.server_time
-                request_count += 1
-            except Exception as exc:
-                safe_error = str(exc)[:500]
-                self._update_ingestion(
-                    ingestion_id=ingestion_id,
-                    status=IngestionStatus.FAILED,
-                    inserted=0,
-                    duplicates=0,
-                    invalid=0,
-                    corrected=0,
-                    request_count=request_count,
-                    retry_count=retry_count,
-                    provider_latency_ms=None,
-                    safe_error=safe_error,
-                    content_hash="",
-                    actual_start_time=start_time,
-                    actual_end_time=end_time,
-                )
-                raise
-        if abs(clock_drift_ms) > self._policy.max_clock_drift_ms:
-            quality_event = make_quality_event(
-                event_type=QualityState.CLOCK_DRIFT_EXCEEDED.value,
-                severity="error",
-                symbol_version_id=self._symbol_version_id,
-                interval_code=self._interval.value,
-                details={"drift_ms": clock_drift_ms},
-                ingestion_id=ingestion_id,
-            )
-            self._bulk_insert_quality_events([quality_event])
-            self._update_ingestion(
-                ingestion_id=ingestion_id,
-                status=IngestionStatus.FAILED,
-                inserted=0,
-                duplicates=0,
-                invalid=0,
-                corrected=0,
-                request_count=request_count,
-                retry_count=retry_count,
-                provider_latency_ms=provider_latency_ms,
-                safe_error="clock_drift_exceeded",
-                content_hash="",
-                actual_start_time=start_time,
-                actual_end_time=end_time,
-            )
-            raise BinanceProviderUnavailableError(
-                f"clock drift {clock_drift_ms}ms exceeds policy"
-            )
+        current_start = checkpoint if checkpoint is not None else start_time
+        request_count = row["request_count"] if row else 0
+        retry_count = row["retry_count"] if row else 0
+        provider_latency_ms = row["provider_latency_ms"] if row else None
+        safe_error = row["safe_error"] if row else None
         page_size = timedelta(
             seconds=_MAX_PAGE_CANDLES * self._interval_seconds
         )
-        current_start = start_time
         inserted_total = 0
         duplicates_total = 0
         invalid_total = 0
@@ -463,7 +467,38 @@ class MarketDataService:
                 )
                 request_count += 1
                 if not raw_candles:
-                    break
+                    gap_event = make_quality_event(
+                        event_type=QualityState.GAP_DETECTED.value,
+                        severity="warning",
+                        symbol_version_id=self._symbol_version_id,
+                        interval_code=self._interval.value,
+                        details={
+                            "range_start": current_start.isoformat(),
+                            "range_end": page_end.isoformat(),
+                            "reason": "empty_page",
+                        },
+                        ingestion_id=ingestion_id,
+                    )
+                    self._bulk_insert_quality_events([gap_event])
+                    self._update_ingestion(
+                        ingestion_id=ingestion_id,
+                        status=IngestionStatus.FAILED,
+                        inserted=inserted_total,
+                        duplicates=duplicates_total,
+                        invalid=invalid_total,
+                        corrected=corrected_total,
+                        request_count=request_count,
+                        retry_count=retry_count,
+                        provider_latency_ms=provider_latency_ms,
+                        safe_error="incomplete_range: empty page from provider",
+                        content_hash="",
+                        actual_start_time=start_time,
+                        actual_end_time=end_time,
+                    )
+                    self._session.commit()
+                    raise BinanceProviderUnavailableError(
+                        "incomplete_range: empty page from provider"
+                    )
                 page_inserted = 0
                 page_duplicates = 0
                 page_invalid = 0
@@ -554,6 +589,7 @@ class MarketDataService:
                 invalid_total += page_invalid
                 corrected_total += page_corrected
                 self._update_checkpoint(ingestion_id, page_end)
+                self._session.commit()
                 current_start = page_end
             content_hash = self._compute_ingestion_hash(
                 start_time,
@@ -579,6 +615,7 @@ class MarketDataService:
                 actual_start_time=start_time,
                 actual_end_time=end_time,
             )
+            self._session.commit()
             return IngestionResult(
                 ingestion_type=ingestion_type,
                 status=IngestionStatus.COMPLETED,
@@ -620,6 +657,7 @@ class MarketDataService:
                 actual_start_time=start_time,
                 actual_end_time=end_time,
             )
+            self._session.commit()
             raise
 
     async def _ingest(
