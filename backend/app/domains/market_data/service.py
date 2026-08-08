@@ -91,6 +91,34 @@ class MarketDataService:
         assert_network_call_allowed()
         return await self._provider.get_symbol_metadata(symbol)
 
+    def _validate_symbol_binding(self, symbol: str) -> None:
+        """Reject a requested symbol that is not the configured symbol version.
+
+        The service hashes/persists every returned candle under
+        self._symbol_version_id, so the provider must fetch exactly that
+        native symbol or the canonical market identity would be corrupted.
+        """
+        native_symbol = self._session.execute(
+            text(
+                """
+                    select native_symbol
+                    from public.exchange_symbol_versions
+                    where id = :symbol_version_id
+                    """
+            ),
+            {"symbol_version_id": self._symbol_version_id},
+        ).scalar_one_or_none()
+        if native_symbol is None:
+            raise ValueError(
+                f"symbol_version_id {self._symbol_version_id} does not exist"
+            )
+        if native_symbol.upper() != symbol.upper():
+            raise ValueError(
+                f"symbol {symbol!r} does not match configured native symbol "
+                f"{native_symbol!r} for symbol_version_id "
+                f"{self._symbol_version_id}"
+            )
+
     async def backfill(
         self,
         symbol: str,
@@ -99,6 +127,7 @@ class MarketDataService:
         idempotency_key: str,
     ) -> IngestionResult:
         assert_network_call_allowed()
+        self._validate_symbol_binding(symbol)
         max_duration = timedelta(days=self._backfill_max_range_days)
         if end_time - start_time > max_duration:
             raise ValueError(
@@ -118,6 +147,7 @@ class MarketDataService:
         idempotency_key: str,
     ) -> IngestionResult:
         assert_network_call_allowed()
+        self._validate_symbol_binding(symbol)
         start_time, end_time = self._compute_incremental_range()
         if start_time >= end_time:
             return IngestionResult(
@@ -237,6 +267,7 @@ class MarketDataService:
         idempotency_key: str,
     ) -> IngestionResult:
         assert_network_call_allowed()
+        self._validate_symbol_binding(symbol)
         if gap_report.missing_count == 0:
             return IngestionResult(
                 ingestion_type=IngestionType.GAP_REPAIR,
@@ -330,8 +361,11 @@ class MarketDataService:
     ) -> SnapshotResult:
         if not candle_ids:
             raise ValueError("Cannot create snapshot with empty candle membership")
-        first_time, last_time, count = self._get_snapshot_candle_range(candle_ids)
-        if count != len(candle_ids) or first_time is None or last_time is None:
+        # Canonicalize membership chronologically so identical input always
+        # resolves to the same identity and hash.
+        canonical_ids = self._canonicalize_candle_ids(candle_ids)
+        first_time, last_time, count = self._get_snapshot_candle_range(canonical_ids)
+        if count != len(canonical_ids) or first_time is None or last_time is None:
             raise ValueError(
                 "Snapshot membership must match exactly the provided candle IDs "
                 "for this symbol and interval"
@@ -339,15 +373,19 @@ class MarketDataService:
         # Derive quality/freshness from persisted evidence rather than trusting
         # caller-supplied labels. Downstream reads are gated on the derived
         # values, so a caller cannot certify incomplete/stale data as approved.
-        derived_quality = self._derive_quality_outcome()
-        derived_freshness = self._derive_freshness_outcome(analysis_time, last_time)
+        derived_quality = self._derive_quality_outcome(
+            canonical_ids, first_time, last_time
+        )
+        derived_freshness = self._derive_freshness_outcome(
+            analysis_time, canonical_ids, last_time
+        )
         if derived_quality != "approved" or derived_freshness != "fresh":
             raise ValueError(
                 f"Snapshot gate failed: quality={derived_quality}, "
                 f"freshness={derived_freshness}"
             )
         snapshot_hash = self._compute_snapshot_hash(
-            candle_ids=candle_ids,
+            candle_ids=canonical_ids,
             analysis_time=analysis_time,
             first_time=first_time,
             last_time=last_time,
@@ -355,6 +393,28 @@ class MarketDataService:
             quality_outcome=derived_quality,
             freshness_outcome=derived_freshness,
         )
+        existing = self._session.execute(
+            text(
+                """
+                select id
+                from public.market_snapshots
+                where snapshot_hash = :snapshot_hash
+                limit 1
+                """
+            ),
+            {"snapshot_hash": snapshot_hash},
+        ).scalar_one_or_none()
+        if existing is not None:
+            return SnapshotResult(
+                snapshot_id=cast(UUID, existing),
+                snapshot_hash=snapshot_hash,
+                candle_count=count,
+                quality_outcome=derived_quality,
+                freshness_outcome=derived_freshness,
+                first_event_time=first_time,
+                last_event_time=last_time,
+                analysis_time=analysis_time,
+            )
         snapshot_id = self._insert_snapshot(
             analysis_time=analysis_time,
             first_event_time=first_time,
@@ -367,7 +427,7 @@ class MarketDataService:
             creator_cycle_id=creator_cycle_id,
             creator_job_id=creator_job_id,
         )
-        self._insert_snapshot_candles(snapshot_id, candle_ids)
+        self._insert_snapshot_candles(snapshot_id, canonical_ids)
         return SnapshotResult(
             snapshot_id=snapshot_id,
             snapshot_hash=snapshot_hash,
@@ -379,27 +439,119 @@ class MarketDataService:
             analysis_time=analysis_time,
         )
 
-    def _derive_quality_outcome(self) -> str:
-        """Return 'approved' only when no blocking evidence is open.
+    def _canonicalize_candle_ids(self, candle_ids: list[UUID]) -> list[UUID]:
+        """Return the membership in chronological open-time order.
 
-        Blocking evidence: unresolved error/critical quality events for this
-        symbol/interval. Approved requires that evidence to be absent or
-        resolved.
+        Exact membership is proven later by _get_snapshot_candle_range, which
+        requires count == len(candle_ids); this only orders the provided set so
+        hashing and persistence are canonical and idempotent.
         """
+        if len(candle_ids) <= 1:
+            return list(candle_ids)
+        rows = (
+            self._session.execute(
+                text(
+                    """
+                    select candle.id as id, candle.open_time as open_time
+                    from public.candles candle
+                    where candle.id = any(:ids)
+                      and candle.symbol_version_id = :symbol_version_id
+                      and candle.interval_code = :interval_code
+                      and candle.finalized = true
+                      and candle.superseded_by is null
+                    """
+                ),
+                {
+                    "ids": candle_ids,
+                    "symbol_version_id": self._symbol_version_id,
+                    "interval_code": self._interval.value,
+                },
+            )
+            .mappings()
+            .all()
+        )
+        by_id = {row["id"]: row["open_time"] for row in rows}
+        ordered = [cid for cid in candle_ids if cid in by_id]
+        ordered.sort(key=lambda cid: by_id[cid])
+        return ordered
+
+    def _derive_quality_outcome(
+        self,
+        candle_ids: list[UUID],
+        first_time: datetime,
+        last_time: datetime,
+    ) -> str:
+        """Return 'approved' only when the exact membership is contiguous and
+        free of blocking evidence.
+
+        Proves interval-by-interval coverage of the candidate membership and
+        rejects when unresolved gap/correction/invalidation evidence or
+        error/critical events overlap the range.
+        """
+        membership_times = (
+            self._session.execute(
+                text(
+                    """
+                    select candle.open_time
+                    from public.candles candle
+                    where candle.id = any(:ids)
+                      and candle.symbol_version_id = :symbol_version_id
+                      and candle.interval_code = :interval_code
+                      and candle.finalized = true
+                      and candle.superseded_by is null
+                    order by candle.open_time
+                    """
+                ),
+                {
+                    "ids": candle_ids,
+                    "symbol_version_id": self._symbol_version_id,
+                    "interval_code": self._interval.value,
+                },
+            )
+            .scalars()
+            .all()
+        )
+        if len(membership_times) != len(candle_ids):
+            return "incomplete"
+        expected_count = (
+            int((last_time - first_time).total_seconds() // self._interval_seconds) + 1
+        )
+        if len(membership_times) != expected_count:
+            return "incomplete"
+        if len(membership_times) > 1:
+            for earlier, later in zip(
+                membership_times, membership_times[1:], strict=True
+            ):
+                if (later - earlier).total_seconds() != self._interval_seconds:
+                    return "incomplete"
         blocking = self._session.execute(
             text(
                 """
-                    select count(*) as cnt
-                    from public.data_quality_events
-                    where symbol_version_id = :symbol_version_id
-                      and interval_code = :interval_code
-                      and severity in ('error', 'critical')
-                      and resolution is null
-                    """
+                select count(*) as cnt
+                from public.data_quality_events
+                where symbol_version_id = :symbol_version_id
+                  and interval_code = :interval_code
+                  and resolution is null
+                  and (
+                      event_type in (
+                          'gap_detected', 'gap_unresolved',
+                          'correction_pending', 'correction_applied',
+                          'invalidated', 'quarantined'
+                      )
+                      or severity in ('error', 'critical')
+                  )
+                  and (
+                      (affected_range_start is null and affected_range_end is null)
+                      or affected_range_start <= :last_time
+                      and affected_range_end >= :first_time
+                  )
+                """
             ),
             {
                 "symbol_version_id": self._symbol_version_id,
                 "interval_code": self._interval.value,
+                "first_time": first_time,
+                "last_time": last_time,
             },
         ).scalar_one()
         if blocking > 0:
@@ -407,10 +559,39 @@ class MarketDataService:
         return "approved"
 
     def _derive_freshness_outcome(
-        self, analysis_time: datetime, last_event_time: datetime
+        self,
+        analysis_time: datetime,
+        candle_ids: list[UUID],
+        last_event_time: datetime,
     ) -> str:
-        """Return 'fresh' only when the latest candle is within the policy window."""
-        age_seconds = (analysis_time - last_event_time).total_seconds()
+        """Return 'fresh' only when the latest finalized close is within policy.
+
+        The M007 freshness contract measures from the latest finalized close /
+        expected interval boundary, not the open time, so a 1h candle that
+        closed one minute ago is fresh.
+        """
+        latest_close = self._session.execute(
+            text(
+                """
+                    select max(candle.close_time) as max_close
+                    from public.candles candle
+                    where candle.id = any(:ids)
+                      and candle.symbol_version_id = :symbol_version_id
+                      and candle.interval_code = :interval_code
+                      and candle.finalized = true
+                      and candle.superseded_by is null
+                    """
+            ),
+            {
+                "ids": candle_ids,
+                "symbol_version_id": self._symbol_version_id,
+                "interval_code": self._interval.value,
+            },
+        ).scalar_one()
+        boundary = latest_close or (
+            last_event_time + timedelta(seconds=self._interval_seconds)
+        )
+        age_seconds = (analysis_time - boundary).total_seconds()
         if age_seconds > self._policy.stale_threshold_seconds:
             return "stale"
         if age_seconds < 0:
@@ -425,12 +606,8 @@ class MarketDataService:
         end_time: datetime,
         idempotency_key: str,
     ) -> IngestionResult:
-        # Provider I/O BEFORE any DB transaction
-        st = await self._provider.get_server_time()
-        server_time = st.server_time
-        clock_drift_ms = st.clock_drift_ms
-
-        # Short DB transaction: resolve/create the ingestion row, then commit.
+        # Short DB transaction: create/commit the attempt FIRST so even a
+        # server-time transport failure leaves a durable, auditable attempt.
         ingestion_id = self._get_or_create_ingestion(
             ingestion_type=ingestion_type,
             start_time=start_time,
@@ -439,15 +616,16 @@ class MarketDataService:
         )
         self._session.commit()
 
-        # Short DB transaction: load ingestion state, then commit to close the
-        # read transaction so no network call happens inside it.
+        # Short DB transaction: load ingestion state and any durable cumulative
+        # page evidence, then commit to close the read transaction so no
+        # network call happens inside it.
         row = (
             self._session.execute(
                 text(
                     "select status, actual_start_time, actual_end_time, checkpoint, "
                     "inserted_count, duplicate_count, invalid_count, corrected_count, "
                     "request_count, retry_count, provider_latency_ms, safe_error, "
-                    "content_hash "
+                    "content_hash, page_hashes "
                     "from public.market_data_ingestions where id = :id"
                 ),
                 {"id": ingestion_id},
@@ -476,10 +654,63 @@ class MarketDataService:
             )
         checkpoint = row["checkpoint"] if row else None
         current_start = checkpoint if checkpoint is not None else start_time
+        inserted_total = row["inserted_count"] if row else 0
+        duplicates_total = row["duplicate_count"] if row else 0
+        invalid_total = row["invalid_count"] if row else 0
+        corrected_total = row["corrected_count"] if row else 0
         request_count = row["request_count"] if row else 0
         retry_count = row["retry_count"] if row else 0
         provider_latency_ms = row["provider_latency_ms"] if row else None
         safe_error = row["safe_error"] if row else None
+        stored_page_hashes = row["page_hashes"] if row and row["page_hashes"] else []
+        page_hashes = (
+            json.loads(stored_page_hashes)
+            if isinstance(stored_page_hashes, str)
+            else list(stored_page_hashes)
+        )
+
+        # Provider I/O - no active DB transaction. Server-time failures are
+        # persisted as a failed ingestion outcome in a short follow-up tx.
+        retry_before = getattr(self._provider, "retry_count", 0)
+        try:
+            st = await self._provider.get_server_time()
+            server_time = st.server_time
+            clock_drift_ms = st.clock_drift_ms
+        except Exception as exc:
+            retry_delta = getattr(self._provider, "retry_count", 0) - retry_before
+            retry_count += max(0, retry_delta)
+            request_count += 1
+            self._update_ingestion(
+                ingestion_id=ingestion_id,
+                status=IngestionStatus.FAILED,
+                inserted=inserted_total,
+                duplicates=duplicates_total,
+                invalid=invalid_total,
+                corrected=corrected_total,
+                request_count=request_count,
+                retry_count=retry_count,
+                provider_latency_ms=provider_latency_ms,
+                safe_error=f"server_time_failed: {str(exc)[:300]}",
+                content_hash=self._compute_ingestion_hash(
+                    start_time,
+                    end_time,
+                    inserted_total,
+                    duplicates_total,
+                    invalid_total,
+                    corrected_total,
+                    request_count,
+                    page_hashes,
+                ),
+                actual_start_time=start_time,
+                actual_end_time=end_time,
+                checkpoint=current_start,
+                page_hashes=page_hashes,
+            )
+            self._session.commit()
+            raise
+        retry_delta = getattr(self._provider, "retry_count", 0) - retry_before
+        retry_count += max(0, retry_delta)
+        request_count += 1
 
         # Clock-drift evidence: persist a quality event and a failed outcome
         # before returning failure, while keeping the provider call outside DB.
@@ -496,10 +727,10 @@ class MarketDataService:
             self._update_ingestion(
                 ingestion_id=ingestion_id,
                 status=IngestionStatus.FAILED,
-                inserted=0,
-                duplicates=0,
-                invalid=0,
-                corrected=0,
+                inserted=inserted_total,
+                duplicates=duplicates_total,
+                invalid=invalid_total,
+                corrected=corrected_total,
                 request_count=request_count,
                 retry_count=retry_count,
                 provider_latency_ms=provider_latency_ms,
@@ -510,6 +741,7 @@ class MarketDataService:
                 actual_start_time=start_time,
                 actual_end_time=end_time,
                 checkpoint=current_start,
+                page_hashes=page_hashes,
             )
             self._session.commit()
             raise BinanceProviderUnavailableError(
@@ -523,17 +755,13 @@ class MarketDataService:
         self._session.commit()
 
         page_size = timedelta(seconds=_MAX_PAGE_CANDLES * self._interval_seconds)
-        inserted_total = 0
-        duplicates_total = 0
-        invalid_total = 0
-        corrected_total = 0
         batch_by_time: dict[datetime, str] = {}
-        page_hashes: list[str] = []
         try:
             while current_start < end_time:
                 page_end = min(current_start + page_size, end_time)
                 page_start_ns = self._clock.now()
                 # Provider I/O - no DB transaction is open.
+                retry_before = getattr(self._provider, "retry_count", 0)
                 raw_candles = await self._provider.get_finalized_candles(
                     symbol=symbol,
                     interval=self._interval,
@@ -541,6 +769,8 @@ class MarketDataService:
                     end_time=page_end,
                     server_time=server_time,
                 )
+                retry_delta = getattr(self._provider, "retry_count", 0) - retry_before
+                retry_count += max(0, retry_delta)
                 page_end_ns = self._clock.now()
                 page_latency = int((page_end_ns - page_start_ns).total_seconds() * 1000)
                 provider_latency_ms = provider_latency_ms or page_latency
@@ -584,47 +814,30 @@ class MarketDataService:
                         actual_start_time=start_time,
                         actual_end_time=end_time,
                         checkpoint=current_start,
+                        page_hashes=page_hashes,
                     )
                     self._session.commit()
                     raise BinanceProviderUnavailableError(
                         "incomplete_range: empty page from provider"
                     )
 
-                # Validate the exact contiguous expected open-time sequence.
-                contiguous, proven_boundary = self._resolve_page_contiguity(
-                    raw_candles, current_start, page_end
-                )
-                if proven_boundary < page_end:
-                    missing_range = (
-                        proven_boundary,
-                        page_end,
-                    )
-                    gap_event = make_quality_event(
-                        event_type=QualityState.GAP_DETECTED.value,
-                        severity="warning",
-                        symbol_version_id=self._symbol_version_id,
-                        interval_code=self._interval.value,
-                        details={
-                            "range_start": missing_range[0].isoformat(),
-                            "range_end": missing_range[1].isoformat(),
-                            "reason": "partial_page",
-                        },
-                        ingestion_id=ingestion_id,
-                    )
-                    self._bulk_insert_quality_events([gap_event])
-
-                page_inserted = 0
-                page_duplicates = 0
-                page_invalid = 0
-                page_corrected = 0
-                quality_events: list[QualityEvent] = []
+                # Validate every candle. Repeated identities pass through
+                # classification (duplicate_consistent / duplicate_conflict)
+                # while exactly one accepted candle is required per expected
+                # timestamp to advance the durable boundary.
                 validated = self._validate_candles(
-                    contiguous,
+                    raw_candles,
                     existing_hashes=existing_hashes,
                     existing_times=existing_times,
                     batch_by_time=batch_by_time,
                     clock_drift_ms=clock_drift_ms,
                 )
+                accepted_times: set[datetime] = set()
+                page_inserted = 0
+                page_duplicates = 0
+                page_invalid = 0
+                page_corrected = 0
+                quality_events: list[QualityEvent] = []
                 for result in validated:
                     if not result.is_valid:
                         page_invalid += 1
@@ -649,6 +862,7 @@ class MarketDataService:
                         existing_hashes.add(result.content_hash)
                         existing_times.add(result.candle.time)
                         batch_by_time[result.candle.time] = result.content_hash
+                        accepted_times.add(result.candle.time)
                         continue
                     if result.is_duplicate:
                         if result.duplicate_conflict:
@@ -679,7 +893,25 @@ class MarketDataService:
                                     ingestion_id=ingestion_id,
                                 )
                             )
+                            accepted_times.add(result.candle.time)
                         page_duplicates += 1
+                        continue
+                    if result.duplicate_conflict:
+                        quality_events.append(
+                            make_quality_event(
+                                event_type=QualityState.DUPLICATE_CONFLICT.value,
+                                severity="warning",
+                                symbol_version_id=self._symbol_version_id,
+                                interval_code=self._interval.value,
+                                details={
+                                    "hash": result.content_hash,
+                                    "open_time": result.candle.time.isoformat(),
+                                    "reason": "same_page_conflict",
+                                },
+                                ingestion_id=ingestion_id,
+                            )
+                        )
+                        page_invalid += 1
                         continue
                     if result.out_of_order:
                         quality_events.append(
@@ -698,12 +930,14 @@ class MarketDataService:
                         page_invalid += 1
                         continue
                     if result.content_hash in existing_hashes:
+                        accepted_times.add(result.candle.time)
                         page_duplicates += 1
                         continue
                     self._insert_candle(result.candle, result.content_hash)
                     existing_hashes.add(result.content_hash)
                     existing_times.add(result.candle.time)
                     batch_by_time[result.candle.time] = result.content_hash
+                    accepted_times.add(result.candle.time)
                     page_inserted += 1
                 if quality_events:
                     self._bulk_insert_quality_events(quality_events)
@@ -716,13 +950,42 @@ class MarketDataService:
                         [r.content_hash for r in validated if not r.is_duplicate]
                     )
                 )
-                self._update_checkpoint(ingestion_id, proven_boundary)
+                proven_boundary = self._compute_accepted_boundary(
+                    accepted_times, current_start, page_end
+                )
+                if proven_boundary < page_end:
+                    missing_range = (
+                        proven_boundary,
+                        page_end,
+                    )
+                    gap_event = make_quality_event(
+                        event_type=QualityState.GAP_DETECTED.value,
+                        severity="warning",
+                        symbol_version_id=self._symbol_version_id,
+                        interval_code=self._interval.value,
+                        details={
+                            "range_start": missing_range[0].isoformat(),
+                            "range_end": missing_range[1].isoformat(),
+                            "reason": "partial_page",
+                        },
+                        ingestion_id=ingestion_id,
+                    )
+                    self._bulk_insert_quality_events([gap_event])
+                # Persist cumulative counters + page hashes + checkpoint
+                # atomically so a restarted run resumes with the same evidence.
+                self._persist_page_evidence(
+                    ingestion_id=ingestion_id,
+                    checkpoint=proven_boundary,
+                    inserted=inserted_total,
+                    duplicates=duplicates_total,
+                    invalid=invalid_total,
+                    corrected=corrected_total,
+                    request_count=request_count,
+                    retry_count=retry_count,
+                    page_hashes=page_hashes,
+                )
                 self._session.commit()
                 current_start = proven_boundary
-                retry_count = max(
-                    retry_count,
-                    getattr(self._provider, "retry_count", 0),
-                )
                 if proven_boundary < page_end:
                     self._update_ingestion(
                         ingestion_id=ingestion_id,
@@ -748,6 +1011,7 @@ class MarketDataService:
                         actual_start_time=start_time,
                         actual_end_time=end_time,
                         checkpoint=current_start,
+                        page_hashes=page_hashes,
                     )
                     self._session.commit()
                     raise BinanceProviderUnavailableError(
@@ -778,6 +1042,7 @@ class MarketDataService:
                 actual_start_time=start_time,
                 actual_end_time=end_time,
                 checkpoint=current_start,
+                page_hashes=page_hashes,
             )
             self._session.commit()
             return IngestionResult(
@@ -827,6 +1092,7 @@ class MarketDataService:
                 actual_start_time=start_time,
                 actual_end_time=end_time,
                 checkpoint=current_start,
+                page_hashes=page_hashes,
             )
             self._session.commit()
             raise
@@ -937,31 +1203,27 @@ class MarketDataService:
             batch_by_time[candle.time] = content_hash
         return results
 
-    def _resolve_page_contiguity(
+    def _compute_accepted_boundary(
         self,
-        raw_candles: list[Candle],
+        accepted_times: set[datetime],
         current_start: datetime,
         page_end: datetime,
-    ) -> tuple[list[Candle], datetime]:
-        """Return the contiguous proven prefix and the next proven boundary.
+    ) -> datetime:
+        """Return the boundary across identities with accepted evidence.
 
-        Validates the exact expected open-time sequence starting at
-        current_start. The checkpoint may only advance to the last proven
-        contiguous boundary; any missing tail remains uncommitted and is
-        reported by the caller as gap evidence.
+        Only identities that were successfully accepted (inserted, exact
+        duplicate, or applied correction) may prove coverage. The durable
+        boundary advances interval by interval while the expected open time is
+        in accepted_times; the first missing/invalid identity stops it so a
+        checkpoint never advances past a hole.
         """
-        contiguous: list[Candle] = []
         expected_time = current_start
-        for candle in raw_candles:
-            if candle.time != expected_time:
+        while expected_time < page_end:
+            if expected_time in accepted_times:
+                expected_time += timedelta(seconds=self._interval_seconds)
+            else:
                 break
-            contiguous.append(candle)
-            expected_time += timedelta(seconds=self._interval_seconds)
-        proven_boundary = min(
-            expected_time,
-            page_end,
-        )
-        return contiguous, proven_boundary
+        return min(expected_time, page_end)
 
     def _compute_page_hash(self, content_hashes: list[str]) -> str:
         payload = {
@@ -1057,9 +1319,33 @@ class MarketDataService:
                 ),
             },
         )
+        # Invalidate dependent snapshots whose membership references the
+        # superseded original so corrected-out evidence is never exposed as
+        # approved/fresh downstream.
+        invalidated_snapshots = (
+            self._session.execute(
+                text(
+                    """
+                update public.market_snapshots
+                set state = 'invalidated',
+                    invalidation_reason = 'candle_correction'
+                where state = 'active'
+                  and id in (
+                      select snapshot_id
+                      from public.market_snapshot_candles
+                      where candle_id = :original_candle_id
+                  )
+                returning id
+                """
+                ),
+                {"original_candle_id": result.existing_id},
+            )
+            .scalars()
+            .all()
+        )
         quality_events.append(
             make_quality_event(
-                event_type=QualityState.CORRECTION_PENDING.value,
+                event_type=QualityState.CORRECTION_APPLIED.value,
                 severity="warning",
                 symbol_version_id=self._symbol_version_id,
                 interval_code=self._interval.value,
@@ -1068,6 +1354,7 @@ class MarketDataService:
                     "replacement_hash": result.content_hash,
                     "open_time": result.candle.time.isoformat(),
                     "replacement_candle_id": str(replacement_id),
+                    "invalidated_snapshot_ids": [str(s) for s in invalidated_snapshots],
                 },
                 ingestion_id=ingestion_id,
             )
@@ -1328,6 +1615,7 @@ class MarketDataService:
         actual_start_time: datetime | None,
         actual_end_time: datetime | None,
         checkpoint: datetime | None = None,
+        page_hashes: list[str] | None = None,
     ) -> None:
         self._session.execute(
             text(
@@ -1346,6 +1634,7 @@ class MarketDataService:
                     actual_start_time = :actual_start_time,
                     actual_end_time = :actual_end_time,
                     checkpoint = coalesce(:checkpoint, checkpoint),
+                    page_hashes = :page_hashes,
                     completed_at = case
                         when :status in ('completed', 'failed', 'cancelled')
                         then timezone('utc', now()) else null end,
@@ -1368,20 +1657,51 @@ class MarketDataService:
                 "actual_start_time": actual_start_time,
                 "actual_end_time": actual_end_time,
                 "checkpoint": checkpoint,
+                "page_hashes": json.dumps(page_hashes or []),
             },
         )
 
-    def _update_checkpoint(self, ingestion_id: UUID, checkpoint: datetime) -> None:
+    def _persist_page_evidence(
+        self,
+        ingestion_id: UUID,
+        checkpoint: datetime,
+        inserted: int,
+        duplicates: int,
+        invalid: int,
+        corrected: int,
+        request_count: int,
+        retry_count: int,
+        page_hashes: list[str],
+    ) -> None:
+        """Persist cumulative counters + ordered page hashes atomically with
+        the checkpoint so a restarted run resumes with the same evidence."""
         self._session.execute(
             text(
                 """
                 update public.market_data_ingestions
                 set checkpoint = :checkpoint,
+                    inserted_count = :inserted,
+                    duplicate_count = :duplicates,
+                    invalid_count = :invalid,
+                    corrected_count = :corrected,
+                    request_count = :request_count,
+                    retry_count = :retry_count,
+                    page_hashes = :page_hashes,
                     updated_at = timezone('utc', now())
                 where id = :id
                 """
             ),
-            {"id": ingestion_id, "checkpoint": checkpoint},
+            {
+                "id": ingestion_id,
+                "checkpoint": checkpoint,
+                "inserted": inserted,
+                "duplicates": duplicates,
+                "invalid": invalid,
+                "corrected": corrected,
+                "request_count": request_count,
+                "retry_count": retry_count,
+                "page_hashes": json.dumps(page_hashes),
+            },
         )
 
     def _bulk_insert_quality_events(self, events: list[QualityEvent]) -> None:

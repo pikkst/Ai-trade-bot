@@ -225,7 +225,7 @@ Constraint: unique exchange/native symbol/effective version.
 
 ### `market_data_ingestions`
 
-REST request/page identity, provider request metadata, bounded range, checkpoint, status, inserted/duplicate/invalid counts, retries, timing, safe error, cycle/job references.
+REST request/page identity, provider request metadata, bounded range, checkpoint, status, inserted/duplicate/invalid/corrected counts, ordered page content hashes, retries, timing, safe error, cycle/job references. Cumulative counters and page hashes are committed atomically with each page checkpoint so a restarted run resumes with the same evidence.
 
 ### `candles`
 
@@ -264,6 +264,8 @@ Original, replacement, source evidence, reason, effective time, dependent-artifa
 ### `market_snapshots`
 
 Workspace, market, interval, analysis time, first/last candle, count, quality/freshness, snapshot hash, creator/cycle/job, state, invalidation/supersession.
+
+Constraints: unique snapshot hash (idempotent replay of identical canonical input); active snapshots must be quality-approved and fresh to be readable downstream.
 
 ### `market_snapshot_candles`
 

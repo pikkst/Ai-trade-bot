@@ -708,3 +708,31 @@ def test_no_network_call_in_normal_unit_tests() -> None:
     )
     assert len(candles) == 1
     assert isinstance(candles[0], Candle)
+
+
+def test_bounded_exponential_wait_is_deterministic_and_exponential() -> None:
+    from app.infrastructure.exchange.binance.rest import (
+        _RETRY_AFTER_MAX,
+        _RETRY_WAIT_MAX,
+        _RETRY_WAIT_MIN,
+        _bounded_exponential_wait,
+    )
+
+    class _Attempt:
+        def __init__(self, n: int) -> None:
+            self.attempt_number = n
+
+    waits = [
+        _bounded_exponential_wait(_Attempt(n), 0.0)  # type: ignore[arg-type]
+        for n in (1, 2, 3)
+    ]
+    # Ordinary retries grow exponentially and are bounded.
+    assert waits[0] == _RETRY_WAIT_MIN
+    assert waits[1] == 2 * _RETRY_WAIT_MIN
+    assert waits[2] == 4 * _RETRY_WAIT_MIN
+    assert all(w <= _RETRY_WAIT_MAX for w in waits)
+    # Determinism: identical attempts yield identical waits.
+    assert _bounded_exponential_wait(_Attempt(3), 0.0) == waits[2]  # type: ignore[arg-type]
+    # Retry-After is honored when larger, and bounded by the after cap.
+    assert _bounded_exponential_wait(_Attempt(1), 5.0) == 5.0  # type: ignore[arg-type]
+    assert _bounded_exponential_wait(_Attempt(1), 5000.0) == _RETRY_AFTER_MAX  # type: ignore[arg-type]

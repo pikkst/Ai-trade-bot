@@ -24,6 +24,7 @@ class QualityState(str, Enum):
     RATE_LIMITED = "rate_limited"
     CLOCK_DRIFT_EXCEEDED = "clock_drift_exceeded"
     CORRECTION_PENDING = "correction_pending"
+    CORRECTION_APPLIED = "correction_applied"
     QUARANTINED = "quarantined"
     INVALIDATED = "invalidated"
 

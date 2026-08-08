@@ -50,13 +50,17 @@ def _bounded_exponential_wait(
     retry_state: RetryCallState,
     retry_after: float,
 ) -> float:
-    """Exponential backoff bounded by the configured window.
+    """Bounded exponential backoff that honors a Binance Retry-After header.
 
-    Honors a Binance Retry-After header so a 429 backoff request is respected
-    instead of retrying too early (which risks repeated throttling or a 418).
+    Ordinary retries grow exponentially as
+    min * multiplier * 2 ** (attempt_number - 1), bounded by max. A Retry-After
+    value from a 429 response is honored when it is larger, also bounded, so a
+    request is not retried too early (which risks a 418 ban).
     """
     wait_seconds = float(
-        _RETRY_WAIT_MIN * (_RETRY_WAIT_MULTIPLIER ** (retry_state.attempt_number - 1))
+        _RETRY_WAIT_MIN
+        * _RETRY_WAIT_MULTIPLIER
+        * (2 ** (retry_state.attempt_number - 1))
     )
     wait_seconds = min(max(wait_seconds, _RETRY_WAIT_MIN), _RETRY_WAIT_MAX)
     if retry_after:
