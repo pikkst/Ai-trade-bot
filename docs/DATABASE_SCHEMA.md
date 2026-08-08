@@ -239,17 +239,19 @@ Fields:
 - trade count;
 - finalized flag;
 - ingestion/source reference;
-- content hash.
+- content hash;
+- superseded-by candle reference (immutable correction chain).
 
 Constraints:
 
-- unique symbol/interval/open time/version policy;
+- one active (non-superseded) candle per symbol/interval/open time;
 - positive prices;
 - high >= open/close/low;
 - low <= open/close/high;
 - non-negative volumes/counts;
 - close after open;
-- finalized required for normal downstream use.
+- finalized required for normal downstream use;
+- a corrected candle is preserved immutably and linked to its replacement.
 
 ### `data_quality_events`
 

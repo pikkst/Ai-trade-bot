@@ -83,6 +83,8 @@ class FakeBinanceProvider:
             )
         }
         self._base_time = datetime(2026, 8, 1, 0, 0, 0, tzinfo=timezone.utc)
+        self.retry_count = 0
+        self.last_retry_wait_ms: int | None = None
 
     def _now(self) -> datetime:
         if self._clock is not None:

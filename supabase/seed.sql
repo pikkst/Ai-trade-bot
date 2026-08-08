@@ -216,7 +216,7 @@ insert into public.candles (
 values
     ('42000000-0000-0000-0000-000000000001', '41000000-0000-0000-0000-000000000001', '1h', '2026-01-01T00:00:00Z', '2026-01-01T00:59:59Z', 90000, 90500, 89500, 90250, 12.5, 1128125, 1000, true, encode(extensions.digest('BTCEUR:2026-01-01T00:00:00Z', 'sha256'), 'hex'), '2026-01-01T01:00:00Z'),
     ('42000000-0000-0000-0000-000000000002', '41000000-0000-0000-0000-000000000001', '1h', '2026-01-01T01:00:00Z', '2026-01-01T01:59:59Z', 90250, 91000, 90100, 90800, 14.0, 1271200, 1200, true, encode(extensions.digest('BTCEUR:2026-01-01T01:00:00Z', 'sha256'), 'hex'), '2026-01-01T02:00:00Z')
-on conflict (symbol_version_id, interval_code, open_time) do update
+on conflict (symbol_version_id, interval_code, open_time) where superseded_by is null do update
 set close_time = excluded.close_time,
     open_price = excluded.open_price,
     high_price = excluded.high_price,

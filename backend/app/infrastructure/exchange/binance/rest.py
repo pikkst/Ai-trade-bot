@@ -9,10 +9,10 @@ from typing import Any, Self
 
 import httpx
 from tenacity import (
-    retry,
+    AsyncRetrying,
+    RetryCallState,
     retry_if_exception_type,
     stop_after_attempt,
-    wait_exponential,
 )
 
 from app.core.clock import Clock, get_clock
@@ -42,7 +42,26 @@ _MAX_RETRIES = 3
 _RETRY_WAIT_MULTIPLIER = 1
 _RETRY_WAIT_MIN = 1.0
 _RETRY_WAIT_MAX = 10.0
+_RETRY_AFTER_MAX = 30.0
 _CLOCK_DRIFT_THRESHOLD_MS = 5000
+
+
+def _bounded_exponential_wait(
+    retry_state: RetryCallState,
+    retry_after: float,
+) -> float:
+    """Exponential backoff bounded by the configured window.
+
+    Honors a Binance Retry-After header so a 429 backoff request is respected
+    instead of retrying too early (which risks repeated throttling or a 418).
+    """
+    wait_seconds = float(
+        _RETRY_WAIT_MIN * (_RETRY_WAIT_MULTIPLIER ** (retry_state.attempt_number - 1))
+    )
+    wait_seconds = min(max(wait_seconds, _RETRY_WAIT_MIN), _RETRY_WAIT_MAX)
+    if retry_after:
+        wait_seconds = max(wait_seconds, min(retry_after, _RETRY_AFTER_MAX))
+    return wait_seconds
 
 
 class BinanceRestProvider:
@@ -66,6 +85,8 @@ class BinanceRestProvider:
         self._last_server_time: datetime | None = None
         self._last_clock_drift_ms: int = 0
         self._symbol_metadata_cache: dict[str, SymbolMetadata] = {}
+        self.retry_count = 0
+        self.last_retry_wait_ms: int | None = None
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -182,7 +203,17 @@ class BinanceRestProvider:
         path: str,
         params: dict[str, Any] | None = None,
     ) -> Any:
-        @retry(
+        retry_after_holder: dict[str, float] = {"value": 0.0}
+
+        def _wait(retry_state: RetryCallState) -> float:
+            self.retry_count += 1
+            wait_seconds = _bounded_exponential_wait(
+                retry_state, retry_after_holder["value"]
+            )
+            self.last_retry_wait_ms = int(wait_seconds * 1000)
+            return wait_seconds
+
+        retrying = AsyncRetrying(
             retry=retry_if_exception_type(
                 (
                     BinanceRateLimitError,
@@ -190,20 +221,18 @@ class BinanceRestProvider:
                     httpx.TimeoutException,
                 )
             ),
-            wait=wait_exponential(
-                multiplier=_RETRY_WAIT_MULTIPLIER,
-                min=_RETRY_WAIT_MIN,
-                max=_RETRY_WAIT_MAX,
-            ),
+            wait=_wait,
             stop=stop_after_attempt(self._max_retries),
             reraise=True,
         )
+
         async def _do_request() -> Any:
             try:
                 response = await self._client.request(method, path, params=params)
                 if response.status_code == 429:
                     retry_after = response.headers.get("Retry-After")
                     wait = float(retry_after) if retry_after else _RETRY_WAIT_MIN
+                    retry_after_holder["value"] = wait
                     logger.warning(
                         "binance_rate_limited",
                         extra={"path": path, "retry_after": wait},
@@ -269,7 +298,7 @@ class BinanceRestProvider:
                 ) from exc
 
         try:
-            return await _do_request()
+            return await retrying(_do_request)
         except BinanceRateLimitError:
             raise
         except BinanceTimeoutError:

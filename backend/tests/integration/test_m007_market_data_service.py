@@ -10,6 +10,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 
 from app.core.clock import FixedClock
 from app.database import build_engine, build_session_factory
@@ -24,7 +25,16 @@ from app.infrastructure.exchange.binance.fakes import (
     FakeBinanceProvider,
     FakeBinanceScenario,
 )
-from app.infrastructure.exchange.binance.protocol import CandleInterval
+from app.infrastructure.exchange.binance.protocol import (
+    BinanceProviderUnavailableError,
+    Candle,
+    CandleInterval,
+    ExchangeTime,
+    MarketDataProvider,
+    ProviderHealth,
+    RateLimitState,
+    SymbolMetadata,
+)
 
 pytestmark = pytest.mark.database
 
@@ -97,8 +107,59 @@ def clean_m007_data(database_engine: Engine) -> Iterator[None]:
     yield
 
 
+class BoundaryAssertingProvider:
+    """Wrap a provider and fail if any network call runs inside a DB transaction.
+
+    This asserts the M007 transaction boundary directly: provider I/O must
+    happen with no active persistence transaction on the session.
+    """
+
+    def __init__(self, inner: MarketDataProvider, session: Session) -> None:
+        self._inner = inner
+        self._session = session
+
+    def _assert_no_transaction(self) -> None:
+        if self._session.in_transaction():
+            raise AssertionError(
+                "network call attempted while a DB transaction was active"
+            )
+
+    async def get_server_time(self) -> ExchangeTime:
+        self._assert_no_transaction()
+        return await self._inner.get_server_time()
+
+    async def get_symbol_metadata(self, symbol: str) -> SymbolMetadata:
+        self._assert_no_transaction()
+        return await self._inner.get_symbol_metadata(symbol)
+
+    async def get_finalized_candles(
+        self,
+        symbol: str,
+        interval: CandleInterval,
+        start_time: datetime,
+        end_time: datetime,
+        server_time: datetime | None = None,
+    ) -> list[Candle]:
+        self._assert_no_transaction()
+        return await self._inner.get_finalized_candles(
+            symbol,
+            interval,
+            start_time,
+            end_time,
+            server_time,
+        )
+
+    async def get_rate_limit_state(self) -> RateLimitState:
+        self._assert_no_transaction()
+        return await self._inner.get_rate_limit_state()
+
+    async def get_health(self) -> ProviderHealth:
+        self._assert_no_transaction()
+        return await self._inner.get_health()
+
+
 @pytest.mark.asyncio
-async def test_backfill_inserts_candles(
+async def test_backfill_inserts_candles_outside_transaction(
     database_engine: Engine, clean_m007_data: None
 ) -> None:
     provider = FakeBinanceProvider(
@@ -114,7 +175,7 @@ async def test_backfill_inserts_candles(
     try:
         service = MarketDataService(
             session=session,
-            provider=provider,
+            provider=BoundaryAssertingProvider(provider, session),
             workspace_id=WORKSPACE_ID,
             exchange_id=EXCHANGE_ID,
             symbol_version_id=SYMBOL_VERSION_ID,
@@ -157,7 +218,8 @@ async def test_incremental_fetch_overlaps_latest(
                     :symbol_version_id, '1h', :open_time, :close_time,
                     100, 105, 95, 102, 1.5, 1500, 100, true, :content_hash
                 )
-                on conflict (symbol_version_id, interval_code, open_time) do nothing
+                on conflict (symbol_version_id, interval_code, open_time)
+                where superseded_by is null do nothing
                 """
             ),
             {
@@ -226,6 +288,144 @@ async def test_detect_gaps_bounded_by_latest(
 
 
 @pytest.mark.asyncio
+async def test_repair_gap_repairs_actual_missing_range(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Gap repair must target the detected missing interval and restore it.
+
+    Seed a candle at 10:00 and 12:00 so 11:00 is genuinely missing, detect the
+    gap, then repair it and verify the missing interval is contiguous.
+    """
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        session.execute(
+            text(
+                """
+                insert into public.candles (
+                    symbol_version_id, interval_code, open_time, close_time,
+                    open_price, high_price, low_price, close_price,
+                    base_volume, quote_volume, trade_count, finalized, content_hash
+                ) values
+                (
+                    :sid, '1h', :t10, :t11,
+                    100, 105, 95, 102, 1.5, 1500, 100, true, :h10
+                ),
+                (
+                    :sid, '1h', :t12, :t13,
+                    100, 105, 95, 102, 1.5, 1500, 100, true, :h12
+                )
+                on conflict (symbol_version_id, interval_code, open_time)
+                where superseded_by is null do nothing
+                """
+            ),
+            {
+                "sid": SYMBOL_VERSION_ID,
+                "t10": FIXED_TIME - timedelta(hours=2),
+                "t11": FIXED_TIME - timedelta(hours=1),
+                "t12": FIXED_TIME,
+                "t13": FIXED_TIME + timedelta(hours=1),
+                "h10": "a" * 64,
+                "h12": "b" * 64,
+            },
+        )
+        session.commit()
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        gap_report = await service.detect_gaps(
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval_code="1h",
+            expected_end=FIXED_TIME - timedelta(hours=1),
+        )
+        assert gap_report.missing_count == 1
+        assert gap_report.missing_ranges == (
+            (FIXED_TIME - timedelta(hours=1), FIXED_TIME - timedelta(hours=1)),
+        )
+        result = await service.repair_gaps(
+            symbol=SYMBOL,
+            gap_report=gap_report,
+            idempotency_key="test-repair-real-gap",
+        )
+        assert result.status == IngestionStatus.COMPLETED
+        verification = await service.detect_gaps(
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval_code="1h",
+            expected_end=FIXED_TIME,
+        )
+        assert verification.missing_count == 0
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_partial_page_fails_closed_with_checkpoint(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """A non-empty partial page must not be certified as complete.
+
+    The GAP fake returns only the first half of the page; the ingestion must
+    fail with gap evidence and preserve a checkpoint at the proven boundary.
+    """
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.GAP,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        with pytest.raises(BinanceProviderUnavailableError):
+            await service.backfill(
+                symbol=SYMBOL,
+                start_time=FIXED_TIME - timedelta(hours=8),
+                end_time=FIXED_TIME,
+                idempotency_key="test-partial-page",
+            )
+        row = (
+            session.execute(
+                text(
+                    "select status, checkpoint, inserted_count "
+                    "from public.market_data_ingestions "
+                    "where symbol_version_id = :sid "
+                    "and idempotency_key = :key"
+                ),
+                {"sid": SYMBOL_VERSION_ID, "key": "test-partial-page"},
+            )
+            .mappings()
+            .one_or_none()
+        )
+    finally:
+        session.close()
+    assert row is not None
+    assert row["status"] == IngestionStatus.FAILED.value
+    assert row["checkpoint"] is not None
+    assert row["checkpoint"] > FIXED_TIME - timedelta(hours=8)
+
+
+@pytest.mark.asyncio
 async def test_idempotent_backfill_reuses_ingestion(
     database_engine: Engine, clean_m007_data: None
 ) -> None:
@@ -270,7 +470,8 @@ async def test_idempotent_backfill_reuses_ingestion(
         .execute(
             text(
                 "select count(*) from public.candles "
-                "where symbol_version_id = :sid and interval_code = '1h'"
+                "where symbol_version_id = :sid and interval_code = '1h' "
+                "and superseded_by is null"
             ),
             {"sid": SYMBOL_VERSION_ID},
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -23,6 +24,7 @@ from app.infrastructure.exchange.binance.fakes import (
 )
 from app.infrastructure.exchange.binance.protocol import (
     BinanceProviderUnavailableError,
+    Candle,
     CandleInterval,
     ExchangeTime,
 )
@@ -38,9 +40,10 @@ class MockResult:
         self._one_or_none_value: dict[str, Any] | None = None
         self._one_value: dict[str, Any] = {"cnt": 0, "min_time": None, "max_time": None}
         self._scalars_value: list[Any] = []
+        self._scalar_one_value: Any = UUID("00000000-0000-0000-0000-000000000001")
 
-    def scalar_one(self) -> UUID:
-        return UUID("00000000-0000-0000-0000-000000000001")
+    def scalar_one(self) -> Any:
+        return self._scalar_one_value
 
     def mappings(self) -> "MockResult":
         return self
@@ -112,6 +115,9 @@ class MockSession:
                 "actual_start_time": None,
                 "actual_end_time": None,
             }
+            return result
+        if "from public.data_quality_events" in sql and "count(*)" in sql:
+            result._scalar_one_value = 0
             return result
         if "update public.market_data_ingestions" in sql:
             return result
@@ -494,3 +500,174 @@ def test_snapshot_validation_uses_derived_outcomes() -> None:
         freshness_outcome="fresh",
     )
     assert snapshot.freshness_outcome == "fresh"
+
+
+def test_snapshot_gate_rejects_stale_freshness() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+        policy=ValidationPolicy(stale_threshold_seconds=60),
+    )
+    session.candles[(SYMBOL_VERSION_ID, "1h", FIXED_TIME - timedelta(hours=1))] = {
+        "symbol_version_id": SYMBOL_VERSION_ID,
+        "interval_code": "1h",
+        "open_time": FIXED_TIME - timedelta(hours=1),
+        "close_time": FIXED_TIME,
+        "content_hash": "a" * 64,
+        "finalized": True,
+    }
+    with pytest.raises(ValueError):
+        service.create_snapshot(
+            analysis_time=FIXED_TIME,
+            candle_ids=[UUID("42000000-0000-0000-0000-000000000001")],
+            quality_outcome="approved",
+            freshness_outcome="fresh",
+        )
+
+
+def test_derive_freshness_outcome_bounds() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    assert service._derive_freshness_outcome(FIXED_TIME, FIXED_TIME) == "fresh"
+    assert (
+        service._derive_freshness_outcome(FIXED_TIME, FIXED_TIME - timedelta(hours=2))
+        == "stale"
+    )
+    assert (
+        service._derive_freshness_outcome(FIXED_TIME, FIXED_TIME + timedelta(hours=1))
+        == "clock_drift_exceeded"
+    )
+
+
+def test_resolve_page_contiguity_partial() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    c1 = Candle(
+        time=FIXED_TIME - timedelta(hours=2),
+        close_time=FIXED_TIME - timedelta(hours=1),
+        open=Decimal("1"),
+        high=Decimal("2"),
+        low=Decimal("0.5"),
+        close=Decimal("1.5"),
+        volume=Decimal("1"),
+        quote_volume=Decimal("1.5"),
+        trade_count=1,
+    )
+    c2 = Candle(
+        time=FIXED_TIME - timedelta(hours=1),
+        close_time=FIXED_TIME,
+        open=Decimal("1"),
+        high=Decimal("2"),
+        low=Decimal("0.5"),
+        close=Decimal("1.5"),
+        volume=Decimal("1"),
+        quote_volume=Decimal("1.5"),
+        trade_count=1,
+    )
+    contiguous, boundary = service._resolve_page_contiguity(
+        [c1, c2], FIXED_TIME - timedelta(hours=2), FIXED_TIME
+    )
+    assert len(contiguous) == 2
+    assert boundary == FIXED_TIME
+
+
+def test_resolve_page_contiguity_gap_tail() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    c1 = Candle(
+        time=FIXED_TIME - timedelta(hours=2),
+        close_time=FIXED_TIME - timedelta(hours=1),
+        open=Decimal("1"),
+        high=Decimal("2"),
+        low=Decimal("0.5"),
+        close=Decimal("1.5"),
+        volume=Decimal("1"),
+        quote_volume=Decimal("1.5"),
+        trade_count=1,
+    )
+    contiguous, boundary = service._resolve_page_contiguity(
+        [c1], FIXED_TIME - timedelta(hours=2), FIXED_TIME
+    )
+    assert len(contiguous) == 1
+    assert boundary == FIXED_TIME - timedelta(hours=1)
+
+
+def test_compute_page_hash_deterministic() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    hashes = ["a" * 64, "b" * 64]
+    assert service._compute_page_hash(hashes) == service._compute_page_hash(hashes)
+    assert service._compute_page_hash(hashes) != service._compute_page_hash(["a" * 64])
