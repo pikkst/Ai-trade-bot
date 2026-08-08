@@ -20,7 +20,7 @@ All notable project changes are documented here.
 - Quality evidence resolution is now append-only: repairing a gap or applying a correction inserts a terminal `gap_repaired`/`correction_applied` event linked to the original range/candle instead of rewriting prior evidence, and effective snapshot-gate state is derived from the event chain.
 - Retry/attempt metadata for provider page calls is captured in `try/finally`, so exhausted-timeout and rate-limit failures persist the real counters instead of pre-call values.
 - Snapshot creation is atomic: `INSERT ... ON CONFLICT (snapshot_hash) DO NOTHING RETURNING` with a follow-up lookup removes the check-then-insert race, and membership inserts are idempotent.
-- Bandit B608 suppression is narrowed to the audited parameterized SQL builders via a checked-in baseline instead of a repository-wide config skip.
+- Bandit B608 suppression is localized to the audited parameterized SQL builders: precisely placed `# nosec B608` comments on the exact flagged lines, and the `_resolve_quality_events` query was refactored to `event_type = any(:event_types)` so no dynamic placeholder list is assembled at all.
 
 #### Safety
 

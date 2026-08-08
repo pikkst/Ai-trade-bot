@@ -1914,7 +1914,7 @@ class MarketDataService:
                 }
             )
         sql = (
-            "insert into public.data_quality_events ("
+            "insert into public.data_quality_events ("  # nosec B608: parameterized values
             "exchange_id, symbol_version_id, interval_code, event_type, "
             "severity, details, detection_policy_version, resolution, "
             "ingestion_id, snapshot_id, reviewer_user_id, detected_at, "
@@ -1943,17 +1943,16 @@ class MarketDataService:
         """
         if not event_types:
             return
-        placeholders = ", ".join(f":et{idx}" for idx in range(len(event_types)))
         matched = (
             self._session.execute(
                 text(
-                    f"""
+                    """
                     select id, affected_candle_id, affected_range_start,
                            affected_range_end
                     from public.data_quality_events
                     where symbol_version_id = :symbol_version_id
                       and interval_code = :interval_code
-                      and event_type in ({placeholders})
+                      and event_type = any(:event_types)
                       and resolution is null
                       and (
                           (cast(:range_start as timestamptz) is null
@@ -1978,7 +1977,7 @@ class MarketDataService:
                 {
                     "symbol_version_id": self._symbol_version_id,
                     "interval_code": self._interval.value,
-                    **{f"et{idx}": et for idx, et in enumerate(event_types)},
+                    "event_types": list(event_types),
                     "range_start": range_start,
                     "range_end": range_end,
                     "candle_id": candle_id,
@@ -2098,7 +2097,7 @@ class MarketDataService:
                 }
             )
         sql = (
-            "insert into public.market_snapshot_candles "
+            "insert into public.market_snapshot_candles "  # nosec B608: parameterized values
             "(snapshot_id, candle_id, sequence) "
             f"values {','.join(values)} "
             "on conflict (snapshot_id, candle_id) do nothing"
