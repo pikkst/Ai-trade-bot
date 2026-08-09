@@ -207,6 +207,14 @@ class BinanceRestProvider:
             step_size=parsed["step_size"],
             raw_metadata_hash=raw_hash,
             retrieved_at=self._clock.now(),
+            request_evidence={
+                "provider": "binance_rest",
+                "endpoint": _EXCHANGE_INFO_PATH,
+                "base_url": self._base_url,
+                "symbol": symbol.upper(),
+                "force_refresh": force_refresh,
+                "provider_version": "binance-rest/1.0",
+            },
         )
         self._symbol_metadata_cache[cache_key] = metadata
         return metadata

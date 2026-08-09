@@ -19,6 +19,7 @@ from app.domains.market_data.models import (
     IngestionResult,
     IngestionStatus,
     IngestionType,
+    MetadataObservationConflictError,
     QualityEvent,
     QualityState,
     SnapshotResult,
@@ -159,49 +160,131 @@ class MarketDataService:
         serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
+    def _metadata_request_key(
+        self,
+        symbol: str,
+        request_evidence: dict[str, Any],
+        raw_hash: str,
+        retrieved_at: datetime,
+    ) -> str:
+        """Deterministic observation/request identity for idempotent delivery.
+
+        The key binds the bounded canonical request identity to the source
+        observation (raw hash + retrieval time). Exact replay or duplicate
+        delivery of the same request+source observation produces the same key,
+        while a genuinely new refresh attempt (different retrieval time or raw
+        payload) produces a new key.
+        """
+        canonical = json.dumps(
+            {
+                "request": request_evidence,
+                "symbol": symbol.upper(),
+                "raw_metadata_hash": raw_hash,
+                "retrieved_at": retrieved_at.isoformat(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
     def _record_metadata_observation(
         self,
-        symbol_version_id: UUID,
+        symbol_version_id: UUID | None,
         symbol: str,
         *,
         metadata_hash: str,
         raw_hash: str,
         retrieved_at: datetime,
         observed_at: datetime,
+        disposition: str = "verified",
+        request_evidence: dict[str, Any] | None = None,
     ) -> None:
-        """Persist one immutable bounded raw observation linked to a version.
+        """Persist one immutable bounded raw observation.
 
-        Every refresh (changed or unchanged) records the raw hash, retrieval
-        time, and provider evidence so the verification can be reproduced.
-        The row is append-only evidence and never mutated.
+        Every refresh (changed, unchanged, or discarded stale conflict)
+        records the raw hash, retrieval time, and canonical request evidence
+        so the source observation can be reproduced. The row is append-only
+        and keyed by a deterministic request_key so duplicate delivery is a
+        no-op.
+
+        A verified observation is linked to the exact symbol version it
+        verified and its metadata_hash must equal that version's hash; a
+        stale_conflict observation is linked to the matching historical
+        version when one exists, otherwise it is stored without a version.
         """
+        evidence = request_evidence or {"provider": type(self._provider).__name__}
+        request_key = self._metadata_request_key(
+            symbol, evidence, raw_hash, retrieved_at
+        )
         self._session.execute(
             text(
                 """
                 insert into public.symbol_metadata_observations (
-                    symbol_version_id, exchange_id, native_symbol,
-                    metadata_hash, raw_metadata_hash, retrieved_at, observed_at,
-                    request_evidence
+                    request_key, symbol_version_id, exchange_id, native_symbol,
+                    disposition, metadata_hash, raw_metadata_hash, retrieved_at,
+                    observed_at, request_evidence
                 ) values (
-                    :symbol_version_id, :exchange_id, :native_symbol,
-                    :metadata_hash, :raw_hash, :retrieved_at, :observed_at,
-                    :request_evidence
+                    :request_key, :symbol_version_id, :exchange_id, :native_symbol,
+                    :disposition, :metadata_hash, :raw_hash, :retrieved_at,
+                    :observed_at, :request_evidence
                 )
+                on conflict (request_key) do nothing
                 """
             ),
             {
+                "request_key": request_key,
                 "symbol_version_id": symbol_version_id,
                 "exchange_id": self._exchange_id,
                 "native_symbol": symbol.upper(),
+                "disposition": disposition,
                 "metadata_hash": metadata_hash,
                 "raw_hash": raw_hash,
                 "retrieved_at": retrieved_at,
                 "observed_at": observed_at,
-                "request_evidence": json.dumps(
-                    {"provider": type(self._provider).__name__}
-                ),
+                "request_evidence": json.dumps(evidence),
             },
         )
+
+    def _resolve_observation_version(
+        self,
+        symbol: str,
+        metadata_hash: str,
+        event_time: datetime,
+    ) -> UUID | None:
+        """Return the version whose metadata_hash matches and whose effective
+        window contains event_time, or None if no such version exists.
+
+        Used to link a discarded stale observation to the exact historical
+        version it describes (when one exists) instead of the version it did
+        not verify.
+        """
+        row = (
+            self._session.execute(
+                text(
+                    """
+                    select id
+                    from public.exchange_symbol_versions
+                    where exchange_id = :exchange_id
+                      and native_symbol = :native_symbol
+                      and metadata_hash = :metadata_hash
+                      and effective_at <= :event_time
+                    order by effective_at desc
+                    limit 1
+                    """
+                ),
+                {
+                    "exchange_id": self._exchange_id,
+                    "native_symbol": symbol.upper(),
+                    "metadata_hash": metadata_hash,
+                    "event_time": event_time,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        return cast(UUID, row["id"])
 
     async def refresh_symbol_metadata(self, symbol: str) -> UUID:
         """Fetch, normalize, hash, and persist/version symbol metadata.
@@ -214,10 +297,12 @@ class MarketDataService:
 
         The provider observation happens before the lock, so under the lock the
         incoming observation timestamp is compared with the current version's
-        effective time: an observation older than the current version is never
-        allowed to supersede a newer verified version (it is retained as
-        immutable observation evidence instead). Every refresh persists one
-        bounded raw observation row linked to the resolved version.
+        effective time: an observation strictly older than the current version
+        is never allowed to supersede a newer verified version (it is retained
+        as stale_conflict evidence linked to its matching historical version,
+        if any), and an equal-timestamp conflicting payload fails closed.
+        Every refresh persists one bounded raw observation row keyed by a
+        deterministic request_key.
         """
         assert_network_call_allowed()
         metadata = await self._provider.get_symbol_metadata(symbol, force_refresh=True)
@@ -225,6 +310,9 @@ class MarketDataService:
         raw_hash = metadata.raw_metadata_hash
         retrieved_at = metadata.retrieved_at or self._clock.now()
         observed_at = self._clock.now()
+        request_evidence = dict(metadata.request_evidence) or {
+            "provider": type(self._provider).__name__
+        }
         symbol_key = int.from_bytes(
             hashlib.sha256(
                 f"metadata_refresh:{self._exchange_id}:{symbol.upper()}".encode()
@@ -260,23 +348,45 @@ class MarketDataService:
             if (
                 row is not None
                 and row["metadata_hash"] != metadata_hash
-                and retrieved_at <= cast(datetime, row["effective_at"])
+                and retrieved_at < cast(datetime, row["effective_at"])
             ):
-                # Observation-order guard: this observation is not strictly
-                # newer than the currently verified version, so a concurrent
-                # worker already persisted an observation at the same or a
-                # newer time. Never let it supersede the newer verified
-                # version; retain it as immutable evidence only.
+                # Observation-order guard: this observation is strictly older
+                # than the currently verified version, so a concurrent worker
+                # already persisted a newer authoritative observation. Never
+                # let the older observation supersede the newer version; retain
+                # it as immutable stale_conflict evidence linked to the
+                # historical version it describes, if one exists.
+                stale_version = self._resolve_observation_version(
+                    symbol, metadata_hash, retrieved_at
+                )
                 self._record_metadata_observation(
-                    row["id"],
+                    stale_version,
                     symbol,
                     metadata_hash=metadata_hash,
                     raw_hash=raw_hash,
                     retrieved_at=retrieved_at,
                     observed_at=observed_at,
+                    disposition="stale_conflict",
+                    request_evidence=request_evidence,
                 )
                 self._session.commit()
                 return cast(UUID, row["id"])
+            if (
+                row is not None
+                and row["metadata_hash"] != metadata_hash
+                and retrieved_at == cast(datetime, row["effective_at"])
+            ):
+                # Equal-timestamp conflicting payload: the local adapter clock
+                # provides no process-independent ordering between two
+                # different payloads observed at the same time. Fail closed
+                # with a deterministic conflict instead of guessing which
+                # payload is authoritative.
+                raise MetadataObservationConflictError(
+                    "conflicting symbol metadata observed at the same "
+                    f"retrieved_at {retrieved_at.isoformat()} for "
+                    f"{symbol.upper()} on exchange {self._exchange_id}; "
+                    "no process-independent ordering exists"
+                )
             if row is not None and row["metadata_hash"] == metadata_hash:
                 self._record_metadata_observation(
                     row["id"],
@@ -285,6 +395,8 @@ class MarketDataService:
                     raw_hash=raw_hash,
                     retrieved_at=retrieved_at,
                     observed_at=observed_at,
+                    disposition="verified",
+                    request_evidence=request_evidence,
                 )
                 self._session.execute(
                     text(
@@ -409,6 +521,8 @@ class MarketDataService:
                 raw_hash=raw_hash,
                 retrieved_at=retrieved_at,
                 observed_at=observed_at,
+                disposition="verified",
+                request_evidence=request_evidence,
             )
             self._session.commit()
             return cast(UUID, new_id)
@@ -479,12 +593,12 @@ class MarketDataService:
         self, symbol: str, event_time: datetime
     ) -> UUID | None:
         """Return the symbol version effective at event_time for the configured
-        exchange+symbol, or None if no version exists for the pair.
+        exchange+symbol, or None if no version covers that time.
 
-        The version effective at a time is the one with the greatest
-        effective_at at or before event_time. If the event predates all known
-        metadata, the earliest version is authoritative for the earlier
-        history.
+        Effective metadata is only proven from its effective time forward.
+        Absence of a version at or before event_time must fail closed (or
+        require explicit historical evidence) rather than extrapolate
+        backwards to a future version.
         """
         native = symbol.upper()
         row = (
@@ -504,28 +618,6 @@ class MarketDataService:
                     "exchange_id": self._exchange_id,
                     "native_symbol": native,
                     "event_time": event_time,
-                },
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if row is not None:
-            return cast(UUID, row["id"])
-        row = (
-            self._session.execute(
-                text(
-                    """
-                    select id
-                    from public.exchange_symbol_versions
-                    where exchange_id = :exchange_id
-                      and native_symbol = :native_symbol
-                    order by effective_at asc
-                    limit 1
-                    """
-                ),
-                {
-                    "exchange_id": self._exchange_id,
-                    "native_symbol": native,
                 },
             )
             .mappings()
@@ -564,11 +656,33 @@ class MarketDataService:
             .one_or_none()
         )
         if row is None:
+            # Bootstrap: fetch today's metadata to establish the configured
+            # version, then re-run the historical lookup. A fresh observation
+            # is not historical evidence and must not label a range that
+            # predates every version.
             self._session.commit()
             canonical_id = await self.refresh_symbol_metadata(symbol)
             if canonical_id != self._symbol_version_id:
                 self._symbol_version_id = canonical_id
-            return
+            row = (
+                self._session.execute(
+                    text(
+                        """
+                        select native_symbol, exchange_id
+                        from public.exchange_symbol_versions
+                        where id = :symbol_version_id
+                        """
+                    ),
+                    {"symbol_version_id": self._symbol_version_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise ValueError(
+                    f"configured symbol_version_id {self._symbol_version_id} "
+                    f"does not exist after metadata bootstrap for {symbol}"
+                )
         if cast(UUID, row["exchange_id"]) != self._exchange_id:
             raise ValueError(
                 f"symbol_version_id {self._symbol_version_id} is owned by "
@@ -585,8 +699,10 @@ class MarketDataService:
         effective_id = self._resolve_effective_symbol_version(symbol, start_time)
         if effective_id is None:
             raise ValueError(
-                f"no symbol metadata version exists for {symbol.upper()} on "
-                f"exchange {self._exchange_id}"
+                f"no symbol metadata version is effective at or before "
+                f"backfill start {start_time.isoformat()} for "
+                f"{symbol.upper()} on exchange {self._exchange_id}; "
+                "fail closed instead of fabricating historical coverage"
             )
         effective_at = self._session.execute(
             text(

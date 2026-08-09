@@ -1,12 +1,14 @@
 -- M007 symbol-metadata persistence and versioning.
--- Upgrade-safe for populated pre-M007 deployments:
---  - stage nullable columns first;
---  - deterministically backfill source evidence and reconstruct the
---    immediate-successor supersession chain (lead window) without deleting
---    history;
---  - then enforce NOT NULL and exactly-one-current.
+-- Upgrade-safe for populated pre-M007 deployments
+--  - stage nullable columns first
+--  - preserve legacy rows with explicitly unknown source evidence
+--    (source_evidence_state = 'legacy_unavailable') instead of fabricating a
+--    raw /exchangeInfo hash or retrieval timestamp
+--  - reconstruct the immediate-successor supersession chain (lead window)
+--    without deleting history
+--  - enforce exactly-one-current and source-evidence invariants only for
+--    rows that were genuinely observed
 
--- Stage nullable columns first so populated M003 rows never fail.
 alter table public.exchange_symbol_versions
     add column if not exists superseded_by uuid
         references public.exchange_symbol_versions(id) on delete restrict;
@@ -26,14 +28,15 @@ alter table public.exchange_symbol_versions
 alter table public.exchange_symbol_versions
     add column if not exists retrieved_at timestamptz;
 
--- Deterministically backfill source evidence for pre-M007 rows.
-update public.exchange_symbol_versions
-set raw_metadata_hash = metadata_hash
-where raw_metadata_hash is null;
+-- Provenance: pre-M007 rows predate the raw /exchangeInfo observation ledger.
+alter table public.exchange_symbol_versions
+    add column if not exists source_evidence_state text not null default 'observed'
+        check (source_evidence_state in ('observed', 'legacy_unavailable'));
 
+-- Mark existing rows whose raw evidence is not available (never fabricate it)
 update public.exchange_symbol_versions
-set retrieved_at = effective_at
-where retrieved_at is null;
+set source_evidence_state = 'legacy_unavailable'
+where raw_metadata_hash is null;
 
 -- Reconstruct the immediate-successor supersession chain per exchange+symbol
 -- so V1 -> V2 -> V3 -> NULL and effective intervals remain recoverable.
@@ -52,12 +55,17 @@ from chained
 where sv.id = chained.id
   and chained.next_id is not null;
 
--- Enforce NOT NULL now that every row has deterministic source evidence.
+-- Strong source-evidence invariants apply only to genuinely observed rows
+-- legacy rows are explicitly marked legacy_unavailable
 alter table public.exchange_symbol_versions
-    alter column raw_metadata_hash set not null;
+    drop constraint if exists exchange_symbol_versions_observed_evidence_check;
 
 alter table public.exchange_symbol_versions
-    alter column retrieved_at set not null;
+    add constraint exchange_symbol_versions_observed_evidence_check
+    check (
+        source_evidence_state = 'legacy_unavailable'
+        or (raw_metadata_hash is not null and retrieved_at is not null)
+    );
 
 -- Enforce exactly one current version per exchange+symbol pair.
 create unique index if not exists exchange_symbol_versions_current_idx

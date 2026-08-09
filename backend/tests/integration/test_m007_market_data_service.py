@@ -23,6 +23,7 @@ from app.domains.market_data.models import (
     IngestionResult,
     IngestionStatus,
     IngestionType,
+    MetadataObservationConflictError,
     QualityState,
     SnapshotResult,
 )
@@ -335,7 +336,7 @@ def _clean_m007_rows(engine: Engine) -> None:
                 "eid": EXCHANGE_ID,
                 "md5": _fixture_metadata_hash(),
                 "raw_md5": "r" * 64,
-                "effective_at": FIXED_TIME - timedelta(hours=6),
+                "effective_at": FIXED_TIME - timedelta(hours=12),
             },
         )
         connection.execute(
@@ -3502,7 +3503,8 @@ async def test_pre_m007_multiple_effective_versions_upgrade_safely(
     try:
         with database_engine.begin() as connection:
             # Simulate a populated pre-M007 schema: no current-version index,
-            # no observations table, nullable source evidence.
+            # no observations table, no source-evidence constraint, nullable
+            # source evidence.
             connection.execute(
                 text(
                     """
@@ -3512,6 +3514,15 @@ async def test_pre_m007_multiple_effective_versions_upgrade_safely(
             )
             connection.execute(
                 text("drop table if exists public.symbol_metadata_observations cascade")
+            )
+            connection.execute(
+                text(
+                    """
+                    alter table public.exchange_symbol_versions
+                        drop constraint if exists
+                        exchange_symbol_versions_observed_evidence_check
+                    """
+                )
             )
             connection.execute(
                 text(
@@ -3657,18 +3668,19 @@ async def test_pre_m007_multiple_effective_versions_upgrade_safely(
             {"eid": EXCHANGE_ID, "sym": SYMBOL},
         ).scalar_one()
         assert current_rows == 1
-        evidence_rows = session.execute(
+        legacy_rows = session.execute(
             text(
                 """
                     select count(*) from public.exchange_symbol_versions
                     where exchange_id = :eid
                       and native_symbol = :sym
-                      and raw_metadata_hash is not null
+                      and source_evidence_state = 'legacy_unavailable'
+                      and raw_metadata_hash is null
                     """
             ),
             {"eid": EXCHANGE_ID, "sym": SYMBOL},
         ).scalar_one()
-        assert evidence_rows == 3
+        assert legacy_rows == 3
     finally:
         session.close()
 
@@ -3924,20 +3936,27 @@ async def test_older_observation_never_supersedes_newer_version(
             session_a.execute(
                 text(
                     """
-                select raw_metadata_hash, retrieved_at
+                select raw_metadata_hash, retrieved_at, disposition,
+                       symbol_version_id
                 from public.symbol_metadata_observations
-                where symbol_version_id = :sid
                 order by retrieved_at
                 """
                 ),
-                {"sid": newer_id},
             )
             .mappings()
             .all()
         )
-        raw_hashes = {row["raw_metadata_hash"] for row in evidence}
-        assert "a" * 64 in raw_hashes
-        assert "b" * 64 in raw_hashes
+        # B's newer observation is verified evidence linked to newer_id.
+        b_rows = [r for r in evidence if r["raw_metadata_hash"] == "b" * 64]
+        assert len(b_rows) == 1
+        assert b_rows[0]["disposition"] == "verified"
+        assert b_rows[0]["symbol_version_id"] == newer_id
+        # A's older conflicting observation is retained as stale_conflict
+        # evidence; it is NOT linked to the newer version it did not verify.
+        a_rows = [r for r in evidence if r["raw_metadata_hash"] == "a" * 64]
+        assert len(a_rows) == 1
+        assert a_rows[0]["disposition"] == "stale_conflict"
+        assert a_rows[0]["symbol_version_id"] is None
     finally:
         session_a.close()
         session_b.close()
@@ -4116,6 +4135,14 @@ async def test_unchanged_refresh_persists_traceable_raw_observations(
             step_size=Decimal("0.000001"),
             raw_metadata_hash=raw,
             retrieved_at=retrieved,
+            request_evidence={
+                "provider": "fake_binance",
+                "endpoint": "get_symbol_metadata",
+                "symbol": "BTCEUR",
+                "force_refresh": True,
+                "fixture_version": "2026-08-08-m007-v1",
+                "scenario": "success",
+            },
         )
 
     session = build_session_factory(database_engine)()
@@ -4164,7 +4191,8 @@ async def test_unchanged_refresh_persists_traceable_raw_observations(
             session.execute(
                 text(
                     """
-                select raw_metadata_hash, retrieved_at, observed_at
+                select raw_metadata_hash, retrieved_at, observed_at,
+                       request_evidence
                 from public.symbol_metadata_observations
                 where symbol_version_id = :sid
                 order by retrieved_at
@@ -4180,5 +4208,257 @@ async def test_unchanged_refresh_persists_traceable_raw_observations(
         assert observations[1]["raw_metadata_hash"] == "b" * 64
         assert observations[0]["retrieved_at"] == FIXED_TIME - timedelta(hours=2)
         assert observations[1]["retrieved_at"] == FIXED_TIME - timedelta(hours=1)
+        for row in observations:
+            evidence = row["request_evidence"]
+            assert evidence["provider"] == "fake_binance"
+            assert evidence["endpoint"] == "get_symbol_metadata"
+            assert evidence["symbol"] == "BTCEUR"
+            assert evidence["force_refresh"] is True
+            assert evidence["fixture_version"] == "2026-08-08-m007-v1"
+            assert evidence["scenario"] == "success"
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_observation_replay_is_idempotent(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Exact duplicate delivery of the same raw observation is a no-op: the
+    deterministic request_key prevents a second observation row."""
+    from decimal import Decimal
+
+    def metadata_at(raw: str, retrieved: datetime) -> SymbolMetadata:
+        return SymbolMetadata(
+            symbol="BTCEUR",
+            base_asset="BTC",
+            quote_asset="EUR",
+            status=SymbolStatus.TRADING,
+            price_precision=2,
+            quantity_precision=6,
+            min_quantity=Decimal("0.00001"),
+            max_quantity=Decimal("9000.00000"),
+            min_notional=Decimal("10.00"),
+            max_notional=None,
+            tick_size=Decimal("0.01"),
+            step_size=Decimal("0.000001"),
+            raw_metadata_hash=raw,
+            retrieved_at=retrieved,
+            request_evidence={
+                "provider": "fake_binance",
+                "endpoint": "get_symbol_metadata",
+                "symbol": "BTCEUR",
+                "force_refresh": True,
+                "fixture_version": "2026-08-08-m007-v1",
+                "scenario": "success",
+            },
+        )
+
+    session = build_session_factory(database_engine)()
+    try:
+        provider = FakeBinanceProvider(
+            config=FakeBinanceConfig(
+                scenario=FakeBinanceScenario.SUCCESS,
+                fixed_clock_time=FIXED_TIME,
+                fixture_version="2026-08-08-m007-v1",
+            )
+        )
+        provider._symbol_metadata["BTCEUR"] = metadata_at(
+            raw="a" * 64, retrieved=FIXED_TIME - timedelta(hours=2)
+        )
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        v1 = await service.refresh_symbol_metadata(SYMBOL)
+        session.commit()
+        # Exact replay: identical request evidence, raw hash, and retrieval
+        # time. The request_key collides, so no second observation row.
+        v1_repeat = await service.refresh_symbol_metadata(SYMBOL)
+        session.commit()
+        assert v1_repeat == v1
+        count = session.execute(
+            text(
+                """
+                select count(*) from public.symbol_metadata_observations
+                where symbol_version_id = :sid
+                """
+            ),
+            {"sid": v1},
+        ).scalar_one()
+        assert count == 1
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_same_timestamp_conflicting_payload_fails_closed(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Two conflicting payloads observed at the same retrieved_at cannot be
+    ordered by the local adapter clock, so the refresh fails closed instead of
+    silently treating the second payload as stale."""
+    from decimal import Decimal
+
+    def metadata_at(raw: str, retrieved: datetime, tick: str) -> SymbolMetadata:
+        return SymbolMetadata(
+            symbol="BTCEUR",
+            base_asset="BTC",
+            quote_asset="EUR",
+            status=SymbolStatus.TRADING,
+            price_precision=2,
+            quantity_precision=6,
+            min_quantity=Decimal("0.00001"),
+            max_quantity=Decimal("9000.00000"),
+            min_notional=Decimal("10.00"),
+            max_notional=None,
+            tick_size=Decimal(tick),
+            step_size=Decimal("0.000001"),
+            raw_metadata_hash=raw,
+            retrieved_at=retrieved,
+            request_evidence={
+                "provider": "fake_binance",
+                "endpoint": "get_symbol_metadata",
+                "symbol": "BTCEUR",
+                "force_refresh": True,
+                "fixture_version": "2026-08-08-m007-v1",
+                "scenario": "success",
+            },
+        )
+
+    session = build_session_factory(database_engine)()
+    try:
+        provider = FakeBinanceProvider(
+            config=FakeBinanceConfig(
+                scenario=FakeBinanceScenario.SUCCESS,
+                fixed_clock_time=FIXED_TIME,
+                fixture_version="2026-08-08-m007-v1",
+            )
+        )
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        # First payload at t establishes a version effective at t.
+        provider._symbol_metadata["BTCEUR"] = metadata_at(
+            raw="a" * 64,
+            retrieved=FIXED_TIME - timedelta(hours=2),
+            tick="0.02",
+        )
+        v1 = await service.refresh_symbol_metadata(SYMBOL)
+        session.commit()
+        # Second, conflicting payload at the SAME t: equal timestamps give no
+        # process-independent ordering; fail closed.
+        provider._symbol_metadata["BTCEUR"] = metadata_at(
+            raw="b" * 64,
+            retrieved=FIXED_TIME - timedelta(hours=2),
+            tick="0.03",
+        )
+        with pytest.raises(MetadataObservationConflictError):
+            await service.refresh_symbol_metadata(SYMBOL)
+        session.rollback()
+        current = session.execute(
+            text(
+                """
+                select id from public.exchange_symbol_versions
+                where exchange_id = :eid and native_symbol = :sym
+                  and superseded_by is null
+                """
+            ),
+            {"eid": EXCHANGE_ID, "sym": SYMBOL},
+        ).scalar_one()
+        assert current == v1
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_backfill_before_first_version_fails_closed(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """A historical range that predates every known symbol metadata version is
+    rejected instead of being attributed to future metadata."""
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        # The fixture symbol version is effective at FIXED_TIME - 12h; a range
+        # ending before it has no effective version and must fail closed.
+        with pytest.raises(ValueError, match="no symbol metadata version"):
+            await service.backfill(
+                symbol=SYMBOL,
+                start_time=FIXED_TIME - timedelta(hours=14),
+                end_time=FIXED_TIME - timedelta(hours=13),
+                idempotency_key="test-prefirst-version",
+            )
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_backfill_missing_configured_version_rechecks_history(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """When the configured symbol version does not exist, bootstrap fetches
+    today's metadata, but a historical start that still predates every version
+    is rejected after the bootstrap refresh."""
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        missing_id = UUID("41000000-0000-0000-0000-000000000099")
+        session.execute(
+            text("delete from public.exchange_symbol_versions where id = :sid"),
+            {"sid": missing_id},
+        )
+        session.commit()
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=missing_id,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        # Bootstrap refresh creates a version effective at the fake provider's
+        # retrieved_at (2026-08-01), but this range starts even earlier: no
+        # version covers the start even after the bootstrap refresh.
+        with pytest.raises(ValueError, match="no symbol metadata version"):
+            await service.backfill(
+                symbol=SYMBOL,
+                start_time=datetime(2025, 12, 31, 0, 0, tzinfo=timezone.utc),
+                end_time=datetime(2025, 12, 31, 1, 0, tzinfo=timezone.utc),
+                idempotency_key="test-missing-configured",
+            )
     finally:
         session.close()

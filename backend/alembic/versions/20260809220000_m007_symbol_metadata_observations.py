@@ -31,6 +31,17 @@ def upgrade() -> None:
             """
         )
     ).scalar_one()
+    has_source_state = bind.execute(
+        text(
+            """
+            select count(*) > 0
+            from pg_attribute
+            where attrelid = 'public.exchange_symbol_versions'::regclass
+              and attname = 'source_evidence_state'
+              and not attisdropped
+            """
+        )
+    ).scalar_one()
     has_observations = bind.execute(
         text(
             """
@@ -38,6 +49,28 @@ def upgrade() -> None:
             from pg_tables
             where schemaname = 'public'
               and tablename = 'symbol_metadata_observations'
+            """
+        )
+    ).scalar_one()
+    has_request_key = bind.execute(
+        text(
+            """
+            select count(*) > 0
+            from pg_attribute
+            where attrelid = 'public.symbol_metadata_observations'::regclass
+              and attname = 'request_key'
+              and not attisdropped
+            """
+        )
+    ).scalar_one()
+    has_disposition = bind.execute(
+        text(
+            """
+            select count(*) > 0
+            from pg_attribute
+            where attrelid = 'public.symbol_metadata_observations'::regclass
+              and attname = 'disposition'
+              and not attisdropped
             """
         )
     ).scalar_one()
@@ -57,9 +90,24 @@ def upgrade() -> None:
             "exchange_symbol_versions.last_verified_at is missing; "
             "run the Supabase migration first"
         )
+    if not has_source_state:
+        raise RuntimeError(
+            "exchange_symbol_versions.source_evidence_state is missing; "
+            "run the Supabase migration first"
+        )
     if not has_observations:
         raise RuntimeError(
             "public.symbol_metadata_observations is missing; "
+            "run the Supabase migration first"
+        )
+    if not has_request_key:
+        raise RuntimeError(
+            "symbol_metadata_observations.request_key is missing; "
+            "run the Supabase migration first"
+        )
+    if not has_disposition:
+        raise RuntimeError(
+            "symbol_metadata_observations.disposition is missing; "
             "run the Supabase migration first"
         )
     if not has_current_idx:

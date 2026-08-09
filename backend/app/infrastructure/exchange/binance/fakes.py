@@ -84,6 +84,14 @@ class FakeBinanceProvider:
                 step_size=Decimal("0.000001"),
                 raw_metadata_hash="a" * 64,
                 retrieved_at=datetime(2026, 8, 1, 0, 0, 0, tzinfo=timezone.utc),
+                request_evidence={
+                    "provider": "fake_binance",
+                    "endpoint": "get_symbol_metadata",
+                    "symbol": "BTCEUR",
+                    "force_refresh": True,
+                    "fixture_version": config.fixture_version,
+                    "scenario": config.scenario.value,
+                },
             )
         }
         self._base_time = datetime(2026, 8, 1, 0, 0, 0, tzinfo=timezone.utc)

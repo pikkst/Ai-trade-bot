@@ -14,6 +14,7 @@ from app.core.clock import FixedClock
 from app.domains.market_data.models import (
     GapReport,
     IngestionStatus,
+    MetadataObservationConflictError,
     QualityEvent,
     QualityState,
     SnapshotResult,
@@ -30,6 +31,8 @@ from app.infrastructure.exchange.binance.protocol import (
     Candle,
     CandleInterval,
     ExchangeTime,
+    SymbolMetadata,
+    SymbolStatus,
 )
 
 FIXED_TIME = datetime(2026, 8, 8, 12, 0, 0, tzinfo=timezone.utc)
@@ -76,6 +79,18 @@ class MockSession:
     def __init__(self) -> None:
         self.candles: dict[tuple[UUID, str, datetime], dict[str, Any]] = {}
         self.ingestions: dict[UUID, dict[str, Any]] = {}
+        self.observations: list[dict[str, Any]] = []
+        self.current_metadata_hash: str | None = None
+        self.current_effective_at: datetime | None = None
+        self.version_hashes: dict[UUID, str] = {}
+        self.version_effective: dict[UUID, datetime] = {}
+        self.effective_version_id: UUID | None = SYMBOL_VERSION_ID
+
+    def commit(self) -> None:
+        return
+
+    def rollback(self) -> None:
+        return
 
     def execute(
         self, statement: Any, params: dict[str, Any] | None = None
@@ -136,7 +151,48 @@ class MockSession:
             result._scalar_one_value = None
             return result
         if "select effective_at from public.exchange_symbol_versions" in sql:
-            result._scalar_one_value = FIXED_TIME
+            result._scalar_one_value = self.current_effective_at or FIXED_TIME
+            return result
+        if "select id, metadata_hash, effective_at" in sql:
+            if self.current_metadata_hash is None:
+                result._one_or_none_value = None
+            else:
+                result._one_or_none_value = {
+                    "id": SYMBOL_VERSION_ID,
+                    "metadata_hash": self.current_metadata_hash,
+                    "effective_at": self.current_effective_at or FIXED_TIME,
+                }
+            return result
+        if (
+            "select id from public.exchange_symbol_versions" in sql
+            and "metadata_hash = :metadata_hash" in sql
+        ):
+            if self.version_hashes:
+                matching = [
+                    vid
+                    for vid, vhash in self.version_hashes.items()
+                    if vhash == params.get("metadata_hash")
+                ]
+                if matching:
+                    result._one_or_none_value = {"id": matching[0]}
+                else:
+                    result._one_or_none_value = None
+            else:
+                result._one_or_none_value = None
+            return result
+        if "select id from public.exchange_symbol_versions" in sql:
+            if self.effective_version_id is None:
+                result._one_or_none_value = None
+            else:
+                result._one_or_none_value = {"id": self.effective_version_id}
+            return result
+        if "insert into public.symbol_metadata_observations" in sql:
+            self.observations.append(dict(params))
+            return result
+        if (
+            "update public.exchange_symbol_versions" in sql
+            and "last_verified_at" in sql
+        ):
             return result
         if "from public.exchange_symbol_versions" in sql:
             result._one_or_none_value = {
@@ -264,9 +320,6 @@ class MockSession:
             result._scalars_value = [c["open_time"] for c in self.candles.values()]
             return result
         return result
-
-    def commit(self) -> None:
-        pass
 
 
 def test_incremental_overlap_from_latest() -> None:
@@ -1629,3 +1682,211 @@ async def test_incremental_preflight_cancelled_persists_cancelled() -> None:
     rows = list(session.ingestions.values())
     assert len(rows) == 1
     assert rows[0]["status"] == "cancelled"
+
+
+def _refresh_metadata(raw: str = "a" * 64, tick: str = "0.01") -> SymbolMetadata:
+    return SymbolMetadata(
+        symbol="BTCEUR",
+        base_asset="BTC",
+        quote_asset="EUR",
+        status=SymbolStatus.TRADING,
+        price_precision=2,
+        quantity_precision=6,
+        min_quantity=Decimal("0.00001"),
+        max_quantity=Decimal("9000.00000"),
+        min_notional=Decimal("10.00"),
+        max_notional=None,
+        tick_size=Decimal(tick),
+        step_size=Decimal("0.000001"),
+        raw_metadata_hash=raw,
+        retrieved_at=FIXED_TIME - timedelta(hours=2),
+        request_evidence={
+            "provider": "fake_binance",
+            "endpoint": "get_symbol_metadata",
+            "symbol": "BTCEUR",
+            "force_refresh": True,
+            "fixture_version": "2026-08-08-m007-v1",
+            "scenario": "success",
+        },
+    )
+
+
+class RefreshProvider:
+    def __init__(self, metadata: SymbolMetadata) -> None:
+        self.metadata = metadata
+
+    async def get_symbol_metadata(
+        self, symbol: str, *, force_refresh: bool = False
+    ) -> SymbolMetadata:
+        return self.metadata
+
+    async def get_server_time(self) -> ExchangeTime:
+        raise AssertionError("unused")
+
+    async def get_finalized_candles(
+        self,
+        symbol: str,
+        interval: Any,
+        start_time: datetime,
+        end_time: datetime,
+        server_time: datetime | None = None,
+    ) -> list[Any]:
+        raise AssertionError("unused")
+
+    async def get_rate_limit_state(self) -> Any:
+        raise AssertionError("unused")
+
+    async def get_health(self) -> Any:
+        raise AssertionError("unused")
+
+
+def _make_refresh_service(
+    session: MockSession, metadata: SymbolMetadata
+) -> MarketDataService:
+    return MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=RefreshProvider(metadata),  # type: ignore[arg-type]
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+
+
+@pytest.mark.asyncio
+async def test_refresh_unchanged_records_verified_observation() -> None:
+    """An unchanged refresh keeps the current version and records a verified
+    observation with bounded request/provider-version evidence."""
+    session = MockSession()
+    metadata = _refresh_metadata()
+    session.current_metadata_hash = MarketDataService._compute_symbol_metadata_hash(
+        None, metadata
+    )
+    session.current_effective_at = FIXED_TIME - timedelta(hours=6)
+    service = _make_refresh_service(session, metadata)
+    result = await service.refresh_symbol_metadata("BTCEUR")
+    assert result == SYMBOL_VERSION_ID
+    assert len(session.observations) == 1
+    obs = session.observations[0]
+    assert obs["symbol_version_id"] == SYMBOL_VERSION_ID
+    assert obs["disposition"] == "verified"
+    assert obs["raw_hash"] == "a" * 64
+    assert obs["metadata_hash"] == session.current_metadata_hash
+    import json as _json
+
+    evidence = _json.loads(obs["request_evidence"])
+    assert evidence["provider"] == "fake_binance"
+    assert evidence["endpoint"] == "get_symbol_metadata"
+    assert evidence["symbol"] == "BTCEUR"
+    assert evidence["force_refresh"] is True
+    assert evidence["fixture_version"] == "2026-08-08-m007-v1"
+    assert evidence["scenario"] == "success"
+    assert obs["request_key"] == service._metadata_request_key(
+        "BTCEUR", evidence, obs["raw_hash"], obs["retrieved_at"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_refresh_duplicate_delivery_is_a_noop_key() -> None:
+    """The deterministic request_key is identical for exact duplicate delivery
+    so the ON CONFLICT semantics deduplicate the observation row."""
+    session = MockSession()
+    metadata = _refresh_metadata()
+    session.current_metadata_hash = MarketDataService._compute_symbol_metadata_hash(
+        None, metadata
+    )
+    session.current_effective_at = FIXED_TIME - timedelta(hours=6)
+    service = _make_refresh_service(session, metadata)
+    await service.refresh_symbol_metadata("BTCEUR")
+    await service.refresh_symbol_metadata("BTCEUR")
+    assert len(session.observations) == 2
+    assert (
+        session.observations[0]["request_key"] == session.observations[1]["request_key"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_refresh_stale_conflict_is_not_linked_to_newer_version() -> None:
+    """A conflicting payload observed strictly before the current version is
+    stored as stale_conflict evidence with a NULL resolved version instead of
+    being attached to the newer version it did not verify."""
+    session = MockSession()
+    metadata = _refresh_metadata(raw="a" * 64, tick="0.02")
+    session.current_metadata_hash = MarketDataService._compute_symbol_metadata_hash(
+        None, _refresh_metadata(raw="b" * 64, tick="0.03")
+    )
+    session.current_effective_at = FIXED_TIME - timedelta(hours=1)
+    service = _make_refresh_service(session, metadata)
+    result = await service.refresh_symbol_metadata("BTCEUR")
+    assert result == SYMBOL_VERSION_ID
+    assert len(session.observations) == 1
+    obs = session.observations[0]
+    assert obs["disposition"] == "stale_conflict"
+    assert obs["symbol_version_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_same_timestamp_conflict_fails_closed() -> None:
+    """Two conflicting payloads observed at the same retrieved_at cannot be
+    ordered by the local clock, so the refresh fails closed."""
+    session = MockSession()
+    metadata = _refresh_metadata(raw="a" * 64, tick="0.02")
+    session.current_metadata_hash = MarketDataService._compute_symbol_metadata_hash(
+        None, _refresh_metadata(raw="b" * 64, tick="0.03")
+    )
+    session.current_effective_at = FIXED_TIME - timedelta(hours=2)
+    service = _make_refresh_service(session, metadata)
+    with pytest.raises(MetadataObservationConflictError):
+        await service.refresh_symbol_metadata("BTCEUR")
+
+
+@pytest.mark.asyncio
+async def test_refresh_changed_creates_new_version_with_verified_observation() -> None:
+    """A strictly newer conflicting payload supersedes the current version and
+    records a verified observation linked to the new version."""
+    session = MockSession()
+    metadata = _refresh_metadata(raw="a" * 64, tick="0.02")
+    session.current_metadata_hash = MarketDataService._compute_symbol_metadata_hash(
+        None, _refresh_metadata(raw="b" * 64, tick="0.01")
+    )
+    session.current_effective_at = FIXED_TIME - timedelta(hours=4)
+    service = _make_refresh_service(session, metadata)
+    result = await service.refresh_symbol_metadata("BTCEUR")
+    assert result != SYMBOL_VERSION_ID
+    assert len(session.observations) == 1
+    obs = session.observations[0]
+    assert obs["disposition"] == "verified"
+    assert obs["symbol_version_id"] == result
+
+
+@pytest.mark.asyncio
+async def test_backfill_without_effective_version_fails_closed() -> None:
+    """A historical range that predates every symbol metadata version is
+    rejected instead of being attributed to a future version."""
+    session = MockSession()
+    session.current_metadata_hash = None
+    session.current_effective_at = FIXED_TIME - timedelta(hours=4)
+    session.effective_version_id = None
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=FakeBinanceProvider(
+            config=FakeBinanceConfig(
+                scenario=FakeBinanceScenario.SUCCESS,
+                fixed_clock_time=FIXED_TIME,
+                fixture_version="2026-08-08-m007-v1",
+            )
+        ),
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    # No version is effective at/before the start: the range must fail closed.
+    with pytest.raises(ValueError, match="no symbol metadata version"):
+        await service._validate_symbol_binding_for_backfill(
+            symbol="BTCEUR",
+            start_time=FIXED_TIME - timedelta(hours=8),
+            end_time=FIXED_TIME - timedelta(hours=7),
+        )

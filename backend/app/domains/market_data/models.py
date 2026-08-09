@@ -47,6 +47,16 @@ class IngestionType(str, Enum):
     PREFLIGHT_FAILURE = "preflight_failure"
 
 
+class MetadataObservationConflictError(Exception):
+    """Two conflicting symbol-metadata observations share the same retrieval
+    time with no process-independent ordering, so the refresh fails closed.
+
+    M007 requires deterministic observation ordering. A local adapter clock is
+    not an exchange sequence number: equal retrieval timestamps with different
+    normalized payloads cannot be safely ordered, so no version is created.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class CandleValidationResult:
     candle: object

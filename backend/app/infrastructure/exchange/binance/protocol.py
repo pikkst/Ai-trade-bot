@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class SymbolStatus(str, Enum):
@@ -82,6 +82,7 @@ class SymbolMetadata:
     step_size: Decimal
     raw_metadata_hash: str
     retrieved_at: datetime
+    request_evidence: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
