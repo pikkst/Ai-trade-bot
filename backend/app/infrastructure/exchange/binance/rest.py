@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -47,6 +48,15 @@ _RETRY_WAIT_MAX = 10.0
 _RETRY_AFTER_MAX = 30.0
 _CLOCK_DRIFT_THRESHOLD_MS = 5000
 
+# Per-async-task retry counter so a provider shared across concurrent requests
+# never leaks one request's retries into another's telemetry.
+_retry_counter: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "binance_retry_count", default=0
+)
+_retry_wait: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "binance_retry_wait_ms", default=None
+)
+
 
 def _bounded_exponential_wait(
     retry_state: RetryCallState,
@@ -91,8 +101,19 @@ class BinanceRestProvider:
         self._last_server_time: datetime | None = None
         self._last_clock_drift_ms: int = 0
         self._symbol_metadata_cache: dict[str, SymbolMetadata] = {}
-        self.retry_count = 0
-        self.last_retry_wait_ms: int | None = None
+
+    @property
+    def retry_count(self) -> int:
+        """Retries performed by the current async call (task-scoped)."""
+        return _retry_counter.get()
+
+    @retry_count.setter
+    def retry_count(self, value: int) -> None:
+        _retry_counter.set(value)
+
+    @property
+    def last_retry_wait_ms(self) -> int | None:
+        return _retry_wait.get()
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -117,7 +138,15 @@ class BinanceRestProvider:
                 "Binance server-time response has a non-numeric serverTime "
                 f"value: {response['serverTime']!r}"
             ) from exc
-        server_time = datetime.fromtimestamp(server_time_ms / 1000.0, tz=timezone.utc)
+        try:
+            server_time = datetime.fromtimestamp(
+                server_time_ms / 1000.0, tz=timezone.utc
+            )
+        except (OverflowError, OSError, ValueError) as exc:
+            raise BinanceMalformedDataError(
+                "Binance server-time response is outside the supported UTC "
+                f"range: {server_time_ms}"
+            ) from exc
         drift_ms = int((server_time - local_time).total_seconds() * 1000)
         self._last_server_time = server_time
         self._last_clock_drift_ms = drift_ms
@@ -136,8 +165,18 @@ class BinanceRestProvider:
         if cache_key in self._symbol_metadata_cache:
             return self._symbol_metadata_cache[cache_key]
         response = await self._request("GET", _EXCHANGE_INFO_PATH)
+        if not isinstance(response, dict) or not isinstance(
+            response.get("symbols"), list
+        ):
+            raise BinanceMalformedDataError(
+                "Binance exchange-info response has no symbols list"
+            )
         symbol_info = None
         for s in response.get("symbols", []):
+            if not isinstance(s, dict):
+                raise BinanceMalformedDataError(
+                    "Binance exchange-info symbols contains a non-object entry"
+                )
             if s.get("symbol", "").upper() == cache_key:
                 symbol_info = s
                 break
@@ -230,13 +269,18 @@ class BinanceRestProvider:
         params: dict[str, Any] | None = None,
     ) -> Any:
         retry_after_holder: dict[str, float] = {"value": 0.0}
+        # Task-scoped telemetry for this request only: reset so retries from a
+        # concurrent call on a shared provider never leak into this call's
+        # counters.
+        _retry_counter.set(0)
+        _retry_wait.set(None)
 
         def _wait(retry_state: RetryCallState) -> float:
-            self.retry_count += 1
+            _retry_counter.set(_retry_counter.get() + 1)
             wait_seconds = _bounded_exponential_wait(
                 retry_state, retry_after_holder["value"]
             )
-            self.last_retry_wait_ms = int(wait_seconds * 1000)
+            _retry_wait.set(int(wait_seconds * 1000))
             return wait_seconds
 
         retrying = AsyncRetrying(
@@ -359,6 +403,16 @@ class BinanceRestProvider:
 
 
 def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
+    symbol_name = raw.get("symbol")
+    base_asset = raw.get("baseAsset")
+    quote_asset = raw.get("quoteAsset")
+    # Identity fields are required: a symbol entry without its symbol/base/
+    # quote identity must never be coerced into valid evidence.
+    if not symbol_name or not base_asset or not quote_asset:
+        raise BinanceMalformedDataError(
+            "symbol metadata is missing required identity fields "
+            "(symbol, baseAsset, quoteAsset)"
+        )
     status_str = raw.get("status")
     if status_str is None:
         raise BinanceMalformedDataError("symbol metadata is missing status")
@@ -381,22 +435,37 @@ def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
             "symbol metadata is missing required filters "
             "(PRICE_FILTER, LOT_SIZE, MIN_NOTIONAL)"
         )
+    for field in ("tickSize",):
+        if not price_filter.get(field):
+            raise BinanceMalformedDataError(
+                f"PRICE_FILTER is missing required field {field}"
+            )
+    for field in ("stepSize", "minQty", "maxQty"):
+        if not lot_filter.get(field):
+            raise BinanceMalformedDataError(
+                f"LOT_SIZE is missing required field {field}"
+            )
+    for field in ("minNotional",):
+        if not notional_filter.get(field):
+            raise BinanceMalformedDataError(
+                f"MIN_NOTIONAL is missing required field {field}"
+            )
     try:
         tick_size = Decimal(str(price_filter.get("tickSize")))
         price_precision = _decimal_precision(tick_size)
         step_size = Decimal(str(lot_filter.get("stepSize")))
         quantity_precision = _decimal_precision(step_size)
         min_quantity = Decimal(str(lot_filter.get("minQty")))
-        max_quantity = Decimal(str(lot_filter.get("maxQty", "9000")))
+        max_quantity = Decimal(str(lot_filter.get("maxQty")))
         min_notional = Decimal(str(notional_filter.get("minNotional")))
     except (InvalidOperation, TypeError, ValueError) as exc:
         raise BinanceMalformedDataError(
             f"symbol metadata has invalid filter values: {exc}"
         ) from exc
     return SymbolMetadata(
-        symbol=raw.get("symbol", ""),
-        base_asset=raw.get("baseAsset", ""),
-        quote_asset=raw.get("quoteAsset", ""),
+        symbol=symbol_name,
+        base_asset=base_asset,
+        quote_asset=quote_asset,
         status=status,
         price_precision=price_precision,
         quantity_precision=quantity_precision,

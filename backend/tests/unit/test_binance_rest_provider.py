@@ -117,3 +117,96 @@ async def test_non_retriable_4xx_not_retried() -> None:
     finally:
         await provider.close()
     assert request_mock.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_server_time_out_of_range_rejected() -> None:
+    # A syntactically numeric but impossible timestamp must fail through the
+    # project-owned malformed-data boundary, not leak OverflowError.
+    provider, _ = _build_provider([_response(200, {"serverTime": 10**30})])
+    try:
+        with pytest.raises(BinanceMalformedDataError):
+            await provider.get_server_time()
+    finally:
+        await provider.close()
+
+
+def _exchange_info_response(symbol_info: Any) -> httpx.Response:
+    return _response(200, {"symbols": [symbol_info]})
+
+
+def _valid_symbol_info() -> dict[str, Any]:
+    return {
+        "symbol": "BTCEUR",
+        "status": "TRADING",
+        "baseAsset": "BTC",
+        "quoteAsset": "EUR",
+        "filters": [
+            {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+            {
+                "filterType": "LOT_SIZE",
+                "stepSize": "0.000001",
+                "minQty": "0.000001",
+                "maxQty": "9000.00000000",
+            },
+            {"filterType": "MIN_NOTIONAL", "minNotional": "5.00"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_symbol_metadata_ok() -> None:
+    provider, _ = _build_provider([_exchange_info_response(_valid_symbol_info())])
+    try:
+        metadata = await provider.get_symbol_metadata("BTCEUR")
+    finally:
+        await provider.close()
+    assert metadata.symbol == "BTCEUR"
+    assert metadata.base_asset == "BTC"
+    assert metadata.quote_asset == "EUR"
+    assert metadata.max_quantity == 9000
+
+
+@pytest.mark.asyncio
+async def test_symbol_metadata_non_dict_response_rejected() -> None:
+    provider, _ = _build_provider([_response(200, [])])
+    try:
+        with pytest.raises(BinanceMalformedDataError):
+            await provider.get_symbol_metadata("BTCEUR")
+    finally:
+        await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_symbol_metadata_non_object_entry_rejected() -> None:
+    provider, _ = _build_provider([_exchange_info_response("BTCEUR")])
+    try:
+        with pytest.raises(BinanceMalformedDataError):
+            await provider.get_symbol_metadata("BTCEUR")
+    finally:
+        await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_symbol_metadata_missing_identity_rejected() -> None:
+    info = _valid_symbol_info()
+    info.pop("baseAsset")
+    provider, _ = _build_provider([_exchange_info_response(info)])
+    try:
+        with pytest.raises(BinanceMalformedDataError):
+            await provider.get_symbol_metadata("BTCEUR")
+    finally:
+        await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_symbol_metadata_missing_max_qty_rejected() -> None:
+    info = _valid_symbol_info()
+    lot = next(f for f in info["filters"] if f["filterType"] == "LOT_SIZE")
+    lot.pop("maxQty")
+    provider, _ = _build_provider([_exchange_info_response(info)])
+    try:
+        with pytest.raises(BinanceMalformedDataError):
+            await provider.get_symbol_metadata("BTCEUR")
+    finally:
+        await provider.close()

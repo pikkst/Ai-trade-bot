@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -302,8 +303,10 @@ class MarketDataService:
             ingestion_type=IngestionType.PREFLIGHT_FAILURE,
             start_time=provisional_start,
             end_time=provisional_end,
-            idempotency_key=(
-                f"{idempotency_key}-preflight-failure-{provisional_end.isoformat()}"
+            idempotency_key=self._derive_child_key(
+                parent_key=idempotency_key,
+                label="preflight-failure",
+                salt=provisional_end.isoformat(),
             ),
         )
         retry_count = max(0, getattr(self._provider, "retry_count", 0) - retry_before)
@@ -332,6 +335,20 @@ class MarketDataService:
         epoch = int(dt.timestamp())
         aligned_epoch = epoch - (epoch % self._interval_seconds)
         return datetime.fromtimestamp(aligned_epoch, tz=timezone.utc)
+
+    def _derive_child_key(self, parent_key: str, label: str, salt: str) -> str:
+        """Derive a bounded, deterministic child idempotency key.
+
+        The database CHECK requires 1 <= length <= 200, so naively appending
+        labels/timestamps to a near-maximum parent key would violate the
+        constraint and mask the underlying failure. A fixed prefix plus a
+        truncated hash keeps the key short and deterministic for the same
+        parent/label/salt.
+        """
+        digest = hashlib.sha256(
+            f"{parent_key}|{label}|{salt}".encode("utf-8")
+        ).hexdigest()
+        return f"{label}-{digest[:32]}"
 
     def _compute_incremental_range(
         self, server_time: datetime
@@ -502,12 +519,15 @@ class MarketDataService:
                 range_end != self._align_to_interval(range_end)
             ):
                 raise ValueError("GapReport missing range is not interval-aligned")
-            # Canonical sequence: strictly ascending and disjoint. Duplicated,
-            # overlapping, or reversed ranges would double-count evidence and
-            # change the aggregate repair hash for the same logical missing set.
-            if previous_end is not None and range_start < previous_end:
+            # Canonical sequence: strictly ascending and non-adjacent. A
+            # contiguous gap must be a single range: splitting it into adjacent
+            # ranges would change repair/hash segmentation for the same logical
+            # missing set. Duplicated, overlapping, adjacent, or reversed
+            # ranges are therefore rejected.
+            if previous_end is not None and range_start <= previous_end:
                 raise ValueError(
-                    "GapReport missing ranges are not strictly ascending/disjoint"
+                    "GapReport missing ranges are not strictly ascending/"
+                    "disjoint (adjacent or overlapping)"
                 )
             previous_end = range_end
             covered_count += int(
@@ -569,6 +589,22 @@ class MarketDataService:
         # certified COMPLETED against the service's configured identity.
         self._validate_gap_report(gap_report)
         if gap_report.missing_count == 0:
+            # A zero-gap report must never be certified without proving the
+            # dataset: GapReport is a public dataclass, so re-derive the gap
+            # state against persisted candle coverage over the same range.
+            # A forged/empty dataset therefore fails instead of producing an
+            # empty successful repair.
+            verification = await self.detect_gaps(
+                symbol_version_id=self._symbol_version_id,
+                interval_code=self._interval.value,
+                expected_start=gap_report.expected_start,
+                expected_end=gap_report.expected_end,
+            )
+            if verification.missing_count != 0:
+                raise ValueError(
+                    "GapReport claims zero gaps but persisted evidence "
+                    "still reports missing candles"
+                )
             return IngestionResult(
                 ingestion_type=IngestionType.GAP_REPAIR,
                 status=IngestionStatus.COMPLETED,
@@ -602,7 +638,11 @@ class MarketDataService:
                 symbol=symbol,
                 start_time=range_start,
                 end_time=range_end,
-                idempotency_key=f"{idempotency_key}-{range_start.isoformat()}",
+                idempotency_key=self._derive_child_key(
+                    parent_key=idempotency_key,
+                    label="gap-repair",
+                    salt=range_start.isoformat(),
+                ),
             )
             total_inserted += result.inserted_count
             total_duplicates += result.duplicate_count
@@ -710,6 +750,8 @@ class MarketDataService:
                 f"Snapshot gate failed: quality={derived_quality}, "
                 f"freshness={derived_freshness}"
             )
+        if ingestion_id is not None:
+            self._validate_snapshot_ingestion(ingestion_id, first_time, last_time)
         snapshot_hash = self._compute_snapshot_hash(
             candle_ids=canonical_ids,
             analysis_time=analysis_time,
@@ -718,6 +760,7 @@ class MarketDataService:
             count=count,
             quality_outcome=derived_quality,
             freshness_outcome=derived_freshness,
+            ingestion_id=ingestion_id,
         )
         # Atomic idempotent creation: ON CONFLICT (snapshot_hash) resolves a
         # concurrent identical request to the same persisted identity instead
@@ -792,6 +835,59 @@ class MarketDataService:
         ordered = [cid for cid in candle_ids if cid in by_id]
         ordered.sort(key=lambda cid: by_id[cid])
         return ordered
+
+    def _validate_snapshot_ingestion(
+        self,
+        ingestion_id: UUID,
+        first_time: datetime,
+        last_time: datetime,
+    ) -> None:
+        """Validate that a snapshot's ingestion lineage is canonical.
+
+        Snapshot provenance is evidence: the ingestion must belong to this
+        exchange/symbol/interval, be terminal/completed, and its requested
+        range must cover the candidate membership. A foreign, failed, or
+        non-covering ingestion must never be recorded as this snapshot's
+        source.
+        """
+        row = (
+            self._session.execute(
+                text(
+                    """
+                    select exchange_id, symbol_version_id, interval_code,
+                           status, requested_start_time, requested_end_time
+                    from public.market_data_ingestions
+                    where id = :ingestion_id
+                    """
+                ),
+                {"ingestion_id": ingestion_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            raise ValueError(f"snapshot ingestion {ingestion_id} does not exist")
+        if cast(UUID, row["exchange_id"]) != self._exchange_id:
+            raise ValueError("snapshot ingestion exchange does not match service")
+        if cast(UUID, row["symbol_version_id"]) != self._symbol_version_id:
+            raise ValueError("snapshot ingestion symbol does not match service")
+        if cast(str, row["interval_code"]) != self._interval.value:
+            raise ValueError("snapshot ingestion interval does not match service")
+        if cast(str, row["status"]) != IngestionStatus.COMPLETED.value:
+            raise ValueError(
+                f"snapshot ingestion {ingestion_id} is not completed "
+                f"(status={row['status']})"
+            )
+        requested_start = cast(datetime, row["requested_start_time"])
+        requested_end = cast(datetime, row["requested_end_time"])
+        # The ingestion's requested half-open range must cover the candidate
+        # membership span [first_time, last_time + interval).
+        if requested_start > first_time or requested_end < (
+            last_time + timedelta(seconds=self._interval_seconds)
+        ):
+            raise ValueError(
+                "snapshot ingestion range does not cover the candidate membership"
+            )
 
     def _derive_quality_outcome(
         self,
@@ -1144,6 +1240,46 @@ class MarketDataService:
             )
             self._session.commit()
             raise
+        except asyncio.CancelledError:
+            # Cancellation during the preflight server-time call must leave a
+            # durable CANCELLED terminal state (CancelledError is a
+            # BaseException and would otherwise skip the handler above).
+            logger.warning(
+                "ingestion_cancelled",
+                extra={"ingestion_id": str(ingestion_id)},
+            )
+            try:
+                content_hash = self._compute_ingestion_hash(
+                    start_time, end_time, accepted_by_time
+                )
+                self._update_ingestion(
+                    ingestion_id=ingestion_id,
+                    status=IngestionStatus.CANCELLED,
+                    inserted=inserted_total,
+                    duplicates=duplicates_total,
+                    invalid=invalid_total,
+                    corrected=corrected_total,
+                    request_count=request_count,
+                    retry_count=retry_count,
+                    provider_latency_ms=provider_latency_ms,
+                    safe_error="cancelled",
+                    content_hash=content_hash,
+                    actual_start_time=start_time,
+                    actual_end_time=end_time,
+                    checkpoint=current_start,
+                    accepted_by_time=accepted_by_time,
+                )
+                self._session.commit()
+            except Exception as cleanup_exc:  # noqa: BLE001
+                self._session.rollback()
+                logger.error(
+                    "ingestion_cancellation_persist_failed",
+                    extra={
+                        "ingestion_id": str(ingestion_id),
+                        "error": str(cleanup_exc),
+                    },
+                )
+            raise
         retry_delta = getattr(self._provider, "retry_count", 0) - retry_before
         retry_count += max(0, retry_delta)
         if provider_server_time is None:
@@ -1376,6 +1512,20 @@ class MarketDataService:
                         batch_by_time[result.candle.time] = result.content_hash
                         accepted_times.add(result.candle.time)
                         accepted_by_time[result.candle.time] = result.content_hash
+                        # The corrected/replaced candle at this open time also
+                        # supersedes any prior invalid evidence over the same
+                        # half-open interval.
+                        self._resolve_quality_events(
+                            event_types=(
+                                QualityState.INVALID_VALUE.value,
+                                QualityState.INVALID_INTERVAL.value,
+                            ),
+                            resolution="correction_applied",
+                            range_start=result.candle.time,
+                            range_end=result.candle.time
+                            + timedelta(seconds=self._interval_seconds),
+                            ingestion_id=ingestion_id,
+                        )
                         continue
                     if result.is_duplicate and not result.duplicate_conflict:
                         quality_events.append(
@@ -1424,7 +1574,9 @@ class MarketDataService:
                     page_inserted += 1
                     # A valid candle at this open time supersedes any prior
                     # invalid evidence scoped to the same interval (append-only
-                    # terminal resolution by exact identity/range).
+                    # terminal resolution by exact identity/range). Invalid
+                    # evidence is persisted as a half-open [T, T+interval)
+                    # range, so the resolver must use the same half-open range.
                     self._resolve_quality_events(
                         event_types=(
                             QualityState.INVALID_VALUE.value,
@@ -1432,7 +1584,8 @@ class MarketDataService:
                         ),
                         resolution="correction_applied",
                         range_start=result.candle.time,
-                        range_end=result.candle.time,
+                        range_end=result.candle.time
+                        + timedelta(seconds=self._interval_seconds),
                         ingestion_id=ingestion_id,
                     )
                 if quality_events:
@@ -1549,6 +1702,47 @@ class MarketDataService:
                 actual_start_time=start_time,
                 actual_end_time=end_time,
             )
+        except asyncio.CancelledError:
+            # Cancellation is a BaseException, not an Exception, so the generic
+            # failure handler below never sees it. Persist a durable CANCELLED
+            # terminal state with the latest checkpoint/request/retry evidence
+            # in a short shielded cleanup transaction, then re-raise.
+            logger.warning(
+                "ingestion_cancelled",
+                extra={"ingestion_id": str(ingestion_id)},
+            )
+            try:
+                content_hash = self._compute_ingestion_hash(
+                    start_time, end_time, accepted_by_time
+                )
+                self._update_ingestion(
+                    ingestion_id=ingestion_id,
+                    status=IngestionStatus.CANCELLED,
+                    inserted=inserted_total,
+                    duplicates=duplicates_total,
+                    invalid=invalid_total,
+                    corrected=corrected_total,
+                    request_count=request_count,
+                    retry_count=retry_count,
+                    provider_latency_ms=provider_latency_ms,
+                    safe_error="cancelled",
+                    content_hash=content_hash,
+                    actual_start_time=start_time,
+                    actual_end_time=end_time,
+                    checkpoint=current_start,
+                    accepted_by_time=accepted_by_time,
+                )
+                self._session.commit()
+            except Exception as cleanup_exc:  # noqa: BLE001
+                self._session.rollback()
+                logger.error(
+                    "ingestion_cancellation_persist_failed",
+                    extra={
+                        "ingestion_id": str(ingestion_id),
+                        "error": str(cleanup_exc),
+                    },
+                )
+            raise
         except Exception as exc:
             logger.error(
                 "ingestion_failed",
@@ -2584,6 +2778,7 @@ class MarketDataService:
         count: int,
         quality_outcome: str,
         freshness_outcome: str,
+        ingestion_id: UUID | None = None,
     ) -> str:
         payload = {
             "workspace_id": str(self._workspace_id),
@@ -2599,6 +2794,7 @@ class MarketDataService:
             "quality_policy_version": self._policy.policy_version,
             "freshness_policy_version": self._policy.policy_version,
             "snapshot_schema_version": self._snapshot_schema_version,
+            "ingestion_id": str(ingestion_id) if ingestion_id else None,
             "candle_ids": [str(cid) for cid in candle_ids],
         }
         serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))

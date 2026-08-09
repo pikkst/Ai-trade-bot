@@ -458,6 +458,17 @@ async def test_repair_gaps_no_missing() -> None:
         interval=CandleInterval.ONE_HOUR,
         clock=FixedClock(FIXED_TIME),
     )
+    # Seed the expected candle so re-verification proves the dataset is
+    # actually gap-free (a zero-gap report is only certified against
+    # persisted evidence).
+    session.candles[(SYMBOL_VERSION_ID, "1h", FIXED_TIME - timedelta(hours=1))] = {
+        "symbol_version_id": SYMBOL_VERSION_ID,
+        "interval_code": "1h",
+        "open_time": FIXED_TIME - timedelta(hours=1),
+        "close_time": FIXED_TIME,
+        "content_hash": "a" * 64,
+        "finalized": True,
+    }
     report = GapReport(
         symbol_version_id=SYMBOL_VERSION_ID,
         interval_code="1h",
@@ -939,6 +950,17 @@ async def test_repair_gaps_no_missing_returns_completed() -> None:
         interval=CandleInterval.ONE_HOUR,
         clock=FixedClock(FIXED_TIME),
     )
+    # Seed the expected candle so re-verification proves the dataset is
+    # actually gap-free (a zero-gap report is only certified against
+    # persisted evidence).
+    session.candles[(SYMBOL_VERSION_ID, "1h", FIXED_TIME - timedelta(hours=1))] = {
+        "symbol_version_id": SYMBOL_VERSION_ID,
+        "interval_code": "1h",
+        "open_time": FIXED_TIME - timedelta(hours=1),
+        "close_time": FIXED_TIME,
+        "content_hash": "a" * 64,
+        "finalized": True,
+    }
     report = GapReport(
         symbol_version_id=SYMBOL_VERSION_ID,
         interval_code="1h",

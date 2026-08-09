@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Iterator, cast
+from typing import Any, Iterator, cast
 from uuid import UUID
 
 import pytest
@@ -412,7 +413,7 @@ async def test_incremental_preflight_server_time_outside_transaction(
                     "select status, request_count, retry_count, safe_error, "
                     "ingestion_type "
                     "from public.market_data_ingestions "
-                    "where idempotency_key like 'test-preflight-timeout%'"
+                    "where ingestion_type = 'preflight_failure'"
                 )
             )
             .mappings()
@@ -2244,7 +2245,7 @@ async def test_preflight_failure_preserves_completed_incremental(
                 text(
                     "select status, ingestion_type, request_count, safe_error "
                     "from public.market_data_ingestions "
-                    "where idempotency_key like 'test-preflight-timeout-after%'"
+                    "where ingestion_type = 'preflight_failure'"
                 )
             )
             .mappings()
@@ -2732,10 +2733,7 @@ async def test_gap_report_rejects_duplicate_overlap_reversed_ranges(
             expected_start=FIXED_TIME - timedelta(hours=2),
             expected_end=FIXED_TIME,
             missing_count=2,
-            missing_ranges=(
-                (FIXED_TIME - timedelta(hours=2), FIXED_TIME - timedelta(hours=1)),
-                (FIXED_TIME - timedelta(hours=1), FIXED_TIME),
-            ),
+            missing_ranges=((FIXED_TIME - timedelta(hours=2), FIXED_TIME),),
             severity="error",
         )
         # Duplicate ranges.
@@ -2794,10 +2792,346 @@ async def test_gap_report_rejects_duplicate_overlap_reversed_ranges(
                 gap_report=reversed_ranges,
                 idempotency_key="test-reversed",
             )
-        # The canonical ascending disjoint report is accepted.
+        # Adjacent split of one contiguous gap is rejected: a canonical report
+        # must not let repair/hash segmentation depend on caller partitioning.
+        adjacent_split = GapReport(
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval_code="1h",
+            interval_seconds=3600,
+            expected_start=FIXED_TIME - timedelta(hours=2),
+            expected_end=FIXED_TIME,
+            missing_count=2,
+            missing_ranges=(
+                (FIXED_TIME - timedelta(hours=2), FIXED_TIME - timedelta(hours=1)),
+                (FIXED_TIME - timedelta(hours=1), FIXED_TIME),
+            ),
+            severity="error",
+        )
+        with pytest.raises(ValueError):
+            await service.repair_gaps(
+                symbol=SYMBOL,
+                gap_report=adjacent_split,
+                idempotency_key="test-adjacent-split",
+            )
+        # The canonical single-range report is accepted.
         result = await service.repair_gaps(
             symbol=SYMBOL, gap_report=base, idempotency_key="test-canonical"
         )
         assert result.status == IngestionStatus.COMPLETED
     finally:
         session.close()
+
+
+@pytest.mark.asyncio
+async def test_repair_gaps_forged_zero_gap_rejected_on_empty_dataset(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """A caller-forged zero-gap report is not certified against an empty or
+    incomplete dataset: repair re-derives gap state from persisted evidence."""
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        forged = GapReport(
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval_code="1h",
+            interval_seconds=3600,
+            expected_start=FIXED_TIME - timedelta(hours=1),
+            expected_end=FIXED_TIME,
+            missing_count=0,
+            missing_ranges=(),
+            severity="info",
+        )
+        with pytest.raises(ValueError):
+            await service.repair_gaps(
+                symbol=SYMBOL,
+                gap_report=forged,
+                idempotency_key="test-forged-zero",
+            )
+        # A zero-gap report over a genuinely covered range is still accepted.
+        session.execute(
+            text(
+                """
+                insert into public.candles (
+                    symbol_version_id, interval_code, open_time, close_time,
+                    open_price, high_price, low_price, close_price,
+                    base_volume, quote_volume, trade_count, finalized, content_hash
+                ) values (
+                    :sid, '1h', :ot, :ct, 100, 105, 95, 102,
+                    1.5, 1500, 100, true, :hash
+                )
+                on conflict (symbol_version_id, interval_code, open_time)
+                where superseded_by is null do nothing
+                """
+            ),
+            {
+                "sid": SYMBOL_VERSION_ID,
+                "ot": FIXED_TIME - timedelta(hours=1),
+                "ct": FIXED_TIME,
+                "hash": "a" * 64,
+            },
+        )
+        session.commit()
+        result = await service.repair_gaps(
+            symbol=SYMBOL,
+            gap_report=forged,
+            idempotency_key="test-forged-zero-covered",
+        )
+        assert result.status == IngestionStatus.COMPLETED
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_invalid_evidence_recovers_when_valid_candle_arrives(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Invalid evidence scoped as [T, T+interval) is resolved by a later valid
+    candle at T, so snapshots covering T can be approved."""
+    session = build_session_factory(database_engine)()
+    try:
+        t10 = FIXED_TIME - timedelta(hours=1)
+        # Insert a valid candle at 10:00 with an invalid_value blocker over
+        # [10:00, 11:00) (half-open), simulating a prior invalid attempt.
+        session.execute(
+            text(
+                """
+                insert into public.candles (
+                    symbol_version_id, interval_code, open_time, close_time,
+                    open_price, high_price, low_price, close_price,
+                    base_volume, quote_volume, trade_count, finalized, content_hash
+                ) values (
+                    :sid, '1h', :ot, :ct, 100, 105, 95, 102,
+                    1.5, 1500, 100, true, :hash
+                )
+                on conflict (symbol_version_id, interval_code, open_time)
+                where superseded_by is null do nothing
+                """
+            ),
+            {
+                "sid": SYMBOL_VERSION_ID,
+                "ot": t10,
+                "ct": t10 + timedelta(hours=1),
+                "hash": "a" * 64,
+            },
+        )
+        session.execute(
+            text(
+                """
+                insert into public.data_quality_events (
+                    exchange_id, symbol_version_id, interval_code, event_type,
+                    severity, details, detection_policy_version,
+                    affected_range_start, affected_range_end
+                ) values (
+                    :eid, :sid, '1h', 'invalid_value', 'error',
+                    '{}'::jsonb, '1.0', :rs, :re
+                )
+                """
+            ),
+            {
+                "eid": EXCHANGE_ID,
+                "sid": SYMBOL_VERSION_ID,
+                "rs": t10,
+                "re": t10 + timedelta(hours=1),
+            },
+        )
+        session.commit()
+        # A later valid ingestion over the same range appends terminal
+        # correction_applied evidence resolving the [10:00,11:00) blocker.
+        provider = FakeBinanceProvider(
+            config=FakeBinanceConfig(
+                scenario=FakeBinanceScenario.SUCCESS,
+                fixed_clock_time=FIXED_TIME,
+                fixture_version="2026-08-08-m007-v1",
+            )
+        )
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        result = await service.backfill(
+            symbol=SYMBOL,
+            start_time=t10,
+            end_time=FIXED_TIME,
+            idempotency_key="test-recovery-valid",
+        )
+        assert result.status == IngestionStatus.COMPLETED
+        terminal_count = session.execute(
+            text(
+                "select count(*) from public.data_quality_events "
+                "where event_type = 'correction_applied' "
+                "and symbol_version_id = :sid"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        ).scalar_one()
+        assert terminal_count >= 1
+        # Snapshot covering T is now approved.
+        candle_id = session.execute(
+            text(
+                "select id from public.candles "
+                "where symbol_version_id = :sid and open_time = :ot "
+                "and superseded_by is null"
+            ),
+            {"sid": SYMBOL_VERSION_ID, "ot": t10},
+        ).scalar_one()
+        snapshot = service.create_snapshot(
+            analysis_time=FIXED_TIME,
+            candle_ids=[candle_id],
+            quality_outcome="approved",
+            freshness_outcome="fresh",
+            ingestion_id=result_ingestion_id(session),
+        )
+        assert snapshot.quality_outcome == "approved"
+        assert snapshot.freshness_outcome == "fresh"
+    finally:
+        session.close()
+
+
+def result_ingestion_id(session: Any) -> UUID:
+    return cast(
+        UUID,
+        session.execute(
+            text(
+                "select id from public.market_data_ingestions "
+                "where symbol_version_id = :sid "
+                "and ingestion_type = 'backfill' "
+                "order by created_at desc limit 1"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        ).scalar_one(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_max_length_idempotency_key_bounded_child_keys(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Derived child idempotency keys stay within the 200-char DB contract even
+    when the caller supplies a near-maximum-length parent key."""
+    max_key = "k" * 199
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.TIMEOUT,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        with pytest.raises(BinanceTimeoutError):
+            await service.incremental_fetch(
+                symbol=SYMBOL,
+                idempotency_key=max_key,
+            )
+        row = (
+            session.execute(
+                text(
+                    "select idempotency_key from public.market_data_ingestions "
+                    "where ingestion_type = 'preflight_failure'"
+                )
+            )
+            .mappings()
+            .one()
+        )
+    finally:
+        session.close()
+    child_key = row["idempotency_key"]
+    assert 1 <= len(child_key) <= 200
+    assert not child_key.startswith(max_key)
+
+
+class CancellingProvider(MarketDataProvider):
+    """Raise asyncio.CancelledError during the server-time call."""
+
+    def __init__(self) -> None:
+        self.retry_count = 0
+
+    async def get_server_time(self) -> ExchangeTime:
+        raise asyncio.CancelledError()
+
+    async def get_symbol_metadata(self, symbol: str) -> SymbolMetadata:
+        raise asyncio.CancelledError()
+
+    async def get_finalized_candles(
+        self,
+        symbol: str,
+        interval: CandleInterval,
+        start_time: datetime,
+        end_time: datetime,
+        server_time: datetime | None = None,
+    ) -> list[Candle]:
+        raise asyncio.CancelledError()
+
+    async def get_rate_limit_state(self) -> RateLimitState:
+        raise asyncio.CancelledError()
+
+    async def get_health(self) -> ProviderHealth:
+        raise asyncio.CancelledError()
+
+
+@pytest.mark.asyncio
+async def test_cancellation_persists_cancelled_state(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Cancellation during ingestion persists a durable CANCELLED terminal
+    state instead of leaving the attempt in 'running'."""
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=CancellingProvider(),
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await service.backfill(
+                symbol=SYMBOL,
+                start_time=FIXED_TIME - timedelta(hours=1),
+                end_time=FIXED_TIME,
+                idempotency_key="test-cancelled-backfill",
+            )
+        row = (
+            session.execute(
+                text(
+                    "select status, safe_error from public.market_data_ingestions "
+                    "where idempotency_key = 'test-cancelled-backfill'"
+                )
+            )
+            .mappings()
+            .one()
+        )
+    finally:
+        session.close()
+    assert row["status"] == IngestionStatus.CANCELLED.value
+    assert row["safe_error"] == "cancelled"
