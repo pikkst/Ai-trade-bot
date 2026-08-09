@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, cast
@@ -78,7 +79,7 @@ class MockSession:
     ) -> MockResult:
         if params is None:
             params = {}
-        sql = str(statement).lower()
+        sql = " ".join(str(statement).lower().split())
         result = MockResult()
         if "insert into public.candles" in sql:
             key = (
@@ -110,7 +111,12 @@ class MockSession:
             return result
         if "insert into public.market_data_ingestions" in sql:
             ingestion_id = UUID("00000000-0000-0000-0000-000000000002")
-            self.ingestions[ingestion_id] = {"id": ingestion_id, "status": "running"}
+            self.ingestions[ingestion_id] = {
+                "id": ingestion_id,
+                "status": "running",
+                "page_hashes": None,
+            }
+            result._scalar_one_value = ingestion_id
             return result
         if "insert into public.candle_corrections" in sql:
             return result
@@ -130,27 +136,56 @@ class MockSession:
             }
             return result
         if "from public.market_data_ingestions where id" in sql:
-            result._one_or_none_value = {
-                "status": "running",
-                "checkpoint": None,
-                "inserted_count": 0,
-                "duplicate_count": 0,
-                "invalid_count": 0,
-                "corrected_count": 0,
-                "request_count": 0,
-                "retry_count": 0,
-                "provider_latency_ms": None,
-                "safe_error": None,
-                "content_hash": "",
-                "actual_start_time": None,
-                "actual_end_time": None,
-                "page_hashes": None,
-            }
+            ingestion_id = params.get("ingestion_id")
+            ingestion = self.ingestions.get(ingestion_id) if ingestion_id else None
+            if ingestion is None:
+                result._one_or_none_value = {
+                    "status": "running",
+                    "checkpoint": None,
+                    "inserted_count": 0,
+                    "duplicate_count": 0,
+                    "invalid_count": 0,
+                    "corrected_count": 0,
+                    "request_count": 0,
+                    "retry_count": 0,
+                    "provider_latency_ms": None,
+                    "safe_error": None,
+                    "content_hash": "",
+                    "actual_start_time": None,
+                    "actual_end_time": None,
+                    "page_hashes": None,
+                }
+            else:
+                result._one_or_none_value = {
+                    "exchange_id": EXCHANGE_ID,
+                    "symbol_version_id": SYMBOL_VERSION_ID,
+                    "interval_code": "1h",
+                    "status": IngestionStatus.COMPLETED.value,
+                    "requested_start_time": FIXED_TIME - timedelta(hours=2),
+                    "requested_end_time": FIXED_TIME,
+                    "page_hashes": ingestion.get("page_hashes"),
+                }
             return result
         if "from public.data_quality_events" in sql and "count(*)" in sql:
             result._scalar_one_value = 0
             return result
         if "update public.market_data_ingestions" in sql:
+            ingestion_id = params.get("id") or params.get("ingestion_id")
+            if ingestion_id in self.ingestions:
+                update_fields = {}
+                if "status" in params:
+                    update_fields["status"] = params["status"]
+                if "safe_error" in params:
+                    update_fields["safe_error"] = params["safe_error"]
+                if "content_hash" in params:
+                    update_fields["content_hash"] = params["content_hash"]
+                if "actual_start_time" in params:
+                    update_fields["actual_start_time"] = params["actual_start_time"]
+                if "actual_end_time" in params:
+                    update_fields["actual_end_time"] = params["actual_end_time"]
+                if "checkpoint" in params:
+                    update_fields["checkpoint"] = params["checkpoint"]
+                self.ingestions[ingestion_id].update(update_fields)
             return result
         if "candle.id as id" in sql:
             rows = []
@@ -201,7 +236,17 @@ class MockSession:
             result._one_or_none_value = None
             return result
         if "select candle.content_hash" in sql:
-            result._scalars_value = [c["content_hash"] for c in self.candles.values()]
+            open_time = params.get("open_time")
+            for c in self.candles.values():
+                if (
+                    c.get("symbol_version_id") == params.get("symbol_version_id")
+                    and c.get("interval_code") == params.get("interval_code")
+                    and c.get("open_time") == open_time
+                ):
+                    result._scalar_one_or_none_value = c["content_hash"]
+                    break
+            else:
+                result._scalar_one_or_none_value = None
             return result
         if "select candle.open_time" in sql:
             result._scalars_value = [c["open_time"] for c in self.candles.values()]
@@ -234,7 +279,7 @@ def test_incremental_overlap_from_latest() -> None:
         "symbol_version_id": SYMBOL_VERSION_ID,
         "interval_code": "1h",
         "open_time": FIXED_TIME - timedelta(hours=1),
-        "close_time": FIXED_TIME - timedelta(hours=1),
+        "close_time": FIXED_TIME - timedelta(hours=2),
         "content_hash": "a" * 64,
         "finalized": True,
     }
@@ -370,12 +415,18 @@ def test_snapshot_membership_validated() -> None:
         "finalized": True,
         "id": UUID("42000000-0000-0000-0000-000000000001"),
     }
+    session.ingestions[UUID("00000000-0000-0000-0000-000000000002")] = {
+        "id": UUID("00000000-0000-0000-0000-000000000002"),
+        "status": "completed",
+        "page_hashes": [],
+    }
     with pytest.raises(ValueError):
         service.create_snapshot(
             analysis_time=FIXED_TIME,
             candle_ids=[UUID("42000000-0000-0000-0000-000000000001")],
             quality_outcome="approved",
             freshness_outcome="fresh",
+            ingestion_id=UUID("00000000-0000-0000-0000-000000000002"),
         )
 
 
@@ -515,11 +566,19 @@ def test_create_snapshot_success() -> None:
         "content_hash": "a" * 64,
         "finalized": True,
     }
+    session.ingestions[UUID("00000000-0000-0000-0000-000000000002")] = {
+        "id": UUID("00000000-0000-0000-0000-000000000002"),
+        "status": "completed",
+        "page_hashes": [
+            [(FIXED_TIME - timedelta(hours=1)).isoformat(), "a" * 64]
+        ],
+    }
     snapshot = service.create_snapshot(
         analysis_time=FIXED_TIME,
         candle_ids=[UUID("42000000-0000-0000-0000-000000000001")],
         quality_outcome="approved",
         freshness_outcome="fresh",
+        ingestion_id=UUID("00000000-0000-0000-0000-000000000002"),
     )
     assert isinstance(snapshot, SnapshotResult)
     assert snapshot.candle_count == 1
@@ -553,11 +612,19 @@ def test_snapshot_validation_uses_derived_outcomes() -> None:
         "content_hash": "a" * 64,
         "finalized": True,
     }
+    session.ingestions[UUID("00000000-0000-0000-0000-000000000002")] = {
+        "id": UUID("00000000-0000-0000-0000-000000000002"),
+        "status": "completed",
+        "page_hashes": [
+            [(FIXED_TIME - timedelta(hours=1)).isoformat(), "a" * 64]
+        ],
+    }
     snapshot = service.create_snapshot(
         analysis_time=FIXED_TIME,
         candle_ids=[UUID("42000000-0000-0000-0000-000000000001")],
         quality_outcome="approved",
         freshness_outcome="fresh",
+        ingestion_id=UUID("00000000-0000-0000-0000-000000000002"),
     )
     assert snapshot.freshness_outcome == "fresh"
 
@@ -589,12 +656,20 @@ def test_snapshot_gate_rejects_stale_freshness() -> None:
         "content_hash": "a" * 64,
         "finalized": True,
     }
+    session.ingestions[UUID("00000000-0000-0000-0000-000000000002")] = {
+        "id": UUID("00000000-0000-0000-0000-000000000002"),
+        "status": "completed",
+        "page_hashes": [
+            [(FIXED_TIME - timedelta(hours=1)).isoformat(), "a" * 64]
+        ],
+    }
     with pytest.raises(ValueError):
         service.create_snapshot(
             analysis_time=FIXED_TIME,
             candle_ids=[UUID("42000000-0000-0000-0000-000000000001")],
             quality_outcome="approved",
             freshness_outcome="fresh",
+            ingestion_id=UUID("00000000-0000-0000-0000-000000000002"),
         )
 
 
@@ -1029,11 +1104,19 @@ def test_snapshot_idempotent_replay_returns_existing(
         "content_hash": "a" * 64,
         "finalized": True,
     }
+    session.ingestions[UUID("00000000-0000-0000-0000-000000000002")] = {
+        "id": UUID("00000000-0000-0000-0000-000000000002"),
+        "status": "completed",
+        "page_hashes": [
+            [(FIXED_TIME - timedelta(hours=1)).isoformat(), "a" * 64]
+        ],
+    }
     snapshot = service.create_snapshot(
         analysis_time=FIXED_TIME,
         candle_ids=[UUID("42000000-0000-0000-0000-000000000001")],
         quality_outcome="approved",
         freshness_outcome="fresh",
+        ingestion_id=UUID("00000000-0000-0000-0000-000000000002"),
     )
     assert snapshot.snapshot_id == existing_id
 
@@ -1316,3 +1399,230 @@ async def test_server_time_failure_persists_attempt() -> None:
             end_time=FIXED_TIME,
             idempotency_key="test-server-time-fail",
         )
+
+
+def test_incremental_range_bounded_by_max_range_stale_latest() -> None:
+    session = MockSession()
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=FakeBinanceProvider(
+            config=FakeBinanceConfig(
+                scenario=FakeBinanceScenario.SUCCESS,
+                fixed_clock_time=FIXED_TIME,
+                fixture_version="2026-08-08-m007-v1",
+            )
+        ),
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+        incremental_max_range_hours=2,
+    )
+    session.candles[(SYMBOL_VERSION_ID, "1h", FIXED_TIME - timedelta(hours=10))] = {
+        "symbol_version_id": SYMBOL_VERSION_ID,
+        "interval_code": "1h",
+        "open_time": FIXED_TIME - timedelta(hours=10),
+        "close_time": FIXED_TIME - timedelta(hours=9),
+        "content_hash": "a" * 64,
+        "finalized": True,
+    }
+    start, end = service._compute_incremental_range(FIXED_TIME)
+    assert end == FIXED_TIME
+    assert start == FIXED_TIME - timedelta(hours=2)
+
+
+def test_validate_candle_times_rejects_non_aligned() -> None:
+    from app.domains.market_data.validation import validate_candle_times
+
+    ok, reasons = validate_candle_times(
+        open_time=FIXED_TIME.replace(minute=30),
+        close_time=FIXED_TIME.replace(minute=30) + timedelta(hours=1),
+        interval_seconds=3600,
+    )
+    assert not ok
+    assert "interval_alignment_mismatch" in reasons
+
+
+@pytest.mark.asyncio
+async def test_out_of_order_page_no_canonical_mutation() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    c_earlier = Candle(
+        time=FIXED_TIME - timedelta(hours=2),
+        close_time=FIXED_TIME - timedelta(hours=1),
+        open=Decimal("100"),
+        high=Decimal("105"),
+        low=Decimal("95"),
+        close=Decimal("102"),
+        volume=Decimal("1.5"),
+        quote_volume=Decimal("1530"),
+        trade_count=100,
+    )
+    c_later = Candle(
+        time=FIXED_TIME - timedelta(hours=1),
+        close_time=FIXED_TIME,
+        open=Decimal("101"),
+        high=Decimal("106"),
+        low=Decimal("96"),
+        close=Decimal("103"),
+        volume=Decimal("1.6"),
+        quote_volume=Decimal("1648"),
+        trade_count=101,
+    )
+    results = service._validate_candles(
+        [c_later, c_earlier],
+        existing_hashes=set(),
+        existing_times=set(),
+        batch_by_time={},
+        clock_drift_ms=0,
+    )
+    assert all(r.out_of_order for r in results)
+    assert all(r.is_valid for r in results)
+    assert all(not r.is_duplicate for r in results)
+    assert session.candles == {}
+
+
+def test_snapshot_lineage_rejects_missing_page_hashes() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    session.candles[(SYMBOL_VERSION_ID, "1h", FIXED_TIME - timedelta(hours=1))] = {
+        "symbol_version_id": SYMBOL_VERSION_ID,
+        "interval_code": "1h",
+        "open_time": FIXED_TIME - timedelta(hours=1),
+        "close_time": FIXED_TIME,
+        "content_hash": "a" * 64,
+        "finalized": True,
+    }
+    session.ingestions[UUID("00000000-0000-0000-0000-000000000002")] = {
+        "id": UUID("00000000-0000-0000-0000-000000000002"),
+        "status": "completed",
+        "page_hashes": None,
+    }
+    with pytest.raises(ValueError, match="no accepted page evidence"):
+        service.create_snapshot(
+            analysis_time=FIXED_TIME,
+            candle_ids=[UUID("42000000-0000-0000-0000-000000000001")],
+            quality_outcome="approved",
+            freshness_outcome="fresh",
+            ingestion_id=UUID("00000000-0000-0000-0000-000000000002"),
+        )
+
+
+def test_snapshot_lineage_rejects_hash_mismatch() -> None:
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=provider,
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    session.candles[(SYMBOL_VERSION_ID, "1h", FIXED_TIME - timedelta(hours=1))] = {
+        "symbol_version_id": SYMBOL_VERSION_ID,
+        "interval_code": "1h",
+        "open_time": FIXED_TIME - timedelta(hours=1),
+        "close_time": FIXED_TIME,
+        "content_hash": "a" * 64,
+        "finalized": True,
+    }
+    session.ingestions[UUID("00000000-0000-0000-0000-000000000002")] = {
+        "id": UUID("00000000-0000-0000-0000-000000000002"),
+        "status": "completed",
+        "page_hashes": [
+            [(FIXED_TIME - timedelta(hours=1)).isoformat(), "b" * 64]
+        ],
+    }
+    with pytest.raises(ValueError, match="has hash .* but ingestion"):
+        service.create_snapshot(
+            analysis_time=FIXED_TIME,
+            candle_ids=[UUID("42000000-0000-0000-0000-000000000001")],
+            quality_outcome="approved",
+            freshness_outcome="fresh",
+            ingestion_id=UUID("00000000-0000-0000-0000-000000000002"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_incremental_preflight_cancelled_persists_cancelled() -> None:
+    session = MockSession()
+
+    class CancellingProvider:
+        async def get_server_time(self) -> Any:
+            raise asyncio.CancelledError()
+
+        async def get_symbol_metadata(self, symbol: str) -> Any:
+            raise asyncio.CancelledError()
+
+        async def get_finalized_candles(
+            self,
+            symbol: str,
+            interval: Any,
+            start_time: datetime,
+            end_time: datetime,
+            server_time: datetime | None = None,
+        ) -> list[Any]:
+            raise asyncio.CancelledError()
+
+        async def get_rate_limit_state(self) -> Any:
+            raise asyncio.CancelledError()
+
+        async def get_health(self) -> Any:
+            raise asyncio.CancelledError()
+
+    service = MarketDataService(
+        session=session,  # type: ignore[arg-type]
+        provider=CancellingProvider(),  # type: ignore[arg-type]
+        workspace_id=WORKSPACE_ID,
+        exchange_id=EXCHANGE_ID,
+        symbol_version_id=SYMBOL_VERSION_ID,
+        interval=CandleInterval.ONE_HOUR,
+        clock=FixedClock(FIXED_TIME),
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await service.incremental_fetch(
+            symbol="BTCEUR",
+            idempotency_key="test-preflight-cancelled",
+        )
+    rows = list(session.ingestions.values())
+    assert len(rows) == 1
+    assert rows[0]["status"] == "cancelled"

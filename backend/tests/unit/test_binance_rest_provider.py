@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -208,5 +208,69 @@ async def test_symbol_metadata_missing_max_qty_rejected() -> None:
     try:
         with pytest.raises(BinanceMalformedDataError):
             await provider.get_symbol_metadata("BTCEUR")
+    finally:
+        await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_symbol_metadata_non_finite_tick_size_rejected() -> None:
+    info = _valid_symbol_info()
+    price = next(f for f in info["filters"] if f["filterType"] == "PRICE_FILTER")
+    price["tickSize"] = "NaN"
+    provider, _ = _build_provider([_exchange_info_response(info)])
+    try:
+        with pytest.raises(BinanceMalformedDataError):
+            await provider.get_symbol_metadata("BTCEUR")
+    finally:
+        await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_symbol_metadata_inverted_quantity_range_rejected() -> None:
+    info = _valid_symbol_info()
+    lot = next(f for f in info["filters"] if f["filterType"] == "LOT_SIZE")
+    lot["minQty"] = "10.0"
+    lot["maxQty"] = "1.0"
+    provider, _ = _build_provider([_exchange_info_response(info)])
+    try:
+        with pytest.raises(BinanceMalformedDataError):
+            await provider.get_symbol_metadata("BTCEUR")
+    finally:
+        await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_kline_invalid_json_classified_as_malformed() -> None:
+    provider, _ = _build_provider([_response(200, "not json")])
+    try:
+        with pytest.raises(BinanceMalformedDataError):
+            await provider.get_finalized_candles(
+                symbol="BTCEUR",
+                interval=__import__(
+                    "app.infrastructure.exchange.binance.protocol",
+                    fromlist=["CandleInterval"],
+                ).CandleInterval.ONE_HOUR,
+                start_time=FIXED_TIME - timedelta(hours=1),
+                end_time=FIXED_TIME,
+            )
+    finally:
+        await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_retry_count_sums_across_sequential_calls() -> None:
+    provider, _ = _build_provider(
+        [
+            _response(503, {"msg": "busy"}),
+            _response(200, {"serverTime": int(FIXED_TIME.timestamp() * 1000)}),
+            _response(503, {"msg": "busy"}),
+            _response(200, {"serverTime": int(FIXED_TIME.timestamp() * 1000)}),
+        ]
+    )
+    try:
+        await provider.get_server_time()
+        first_count = provider.retry_count
+        await provider.get_server_time()
+        assert provider.retry_count >= first_count + 1
     finally:
         await provider.close()

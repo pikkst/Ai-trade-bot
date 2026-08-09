@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -269,11 +270,6 @@ class BinanceRestProvider:
         params: dict[str, Any] | None = None,
     ) -> Any:
         retry_after_holder: dict[str, float] = {"value": 0.0}
-        # Task-scoped telemetry for this request only: reset so retries from a
-        # concurrent call on a shared provider never leak into this call's
-        # counters.
-        _retry_counter.set(0)
-        _retry_wait.set(None)
 
         def _wait(retry_state: RetryCallState) -> float:
             _retry_counter.set(_retry_counter.get() + 1)
@@ -303,9 +299,6 @@ class BinanceRestProvider:
                 if response.status_code in (429, 418):
                     retry_after = response.headers.get("Retry-After")
                     wait = float(retry_after) if retry_after else _RETRY_WAIT_MIN
-                    # Never shorten a provider-required backoff. If it exceeds
-                    # the local execution budget, fail closed without another
-                    # request instead of retrying an active ban too early.
                     if wait > _RETRY_AFTER_MAX:
                         raise BinanceProviderUnavailableError(
                             f"Binance requested backoff {wait}s on {path} "
@@ -346,7 +339,12 @@ class BinanceRestProvider:
                         f"Binance bad request on {path}: {response.text[:200]}"
                     )
                 response.raise_for_status()
-                return response.json()
+                try:
+                    return response.json()
+                except (json.JSONDecodeError, ValueError) as exc:
+                    raise BinanceMalformedDataError(
+                        f"Binance response on {path} is not valid JSON: {exc}"
+                    ) from exc
             except httpx.TimeoutException as exc:
                 logger.warning("binance_timeout", extra={"path": path})
                 raise BinanceTimeoutError(
@@ -423,13 +421,25 @@ def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
             f"unknown symbol status {status_str!r}"
         ) from exc
     filters = raw.get("filters") or []
-    price_filter = next(
-        (f for f in filters if f.get("filterType") == "PRICE_FILTER"), None
-    )
-    lot_filter = next((f for f in filters if f.get("filterType") == "LOT_SIZE"), None)
-    notional_filter = next(
-        (f for f in filters if f.get("filterType") == "MIN_NOTIONAL"), None
-    )
+    if not isinstance(filters, list):
+        raise BinanceMalformedDataError(
+            "symbol metadata filters must be a list"
+        )
+    price_filter = None
+    lot_filter = None
+    notional_filter = None
+    for f in filters:
+        if not isinstance(f, dict):
+            raise BinanceMalformedDataError(
+                "symbol metadata filters contains a non-object entry"
+            )
+        filter_type = f.get("filterType")
+        if filter_type == "PRICE_FILTER":
+            price_filter = f
+        elif filter_type == "LOT_SIZE":
+            lot_filter = f
+        elif filter_type == "MIN_NOTIONAL":
+            notional_filter = f
     if price_filter is None or lot_filter is None or notional_filter is None:
         raise BinanceMalformedDataError(
             "symbol metadata is missing required filters "
@@ -452,13 +462,39 @@ def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
             )
     try:
         tick_size = Decimal(str(price_filter.get("tickSize")))
+        if tick_size <= 0:
+            raise BinanceMalformedDataError(
+                f"PRICE_FILTER tickSize must be positive, got {tick_size}"
+            )
         price_precision = _decimal_precision(tick_size)
         step_size = Decimal(str(lot_filter.get("stepSize")))
+        if step_size <= 0:
+            raise BinanceMalformedDataError(
+                f"LOT_SIZE stepSize must be positive, got {step_size}"
+            )
         quantity_precision = _decimal_precision(step_size)
         min_quantity = Decimal(str(lot_filter.get("minQty")))
+        if min_quantity < 0:
+            raise BinanceMalformedDataError(
+                f"LOT_SIZE minQty must be non-negative, got {min_quantity}"
+            )
         max_quantity = Decimal(str(lot_filter.get("maxQty")))
+        if max_quantity < 0:
+            raise BinanceMalformedDataError(
+                f"LOT_SIZE maxQty must be non-negative, got {max_quantity}"
+            )
+        if max_quantity < min_quantity:
+            raise BinanceMalformedDataError(
+                f"LOT_SIZE maxQty {max_quantity} is less than minQty {min_quantity}"
+            )
         min_notional = Decimal(str(notional_filter.get("minNotional")))
+        if min_notional <= 0:
+            raise BinanceMalformedDataError(
+                f"MIN_NOTIONAL minNotional must be positive, got {min_notional}"
+            )
     except (InvalidOperation, TypeError, ValueError) as exc:
+        if isinstance(exc, BinanceMalformedDataError):
+            raise
         raise BinanceMalformedDataError(
             f"symbol metadata has invalid filter values: {exc}"
         ) from exc

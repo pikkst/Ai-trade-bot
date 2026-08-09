@@ -237,6 +237,13 @@ class MarketDataService:
         retry_before = getattr(self._provider, "retry_count", 0)
         try:
             st = await self._provider.get_server_time()
+        except asyncio.CancelledError:
+            self._persist_preflight_cancelled(
+                symbol=symbol,
+                idempotency_key=idempotency_key,
+                retry_before=retry_before,
+            )
+            raise
         except Exception as exc:
             self._persist_preflight_failure(
                 symbol=symbol,
@@ -330,6 +337,56 @@ class MarketDataService:
         )
         self._session.commit()
 
+    def _persist_preflight_cancelled(
+        self,
+        symbol: str,
+        idempotency_key: str,
+        retry_before: int,
+    ) -> None:
+        """Persist a durable CANCELLED incremental preflight attempt when the
+        server-time call is cancelled before any ingestion row exists.
+
+        Cancellation is a BaseException, so it cannot be caught by the generic
+        Exception handler in incremental_fetch. This method creates the
+        dedicated preflight-attempt identity and records CANCELLED terminal
+        evidence so the cancellation is auditable and never leaves the task
+        in an ambiguous 'running' state.
+        """
+        provisional_end = self._align_to_interval(self._clock.now())
+        provisional_start = self._align_to_interval(
+            provisional_end - timedelta(hours=self._incremental_max_range_hours)
+        )
+        ingestion_id = self._get_or_create_ingestion(
+            ingestion_type=IngestionType.PREFLIGHT_FAILURE,
+            start_time=provisional_start,
+            end_time=provisional_end,
+            idempotency_key=self._derive_child_key(
+                parent_key=idempotency_key,
+                label="preflight-cancelled",
+                salt=provisional_end.isoformat(),
+            ),
+        )
+        retry_count = max(0, getattr(self._provider, "retry_count", 0) - retry_before)
+        self._update_ingestion(
+            ingestion_id=ingestion_id,
+            status=IngestionStatus.CANCELLED,
+            inserted=0,
+            duplicates=0,
+            invalid=0,
+            corrected=0,
+            request_count=1,
+            retry_count=retry_count,
+            provider_latency_ms=None,
+            safe_error="cancelled",
+            content_hash=self._compute_ingestion_hash(
+                provisional_start, provisional_end
+            ),
+            actual_start_time=provisional_start,
+            actual_end_time=provisional_end,
+            checkpoint=provisional_start,
+        )
+        self._session.commit()
+
     def _align_to_interval(self, dt: datetime) -> datetime:
         """Floor a timestamp to the start of its configured interval."""
         epoch = int(dt.timestamp())
@@ -360,15 +417,21 @@ class MarketDataService:
         current, not-yet-finalized interval), and the start is floored to an
         interval boundary, so a 1h fetch at 22:28 covers [..., 22:00) and never
         expects a non-finalized candle.
+
+        The configured incremental maximum range is a hard bound: the window
+        must never exceed it even when the latest persisted candle is stale.
+        Older missing history is routed through explicit backfill/gap evidence
+        rather than turning one incremental call into an unbounded catch-up.
         """
         latest = self._get_latest_finalized_candle_time()
         end_time = self._align_to_interval(server_time)
+        max_start = end_time - timedelta(hours=self._incremental_max_range_hours)
         if latest is None:
-            lookback = timedelta(hours=self._incremental_max_range_hours)
-            start_time = self._align_to_interval(server_time - lookback)
+            start_time = max_start
         else:
             overlap = timedelta(hours=self._incremental_overlap_hours)
-            start_time = self._align_to_interval(latest - overlap)
+            candidate = self._align_to_interval(latest - overlap)
+            start_time = max(candidate, max_start)
         return start_time, end_time
 
     def _check_clock_drift(self, server_time: ExchangeTime) -> None:
@@ -721,7 +784,7 @@ class MarketDataService:
         candle_ids: list[UUID],
         quality_outcome: str,
         freshness_outcome: str,
-        ingestion_id: UUID | None = None,
+        ingestion_id: UUID,
         creator_cycle_id: str | None = None,
         creator_job_id: str | None = None,
     ) -> SnapshotResult:
@@ -751,7 +814,9 @@ class MarketDataService:
                 f"freshness={derived_freshness}"
             )
         if ingestion_id is not None:
-            self._validate_snapshot_ingestion(ingestion_id, first_time, last_time)
+            self._validate_snapshot_ingestion(
+                ingestion_id, first_time, last_time, canonical_ids
+            )
         snapshot_hash = self._compute_snapshot_hash(
             candle_ids=canonical_ids,
             analysis_time=analysis_time,
@@ -841,21 +906,24 @@ class MarketDataService:
         ingestion_id: UUID,
         first_time: datetime,
         last_time: datetime,
+        candle_ids: list[UUID],
     ) -> None:
         """Validate that a snapshot's ingestion lineage is canonical.
 
         Snapshot provenance is evidence: the ingestion must belong to this
-        exchange/symbol/interval, be terminal/completed, and its requested
-        range must cover the candidate membership. A foreign, failed, or
-        non-covering ingestion must never be recorded as this snapshot's
-        source.
+        exchange/symbol/interval, be terminal/completed, its requested range
+        must cover the candidate membership, and every candidate candle must
+        be directly traceable to the ingestion's accepted page evidence. A
+        foreign, failed, or non-covering ingestion must never be recorded as
+        this snapshot's source.
         """
         row = (
             self._session.execute(
                 text(
                     """
                     select exchange_id, symbol_version_id, interval_code,
-                           status, requested_start_time, requested_end_time
+                           status, requested_start_time, requested_end_time,
+                           page_hashes
                     from public.market_data_ingestions
                     where id = :ingestion_id
                     """
@@ -880,14 +948,79 @@ class MarketDataService:
             )
         requested_start = cast(datetime, row["requested_start_time"])
         requested_end = cast(datetime, row["requested_end_time"])
-        # The ingestion's requested half-open range must cover the candidate
-        # membership span [first_time, last_time + interval).
         if requested_start > first_time or requested_end < (
             last_time + timedelta(seconds=self._interval_seconds)
         ):
             raise ValueError(
                 "snapshot ingestion range does not cover the candidate membership"
             )
+        page_hashes_raw = row["page_hashes"]
+        if not page_hashes_raw:
+            raise ValueError(
+                "snapshot ingestion has no accepted page evidence (page_hashes is empty)"
+            )
+        if isinstance(page_hashes_raw, str):
+            page_hashes = json.loads(page_hashes_raw)
+        else:
+            page_hashes = list(page_hashes_raw)
+        accepted_lineage: dict[datetime, str] = {}
+        for pair in page_hashes:
+            accepted_lineage[datetime.fromisoformat(pair[0])] = pair[1]
+        candidate_times = {
+            c
+            for c in self._session.execute(
+                text(
+                    """
+                    select candle.open_time
+                    from public.candles candle
+                    where candle.id = any(:ids)
+                      and candle.symbol_version_id = :symbol_version_id
+                      and candle.interval_code = :interval_code
+                      and candle.finalized = true
+                      and candle.superseded_by is null
+                    """
+                ),
+                {
+                    "ids": candle_ids,
+                    "symbol_version_id": self._symbol_version_id,
+                    "interval_code": self._interval.value,
+                },
+            ).scalars().all()
+        }
+        for open_time in candidate_times:
+            expected_hash = accepted_lineage.get(open_time)
+            if expected_hash is None:
+                raise ValueError(
+                    f"snapshot candle at {open_time.isoformat()} is not present "
+                    f"in ingestion {ingestion_id} accepted page evidence"
+                )
+            actual_hash = (
+                self._session.execute(
+                    text(
+                        """
+                        select candle.content_hash
+                        from public.candles candle
+                        where candle.symbol_version_id = :symbol_version_id
+                          and candle.interval_code = :interval_code
+                          and candle.open_time = :open_time
+                          and candle.finalized = true
+                          and candle.superseded_by is null
+                        """
+                    ),
+                    {
+                        "symbol_version_id": self._symbol_version_id,
+                        "interval_code": self._interval.value,
+                        "open_time": open_time,
+                    },
+                )
+                .scalar_one_or_none()
+            )
+            if actual_hash != expected_hash:
+                raise ValueError(
+                    f"snapshot candle at {open_time.isoformat()} has hash "
+                    f"{actual_hash!r} but ingestion {ingestion_id} accepted "
+                    f"{expected_hash!r}"
+                )
 
     def _derive_quality_outcome(
         self,
@@ -1797,6 +1930,10 @@ class MarketDataService:
         clock_drift_ms: int,
     ) -> list[Any]:
         results = []
+        page_out_of_order = any(
+            candles[i].time > candles[i + 1].time
+            for i in range(len(candles) - 1)
+        )
         previous_open_time: datetime | None = None
         for candle in candles:
             ohlc_valid, ohlc_reasons = validate_candle_ohlc(
@@ -1829,7 +1966,7 @@ class MarketDataService:
             existing_id: UUID | None = None
             existing_hash = ""
             duplicate_conflict = False
-            out_of_order = False
+            out_of_order = page_out_of_order
             # Same-page identity: an identical repeat is a consistent duplicate;
             # a changed content at the same open time is a same-page conflict.
             batch_hash = batch_by_time.get(candle.time)
@@ -1842,9 +1979,10 @@ class MarketDataService:
                 is_correction = True
                 existing_id = existing_row.get("id")
                 existing_hash = existing_row.get("content_hash", "")
-            if previous_open_time is not None and candle.time < previous_open_time:
-                out_of_order = True
-            previous_open_time = candle.time
+            if not page_out_of_order:
+                if previous_open_time is not None and candle.time < previous_open_time:
+                    out_of_order = True
+                previous_open_time = candle.time
             quality_state, _ = assess_quality(
                 candle=candle,
                 is_duplicate=is_duplicate,

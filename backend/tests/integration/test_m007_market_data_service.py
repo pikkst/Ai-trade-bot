@@ -804,6 +804,14 @@ async def test_correction_invalidates_dependent_snapshot(
             ),
             {"sid": SYMBOL_VERSION_ID, "t": FIXED_TIME - timedelta(hours=1)},
         ).scalar_one()
+        ingestion_id = seed_direct_ingestion(
+            session,
+            SYMBOL_VERSION_ID,
+            FIXED_TIME - timedelta(hours=1),
+            FIXED_TIME,
+            [[(FIXED_TIME - timedelta(hours=1)).isoformat(), "a" * 64]],
+        )
+        session.commit()
         # Create a snapshot over the original candle so it can be invalidated.
         service = MarketDataService(
             session=session,
@@ -819,6 +827,7 @@ async def test_correction_invalidates_dependent_snapshot(
             candle_ids=[original_id],
             quality_outcome="approved",
             freshness_outcome="fresh",
+            ingestion_id=ingestion_id,
         )
         session.commit()
         snapshot_id = snapshot.snapshot_id
@@ -882,6 +891,14 @@ def test_snapshot_idempotent_replay_same_identity(
             ),
             {"sid": SYMBOL_VERSION_ID, "t": FIXED_TIME - timedelta(hours=1)},
         ).scalar_one()
+        ingestion_id = seed_direct_ingestion(
+            session,
+            SYMBOL_VERSION_ID,
+            FIXED_TIME - timedelta(hours=1),
+            FIXED_TIME,
+            [[(FIXED_TIME - timedelta(hours=1)).isoformat(), "a" * 64]],
+        )
+        session.commit()
         service = MarketDataService(
             session=session,
             provider=provider,
@@ -896,6 +913,7 @@ def test_snapshot_idempotent_replay_same_identity(
             candle_ids=[candle_id],
             quality_outcome="approved",
             freshness_outcome="fresh",
+            ingestion_id=ingestion_id,
         )
         session.commit()
         second = service.create_snapshot(
@@ -903,6 +921,7 @@ def test_snapshot_idempotent_replay_same_identity(
             candle_ids=[candle_id],
             quality_outcome="approved",
             freshness_outcome="fresh",
+            ingestion_id=ingestion_id,
         )
         session.commit()
     finally:
@@ -1261,6 +1280,7 @@ async def test_drift_failure_then_healthy_then_fresh_snapshot(
             idempotency_key="test-drift-recover",
         )
         assert result.status == IngestionStatus.COMPLETED
+        ingestion_id = result_ingestion_id(session)
         candle_id = session.execute(
             text(
                 "select id from public.candles "
@@ -1274,6 +1294,7 @@ async def test_drift_failure_then_healthy_then_fresh_snapshot(
             candle_ids=[candle_id],
             quality_outcome="approved",
             freshness_outcome="fresh",
+            ingestion_id=ingestion_id,
         )
         assert snapshot.quality_outcome == "approved"
         assert snapshot.freshness_outcome == "fresh"
@@ -1862,6 +1883,17 @@ async def test_invalid_candle_scoped_snapshot_fails_only_at_t(
                 },
             )
         session.commit()
+        ingestion_id = seed_direct_ingestion(
+            session,
+            SYMBOL_VERSION_ID,
+            t10,
+            FIXED_TIME,
+            [
+                [t10.isoformat(), f"{0:064x}"],
+                [t11.isoformat(), f"{1:064x}"],
+            ],
+        )
+        session.commit()
         # Scope an error to exactly the 11:00 candle.
         session.execute(
             text(
@@ -1920,6 +1952,7 @@ async def test_invalid_candle_scoped_snapshot_fails_only_at_t(
                 candle_ids=[candle_id(t11)],
                 quality_outcome="approved",
                 freshness_outcome="fresh",
+                ingestion_id=ingestion_id,
             )
         # Snapshot covering only 10:00 is unaffected and fresh.
         snapshot = service.create_snapshot(
@@ -1927,6 +1960,7 @@ async def test_invalid_candle_scoped_snapshot_fails_only_at_t(
             candle_ids=[candle_id(t10)],
             quality_outcome="approved",
             freshness_outcome="fresh",
+            ingestion_id=ingestion_id,
         )
         assert snapshot.quality_outcome == "approved"
         assert snapshot.freshness_outcome == "fresh"
@@ -2612,6 +2646,17 @@ async def test_quality_gate_half_open_boundary_and_candle_scoped(
                 },
             )
         session.commit()
+        ingestion_id = seed_direct_ingestion(
+            session,
+            SYMBOL_VERSION_ID,
+            t10,
+            FIXED_TIME,
+            [
+                [t10.isoformat(), f"{0:064x}"],
+                [t11.isoformat(), f"{1:064x}"],
+            ],
+        )
+        session.commit()
         candle_ids = [
             session.execute(
                 text(
@@ -2667,6 +2712,7 @@ async def test_quality_gate_half_open_boundary_and_candle_scoped(
             candle_ids=[candle_ids[1]],
             quality_outcome="approved",
             freshness_outcome="fresh",
+            ingestion_id=ingestion_id,
         )
         assert snapshot.quality_outcome == "approved"
         # Candle-scoped blocker on an unrelated candle must not block either.
@@ -2695,6 +2741,7 @@ async def test_quality_gate_half_open_boundary_and_candle_scoped(
             candle_ids=[candle_ids[1]],
             quality_outcome="approved",
             freshness_outcome="fresh",
+            ingestion_id=ingestion_id,
         )
         assert snapshot2.quality_outcome == "approved"
     finally:
@@ -3017,6 +3064,45 @@ def result_ingestion_id(session: Any) -> UUID:
                 "order by created_at desc limit 1"
             ),
             {"sid": SYMBOL_VERSION_ID},
+        ).scalar_one(),
+    )
+
+
+def seed_direct_ingestion(
+    session: Any,
+    symbol_version_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+    page_hashes: list[list[str]],
+) -> UUID:
+    return cast(
+        UUID,
+        session.execute(
+            text(
+                """
+                insert into public.market_data_ingestions (
+                    exchange_id, symbol_version_id, ingestion_type, interval_code,
+                    requested_start_time, requested_end_time, status,
+                    idempotency_key, content_hash, checkpoint,
+                    actual_start_time, actual_end_time, page_hashes
+                ) values (
+                    :eid, :sid, 'backfill', '1h',
+                    :start, :end, 'completed',
+                    :key, :hash, :start,
+                    :start, :end, :page_hashes
+                )
+                returning id
+                """
+            ),
+            {
+                "eid": EXCHANGE_ID,
+                "sid": symbol_version_id,
+                "start": start_time,
+                "end": end_time,
+                "key": f"direct-ingestion-{start_time.isoformat()}",
+                "hash": "d" * 64,
+                "page_hashes": json.dumps(page_hashes),
+            },
         ).scalar_one(),
     )
 

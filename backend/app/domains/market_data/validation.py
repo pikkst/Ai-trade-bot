@@ -57,6 +57,10 @@ def validate_candle_times(
         reasons.append("non_positive_duration")
     if interval_seconds > 0 and abs(expected_duration - interval_seconds) > 1:
         reasons.append("interval_duration_mismatch")
+    if interval_seconds > 0:
+        open_epoch = int(open_time.timestamp())
+        if open_epoch % interval_seconds != 0:
+            reasons.append("interval_alignment_mismatch")
     return len(reasons) == 0, reasons
 
 
