@@ -1,57 +1,50 @@
--- M007 symbol-metadata versioning upgrade safety.
--- Stage raw_metadata_hash to nullable, backfill, add last_verified_at,
--- resolve pre-existing multiple effective rows, then enforce NOT NULL
--- and exactly-one-current for populated pre-M007 deployments.
+-- M007 symbol-metadata freshness evidence and raw observation persistence.
+-- Upgrade-safe for populated deployments:
+--  - add last_verified_at so unchanged refreshes advance a dedicated
+--    verification timestamp without mutating immutable version evidence;
+--  - add an immutable raw-observation ledger so each authoritative source
+--    observation (raw hash, retrieval time, provider evidence) is traceable
+--    and freshness can be re-derived from observations.
 
--- 1. Allow backfill of raw_metadata_hash for pre-M007 rows.
-alter table public.exchange_symbol_versions
-    alter column raw_metadata_hash drop not null;
-
--- 2. Deterministically backfill raw_metadata_hash for existing rows.
--- Pre-M007 rows lack raw exchangeInfo evidence; fall back to the stored
--- normalized metadata_hash so the column is non-null and auditable.
-update public.exchange_symbol_versions
-set raw_metadata_hash = metadata_hash
-where raw_metadata_hash is null;
-
--- 3. Add last_verified_at to track freshness of unchanged refreshes.
+-- 1. Add last_verified_at (nullable) so unchanged refreshes can advance
+--    freshness evidence without mutating retrieved_at/effective_at.
 alter table public.exchange_symbol_versions
     add column if not exists last_verified_at timestamptz;
 
--- 4. Seed last_verified_at from retrieved_at for existing rows so they
--- do not immediately appear stale.
+-- 2. Seed existing rows so they do not immediately appear stale.
 update public.exchange_symbol_versions
 set last_verified_at = retrieved_at
 where last_verified_at is null;
 
--- 5. Resolve pre-existing multiple effective rows per (exchange_id, native_symbol).
--- Mark all but the latest effective_at row as superseded so the later
--- exactly-one-current partial unique index can be enforced.
-with ranked as (
-    select id, exchange_id, native_symbol,
-           row_number() over (
-               partition by exchange_id, native_symbol
-               order by effective_at desc
-           ) as rn
-    from public.exchange_symbol_versions
-    where superseded_by is null
-)
-update public.exchange_symbol_versions sv
-set superseded_by = (
-    select id from ranked r
-    where r.exchange_id = sv.exchange_id
-      and r.native_symbol = sv.native_symbol
-      and r.rn = 1
-)
-from ranked r2
-where sv.id = r2.id
-  and r2.rn > 1;
+-- 3. Immutable raw observation ledger. Each refresh persists one bounded
+--    observation row (raw hash, retrieval time, provider evidence) linked to
+--    the symbol version it verified.
+create table if not exists public.symbol_metadata_observations (
+    id uuid primary key default extensions.gen_random_uuid(),
+    symbol_version_id uuid not null
+        references public.exchange_symbol_versions(id) on delete restrict,
+    exchange_id uuid not null references public.exchanges(id) on delete restrict,
+    native_symbol text not null,
+    metadata_hash text not null check (length(metadata_hash) = 64),
+    raw_metadata_hash text not null check (length(raw_metadata_hash) = 64),
+    retrieved_at timestamptz not null,
+    observed_at timestamptz not null default timezone('utc', now()),
+    request_evidence jsonb not null default '{}'::jsonb,
+    created_at timestamptz not null default timezone('utc', now())
+);
 
--- 6. Enforce NOT NULL now that every row has raw source evidence.
-alter table public.exchange_symbol_versions
-    alter column raw_metadata_hash set not null;
+create index if not exists symbol_metadata_observations_version_time_idx
+    on public.symbol_metadata_observations (symbol_version_id, observed_at);
 
--- 7. Enforce exactly one current version per exchange+symbol pair.
-create unique index if not exists exchange_symbol_versions_current_idx
-    on public.exchange_symbol_versions (exchange_id, native_symbol)
-    where superseded_by is null;
+alter table public.symbol_metadata_observations enable row level security;
+alter table public.symbol_metadata_observations force row level security;
+
+create policy workflow_metadata_observations_all on public.symbol_metadata_observations
+    for all to app_workflow using (true) with check (true);
+
+revoke all on public.symbol_metadata_observations from public, anon, authenticated;
+
+grant select on public.symbol_metadata_observations to authenticated;
+grant select, insert on public.symbol_metadata_observations to app_workflow;
+grant all privileges on public.symbol_metadata_observations to app_migration;
+grant all privileges on public.symbol_metadata_observations to service_role;

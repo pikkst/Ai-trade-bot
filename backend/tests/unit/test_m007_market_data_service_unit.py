@@ -132,8 +132,15 @@ class MockSession:
             return result
         if "update public.candles" in sql:
             return result
+        if "select min(effective_at) from public.exchange_symbol_versions" in sql:
+            result._scalar_one_value = None
+            return result
+        if "select effective_at from public.exchange_symbol_versions" in sql:
+            result._scalar_one_value = FIXED_TIME
+            return result
         if "from public.exchange_symbol_versions" in sql:
             result._one_or_none_value = {
+                "id": SYMBOL_VERSION_ID,
                 "native_symbol": "BTCEUR",
                 "exchange_id": EXCHANGE_ID,
                 "superseded_by": None,

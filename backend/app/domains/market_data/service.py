@@ -159,6 +159,50 @@ class MarketDataService:
         serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
+    def _record_metadata_observation(
+        self,
+        symbol_version_id: UUID,
+        symbol: str,
+        *,
+        metadata_hash: str,
+        raw_hash: str,
+        retrieved_at: datetime,
+        observed_at: datetime,
+    ) -> None:
+        """Persist one immutable bounded raw observation linked to a version.
+
+        Every refresh (changed or unchanged) records the raw hash, retrieval
+        time, and provider evidence so the verification can be reproduced.
+        The row is append-only evidence and never mutated.
+        """
+        self._session.execute(
+            text(
+                """
+                insert into public.symbol_metadata_observations (
+                    symbol_version_id, exchange_id, native_symbol,
+                    metadata_hash, raw_metadata_hash, retrieved_at, observed_at,
+                    request_evidence
+                ) values (
+                    :symbol_version_id, :exchange_id, :native_symbol,
+                    :metadata_hash, :raw_hash, :retrieved_at, :observed_at,
+                    :request_evidence
+                )
+                """
+            ),
+            {
+                "symbol_version_id": symbol_version_id,
+                "exchange_id": self._exchange_id,
+                "native_symbol": symbol.upper(),
+                "metadata_hash": metadata_hash,
+                "raw_hash": raw_hash,
+                "retrieved_at": retrieved_at,
+                "observed_at": observed_at,
+                "request_evidence": json.dumps(
+                    {"provider": type(self._provider).__name__}
+                ),
+            },
+        )
+
     async def refresh_symbol_metadata(self, symbol: str) -> UUID:
         """Fetch, normalize, hash, and persist/version symbol metadata.
 
@@ -167,12 +211,20 @@ class MarketDataService:
         row is inserted and the new ID is returned. The prior effective version
         is linked via superseded_by. Concurrent refresh for the same symbol is
         serialized with a PostgreSQL advisory lock.
+
+        The provider observation happens before the lock, so under the lock the
+        incoming observation timestamp is compared with the current version's
+        effective time: an observation older than the current version is never
+        allowed to supersede a newer verified version (it is retained as
+        immutable observation evidence instead). Every refresh persists one
+        bounded raw observation row linked to the resolved version.
         """
         assert_network_call_allowed()
         metadata = await self._provider.get_symbol_metadata(symbol, force_refresh=True)
         metadata_hash = self._compute_symbol_metadata_hash(metadata)
         raw_hash = metadata.raw_metadata_hash
         retrieved_at = metadata.retrieved_at or self._clock.now()
+        observed_at = self._clock.now()
         symbol_key = int.from_bytes(
             hashlib.sha256(
                 f"metadata_refresh:{self._exchange_id}:{symbol.upper()}".encode()
@@ -188,7 +240,7 @@ class MarketDataService:
                 self._session.execute(
                     text(
                         """
-                        select id, metadata_hash
+                        select id, metadata_hash, effective_at
                         from public.exchange_symbol_versions
                         where exchange_id = :exchange_id
                           and native_symbol = :native_symbol
@@ -205,7 +257,35 @@ class MarketDataService:
                 .mappings()
                 .one_or_none()
             )
+            if (
+                row is not None
+                and row["metadata_hash"] != metadata_hash
+                and retrieved_at <= cast(datetime, row["effective_at"])
+            ):
+                # Observation-order guard: this observation is not strictly
+                # newer than the currently verified version, so a concurrent
+                # worker already persisted an observation at the same or a
+                # newer time. Never let it supersede the newer verified
+                # version; retain it as immutable evidence only.
+                self._record_metadata_observation(
+                    row["id"],
+                    symbol,
+                    metadata_hash=metadata_hash,
+                    raw_hash=raw_hash,
+                    retrieved_at=retrieved_at,
+                    observed_at=observed_at,
+                )
+                self._session.commit()
+                return cast(UUID, row["id"])
             if row is not None and row["metadata_hash"] == metadata_hash:
+                self._record_metadata_observation(
+                    row["id"],
+                    symbol,
+                    metadata_hash=metadata_hash,
+                    raw_hash=raw_hash,
+                    retrieved_at=retrieved_at,
+                    observed_at=observed_at,
+                )
                 self._session.execute(
                     text(
                         """
@@ -214,7 +294,7 @@ class MarketDataService:
                         where id = :id
                         """
                     ),
-                    {"id": row["id"], "now": self._clock.now()},
+                    {"id": row["id"], "now": observed_at},
                 )
                 self._session.commit()
                 return cast(UUID, row["id"])
@@ -322,6 +402,14 @@ class MarketDataService:
                         "retrieved_at": retrieved_at,
                     },
                 ).scalar_one()
+            self._record_metadata_observation(
+                new_id,
+                symbol,
+                metadata_hash=metadata_hash,
+                raw_hash=raw_hash,
+                retrieved_at=retrieved_at,
+                observed_at=observed_at,
+            )
             self._session.commit()
             return cast(UUID, new_id)
         except Exception:
@@ -387,6 +475,153 @@ class MarketDataService:
             if canonical_id != self._symbol_version_id:
                 self._symbol_version_id = canonical_id
 
+    def _resolve_effective_symbol_version(
+        self, symbol: str, event_time: datetime
+    ) -> UUID | None:
+        """Return the symbol version effective at event_time for the configured
+        exchange+symbol, or None if no version exists for the pair.
+
+        The version effective at a time is the one with the greatest
+        effective_at at or before event_time. If the event predates all known
+        metadata, the earliest version is authoritative for the earlier
+        history.
+        """
+        native = symbol.upper()
+        row = (
+            self._session.execute(
+                text(
+                    """
+                    select id
+                    from public.exchange_symbol_versions
+                    where exchange_id = :exchange_id
+                      and native_symbol = :native_symbol
+                      and effective_at <= :event_time
+                    order by effective_at desc
+                    limit 1
+                    """
+                ),
+                {
+                    "exchange_id": self._exchange_id,
+                    "native_symbol": native,
+                    "event_time": event_time,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is not None:
+            return cast(UUID, row["id"])
+        row = (
+            self._session.execute(
+                text(
+                    """
+                    select id
+                    from public.exchange_symbol_versions
+                    where exchange_id = :exchange_id
+                      and native_symbol = :native_symbol
+                    order by effective_at asc
+                    limit 1
+                    """
+                ),
+                {
+                    "exchange_id": self._exchange_id,
+                    "native_symbol": native,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        return cast(UUID, row["id"])
+
+    async def _validate_symbol_binding_for_backfill(
+        self,
+        symbol: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> None:
+        """Historical binding for backfill.
+
+        Canonical candle identity requires the symbol-version effective at the
+        requested event time. Unlike live/incremental binding this method does
+        not rotate a superseded configured version to the current version: it
+        resolves the version effective for [start_time, end_time) and rejects
+        ranges that cross a metadata-version boundary.
+        """
+        row = (
+            self._session.execute(
+                text(
+                    """
+                    select native_symbol, exchange_id
+                    from public.exchange_symbol_versions
+                    where id = :symbol_version_id
+                    """
+                ),
+                {"symbol_version_id": self._symbol_version_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            self._session.commit()
+            canonical_id = await self.refresh_symbol_metadata(symbol)
+            if canonical_id != self._symbol_version_id:
+                self._symbol_version_id = canonical_id
+            return
+        if cast(UUID, row["exchange_id"]) != self._exchange_id:
+            raise ValueError(
+                f"symbol_version_id {self._symbol_version_id} is owned by "
+                f"exchange {row['exchange_id']}, not configured exchange "
+                f"{self._exchange_id}"
+            )
+        native_symbol = cast(str, row["native_symbol"])
+        if native_symbol.upper() != symbol.upper():
+            raise ValueError(
+                f"symbol {symbol!r} does not match configured native symbol "
+                f"{native_symbol!r} for symbol_version_id "
+                f"{self._symbol_version_id}"
+            )
+        effective_id = self._resolve_effective_symbol_version(symbol, start_time)
+        if effective_id is None:
+            raise ValueError(
+                f"no symbol metadata version exists for {symbol.upper()} on "
+                f"exchange {self._exchange_id}"
+            )
+        effective_at = self._session.execute(
+            text(
+                """
+                    select effective_at
+                    from public.exchange_symbol_versions
+                    where id = :id
+                    """
+            ),
+            {"id": effective_id},
+        ).scalar_one()
+        next_effective = self._session.execute(
+            text(
+                """
+                    select min(effective_at)
+                    from public.exchange_symbol_versions
+                    where exchange_id = :exchange_id
+                      and native_symbol = :native_symbol
+                      and effective_at > :effective_at
+                    """
+            ),
+            {
+                "exchange_id": self._exchange_id,
+                "native_symbol": symbol.upper(),
+                "effective_at": effective_at,
+            },
+        ).scalar_one()
+        if next_effective is not None and end_time > next_effective:
+            raise ValueError(
+                "backfill range crosses a symbol metadata version boundary at "
+                f"{next_effective.isoformat()}; partition the range"
+            )
+        if effective_id != self._symbol_version_id:
+            self._symbol_version_id = effective_id
+
     async def backfill(
         self,
         symbol: str,
@@ -395,16 +630,16 @@ class MarketDataService:
         idempotency_key: str,
     ) -> IngestionResult:
         assert_network_call_allowed()
-        await self._validate_symbol_binding(symbol)
-        # The symbol-binding SELECT autobegan a session transaction; close it
-        # before any provider I/O.
-        self._session.commit()
         start_time, end_time = self._normalize_range(start_time, end_time)
         max_duration = timedelta(days=self._backfill_max_range_days)
         if end_time - start_time > max_duration:
             raise ValueError(
                 f"Backfill range exceeds {self._backfill_max_range_days} days"
             )
+        await self._validate_symbol_binding_for_backfill(symbol, start_time, end_time)
+        # The symbol-binding SELECT autobegan a session transaction; close it
+        # before any provider I/O.
+        self._session.commit()
         return await self._ingest_pages(
             ingestion_type=IngestionType.BACKFILL,
             symbol=symbol,
