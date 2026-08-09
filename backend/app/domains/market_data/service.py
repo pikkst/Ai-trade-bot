@@ -957,7 +957,8 @@ class MarketDataService:
         page_hashes_raw = row["page_hashes"]
         if not page_hashes_raw:
             raise ValueError(
-                "snapshot ingestion has no accepted page evidence (page_hashes is empty)"
+                "snapshot ingestion has no accepted page evidence "
+                "(page_hashes is empty)"
             )
         if isinstance(page_hashes_raw, str):
             page_hashes = json.loads(page_hashes_raw)
@@ -966,9 +967,8 @@ class MarketDataService:
         accepted_lineage: dict[datetime, str] = {}
         for pair in page_hashes:
             accepted_lineage[datetime.fromisoformat(pair[0])] = pair[1]
-        candidate_times = {
-            c
-            for c in self._session.execute(
+        candidate_times = set(
+            self._session.execute(
                 text(
                     """
                     select candle.open_time
@@ -985,8 +985,8 @@ class MarketDataService:
                     "symbol_version_id": self._symbol_version_id,
                     "interval_code": self._interval.value,
                 },
-            ).scalars().all()
-        }
+            ).scalars()
+        )
         for open_time in candidate_times:
             expected_hash = accepted_lineage.get(open_time)
             if expected_hash is None:
@@ -994,27 +994,24 @@ class MarketDataService:
                     f"snapshot candle at {open_time.isoformat()} is not present "
                     f"in ingestion {ingestion_id} accepted page evidence"
                 )
-            actual_hash = (
-                self._session.execute(
-                    text(
-                        """
-                        select candle.content_hash
-                        from public.candles candle
-                        where candle.symbol_version_id = :symbol_version_id
-                          and candle.interval_code = :interval_code
-                          and candle.open_time = :open_time
-                          and candle.finalized = true
-                          and candle.superseded_by is null
-                        """
-                    ),
-                    {
-                        "symbol_version_id": self._symbol_version_id,
-                        "interval_code": self._interval.value,
-                        "open_time": open_time,
-                    },
-                )
-                .scalar_one_or_none()
-            )
+            actual_hash = self._session.execute(
+                text(
+                    """
+                    select candle.content_hash
+                    from public.candles candle
+                    where candle.symbol_version_id = :symbol_version_id
+                      and candle.interval_code = :interval_code
+                      and candle.open_time = :open_time
+                      and candle.finalized = true
+                      and candle.superseded_by is null
+                    """
+                ),
+                {
+                    "symbol_version_id": self._symbol_version_id,
+                    "interval_code": self._interval.value,
+                    "open_time": open_time,
+                },
+            ).scalar_one_or_none()
             if actual_hash != expected_hash:
                 raise ValueError(
                     f"snapshot candle at {open_time.isoformat()} has hash "
@@ -1931,8 +1928,7 @@ class MarketDataService:
     ) -> list[Any]:
         results = []
         page_out_of_order = any(
-            candles[i].time > candles[i + 1].time
-            for i in range(len(candles) - 1)
+            candles[i].time > candles[i + 1].time for i in range(len(candles) - 1)
         )
         previous_open_time: datetime | None = None
         for candle in candles:

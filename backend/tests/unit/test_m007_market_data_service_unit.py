@@ -68,6 +68,9 @@ class MockResult:
     def all(self) -> list[Any]:
         return self._scalars_value
 
+    def __iter__(self) -> Any:
+        return iter(self._scalars_value)
+
 
 class MockSession:
     def __init__(self) -> None:
@@ -569,9 +572,7 @@ def test_create_snapshot_success() -> None:
     session.ingestions[UUID("00000000-0000-0000-0000-000000000002")] = {
         "id": UUID("00000000-0000-0000-0000-000000000002"),
         "status": "completed",
-        "page_hashes": [
-            [(FIXED_TIME - timedelta(hours=1)).isoformat(), "a" * 64]
-        ],
+        "page_hashes": [[(FIXED_TIME - timedelta(hours=1)).isoformat(), "a" * 64]],
     }
     snapshot = service.create_snapshot(
         analysis_time=FIXED_TIME,
@@ -615,9 +616,7 @@ def test_snapshot_validation_uses_derived_outcomes() -> None:
     session.ingestions[UUID("00000000-0000-0000-0000-000000000002")] = {
         "id": UUID("00000000-0000-0000-0000-000000000002"),
         "status": "completed",
-        "page_hashes": [
-            [(FIXED_TIME - timedelta(hours=1)).isoformat(), "a" * 64]
-        ],
+        "page_hashes": [[(FIXED_TIME - timedelta(hours=1)).isoformat(), "a" * 64]],
     }
     snapshot = service.create_snapshot(
         analysis_time=FIXED_TIME,
@@ -659,9 +658,7 @@ def test_snapshot_gate_rejects_stale_freshness() -> None:
     session.ingestions[UUID("00000000-0000-0000-0000-000000000002")] = {
         "id": UUID("00000000-0000-0000-0000-000000000002"),
         "status": "completed",
-        "page_hashes": [
-            [(FIXED_TIME - timedelta(hours=1)).isoformat(), "a" * 64]
-        ],
+        "page_hashes": [[(FIXED_TIME - timedelta(hours=1)).isoformat(), "a" * 64]],
     }
     with pytest.raises(ValueError):
         service.create_snapshot(
@@ -1107,9 +1104,7 @@ def test_snapshot_idempotent_replay_returns_existing(
     session.ingestions[UUID("00000000-0000-0000-0000-000000000002")] = {
         "id": UUID("00000000-0000-0000-0000-000000000002"),
         "status": "completed",
-        "page_hashes": [
-            [(FIXED_TIME - timedelta(hours=1)).isoformat(), "a" * 64]
-        ],
+        "page_hashes": [[(FIXED_TIME - timedelta(hours=1)).isoformat(), "a" * 64]],
     }
     snapshot = service.create_snapshot(
         analysis_time=FIXED_TIME,
@@ -1568,9 +1563,7 @@ def test_snapshot_lineage_rejects_hash_mismatch() -> None:
     session.ingestions[UUID("00000000-0000-0000-0000-000000000002")] = {
         "id": UUID("00000000-0000-0000-0000-000000000002"),
         "status": "completed",
-        "page_hashes": [
-            [(FIXED_TIME - timedelta(hours=1)).isoformat(), "b" * 64]
-        ],
+        "page_hashes": [[(FIXED_TIME - timedelta(hours=1)).isoformat(), "b" * 64]],
     }
     with pytest.raises(ValueError, match="has hash .* but ingestion"):
         service.create_snapshot(

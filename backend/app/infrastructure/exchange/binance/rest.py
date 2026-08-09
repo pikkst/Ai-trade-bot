@@ -422,9 +422,7 @@ def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
         ) from exc
     filters = raw.get("filters") or []
     if not isinstance(filters, list):
-        raise BinanceMalformedDataError(
-            "symbol metadata filters must be a list"
-        )
+        raise BinanceMalformedDataError("symbol metadata filters must be a list")
     price_filter = None
     lot_filter = None
     notional_filter = None
