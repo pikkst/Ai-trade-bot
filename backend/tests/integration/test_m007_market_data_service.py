@@ -1478,21 +1478,16 @@ async def test_backfill_rejects_invalid_ranges(
                 end_time=FIXED_TIME - timedelta(hours=1),
                 idempotency_key="test-range-inverted",
             )
-        # Non-aligned boundaries are normalized to interval boundaries, not
-        # rejected, so the expected open-time sequence is deterministic.
-        aligned = await service.backfill(
-            symbol=SYMBOL,
-            start_time=FIXED_TIME.replace(hour=10, minute=30),
-            end_time=FIXED_TIME.replace(hour=12, minute=30),
-            idempotency_key="test-range-nonaligned",
-        )
-        assert aligned.status == IngestionStatus.COMPLETED
-        assert aligned.actual_start_time == FIXED_TIME.replace(
-            hour=10, minute=0, second=0, microsecond=0
-        )
-        assert aligned.actual_end_time == FIXED_TIME.replace(
-            hour=13, minute=0, second=0, microsecond=0
-        )
+        # Non-aligned boundaries are rejected, not silently widened: expanding
+        # [start, end) would fetch/persist evidence outside the caller's
+        # requested bounds and could reach an unfinalized candle.
+        with pytest.raises(ValueError):
+            await service.backfill(
+                symbol=SYMBOL,
+                start_time=FIXED_TIME.replace(hour=10, minute=30),
+                end_time=FIXED_TIME.replace(hour=12, minute=30),
+                idempotency_key="test-range-nonaligned",
+            )
     finally:
         session.close()
 
@@ -1599,8 +1594,8 @@ async def test_same_page_conflict_with_existing_db_candle_fails_closed(
                 idempotency_key="test-conflict-existing",
             )
         # The conflicting open time must not have been corrected: the active
-        # candle still carries the original content hash, and no correction
-        # was applied for it.
+        # candle still carries the original content hash, no correction row
+        # exists, and no candle was superseded.
         active_hash = session.execute(
             text(
                 "select content_hash from public.candles "
@@ -1610,6 +1605,22 @@ async def test_same_page_conflict_with_existing_db_candle_fails_closed(
             {"sid": SYMBOL_VERSION_ID, "ot": FIXED_TIME - timedelta(hours=1)},
         ).scalar_one()
         assert active_hash == "a" * 64
+        corrections = session.execute(
+            text(
+                "select count(*) from public.candle_corrections "
+                "where symbol_version_id = :sid"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        ).scalar_one()
+        assert corrections == 0
+        superseded = session.execute(
+            text(
+                "select count(*) from public.candles "
+                "where symbol_version_id = :sid and superseded_by is not null"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        ).scalar_one()
+        assert superseded == 0
         conflict_count = session.execute(
             text(
                 "select count(*) from public.data_quality_events "
@@ -1860,7 +1871,7 @@ async def test_invalid_candle_scoped_snapshot_fails_only_at_t(
                     affected_range_start, affected_range_end
                 ) values (
                     :eid, :sid, '1h', 'invalid_value', 'error',
-                    '{}'::jsonb, '1.0', :t11, :t11
+                    '{}'::jsonb, '1.0', :t11, :t11_end
                 )
                 """
             ),
@@ -1868,6 +1879,7 @@ async def test_invalid_candle_scoped_snapshot_fails_only_at_t(
                 "eid": EXCHANGE_ID,
                 "sid": SYMBOL_VERSION_ID,
                 "t11": t11,
+                "t11_end": t11 + timedelta(hours=1),
             },
         )
         session.commit()
@@ -2073,38 +2085,37 @@ async def test_terminal_backfill_from_legacy_json_details(
                 },
             )
         session.commit()
-        # Replay the migration backfill: deduplicate earliest per
-        # (superseded blocker, terminal type), then populate the column.
+        # Replay the non-destructive migration backfill: only the canonical
+        # (earliest) terminal per (superseded blocker, terminal type) receives
+        # the structured parent; every legacy row stays as immutable evidence.
         session.execute(
             text(
                 """
-                delete from public.data_quality_events terminal
-                using public.data_quality_events earlier
+                update public.data_quality_events terminal
+                set supersedes_event_id =
+                    (terminal.details ->> 'supersedes_event_id')::uuid
                 where terminal.supersedes_event_id is null
                   and terminal.details ? 'supersedes_event_id'
-                  and earlier.supersedes_event_id is null
-                  and earlier.details ? 'supersedes_event_id'
-                  and (terminal.details ->> 'supersedes_event_id')::uuid
-                        = (earlier.details ->> 'supersedes_event_id')::uuid
-                  and terminal.event_type = earlier.event_type
-                  and terminal.id <> earlier.id
-                  and (earlier.created_at, earlier.id)
-                        < (terminal.created_at, terminal.id)
-                """
-            )
-        )
-        session.execute(
-            text(
-                """
-                update public.data_quality_events
-                set supersedes_event_id = (details ->> 'supersedes_event_id')::uuid
-                where supersedes_event_id is null
-                  and details ? 'supersedes_event_id'
+                  and (terminal.details ->> 'supersedes_event_id') ~
+                      '^[0-9a-fA-F-]{36}$'
+                  and terminal.id = (
+                      select earlier.id
+                      from public.data_quality_events earlier
+                      where earlier.symbol_version_id = terminal.symbol_version_id
+                        and earlier.interval_code = terminal.interval_code
+                        and earlier.event_type = terminal.event_type
+                        and earlier.supersedes_event_id is null
+                        and earlier.details ? 'supersedes_event_id'
+                        and (earlier.details ->> 'supersedes_event_id')::uuid
+                              = (terminal.details ->> 'supersedes_event_id')::uuid
+                      order by earlier.created_at, earlier.id
+                      limit 1
+                  )
                 """
             )
         )
         session.commit()
-        # Exactly one terminal survives with the structured parent.
+        # Exactly one terminal carries the structured parent.
         terminals = session.execute(
             text(
                 "select count(*) from public.data_quality_events "
@@ -2114,6 +2125,16 @@ async def test_terminal_backfill_from_legacy_json_details(
             {"bid": blocker_id},
         ).scalar_one()
         assert terminals == 1
+        # Append-only invariant: the full pre-migration history remains
+        # readable (both legacy terminal rows plus the blocker).
+        all_history = session.execute(
+            text(
+                "select count(*) from public.data_quality_events "
+                "where symbol_version_id = :sid"
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        ).scalar_one()
+        assert all_history == 3
         # The gate recognizes the backfilled terminal: the blocker is cleared.
         cleared = session.execute(
             text(
@@ -2491,3 +2512,292 @@ async def test_partially_overlapping_different_type_serialized(
     assert len(results) == 2
     owners = [r for r in results if isinstance(r, IngestionResult)]
     assert len(owners) >= 1
+
+
+def test_non_resolvable_parent_transition_rejected_by_trigger(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """A terminal child referencing a non-resolvable blocker (e.g.
+    duplicate_conflict or provider_unavailable) is rejected by the database
+    trigger: the transition CASE coalesces to false, never to NULL."""
+    session = build_session_factory(database_engine)()
+    try:
+        blocker_id = session.execute(
+            text(
+                """
+                insert into public.data_quality_events (
+                    exchange_id, symbol_version_id, interval_code, event_type,
+                    severity, details, detection_policy_version,
+                    affected_range_start, affected_range_end
+                ) values (
+                    :eid, :sid, '1h', 'duplicate_conflict', 'error',
+                    '{}'::jsonb, '1.0', :rstart, :rend
+                )
+                returning id
+                """
+            ),
+            {
+                "eid": EXCHANGE_ID,
+                "sid": SYMBOL_VERSION_ID,
+                "rstart": FIXED_TIME - timedelta(hours=1),
+                "rend": FIXED_TIME,
+            },
+        ).scalar_one()
+        session.commit()
+        # Any terminal child of a non-resolvable blocker must fail closed.
+        for terminal_type in (
+            "gap_repaired",
+            "correction_applied",
+            "clock_drift_recovered",
+        ):
+            with pytest.raises(Exception) as excinfo:
+                session.execute(
+                    text(
+                        """
+                        insert into public.data_quality_events (
+                            exchange_id, symbol_version_id, interval_code,
+                            event_type, severity, details,
+                            detection_policy_version, supersedes_event_id
+                        ) values (
+                            :eid, :sid, '1h', :terminal, 'info',
+                            '{}'::jsonb, '1.0', :blocker_id
+                        )
+                        """
+                    ),
+                    {
+                        "eid": EXCHANGE_ID,
+                        "sid": SYMBOL_VERSION_ID,
+                        "terminal": terminal_type,
+                        "blocker_id": blocker_id,
+                    },
+                )
+            session.rollback()
+            assert "invalid terminal transition" in str(excinfo.value)
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_quality_gate_half_open_boundary_and_candle_scoped(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """The gate uses half-open overlap for range-scoped blockers and exact
+    membership for candle-scoped blockers."""
+    session = build_session_factory(database_engine)()
+    try:
+        t10 = FIXED_TIME - timedelta(hours=2)
+        t11 = FIXED_TIME - timedelta(hours=1)
+        for idx, candle_time in enumerate((t10, t11)):
+            session.execute(
+                text(
+                    """
+                    insert into public.candles (
+                        symbol_version_id, interval_code, open_time, close_time,
+                        open_price, high_price, low_price, close_price,
+                        base_volume, quote_volume, trade_count, finalized, content_hash
+                    ) values (
+                        :sid, '1h', :ot, :ct, 100, 105, 95, 102,
+                        1.5, 1500, 100, true, :hash
+                    )
+                    on conflict (symbol_version_id, interval_code, open_time)
+                    where superseded_by is null do nothing
+                    """
+                ),
+                {
+                    "sid": SYMBOL_VERSION_ID,
+                    "ot": candle_time,
+                    "ct": candle_time + timedelta(hours=1),
+                    "hash": f"{idx:064x}",
+                },
+            )
+        session.commit()
+        candle_ids = [
+            session.execute(
+                text(
+                    "select id from public.candles "
+                    "where symbol_version_id = :sid and open_time = :ot "
+                    "and superseded_by is null"
+                ),
+                {"sid": SYMBOL_VERSION_ID, "ot": ot},
+            ).scalar_one()
+            for ot in (t10, t11)
+        ]
+        service = MarketDataService(
+            session=session,
+            provider=FakeBinanceProvider(
+                config=FakeBinanceConfig(
+                    scenario=FakeBinanceScenario.SUCCESS,
+                    fixed_clock_time=FIXED_TIME,
+                    fixture_version="2026-08-08-m007-v1",
+                )
+            ),
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        # Range blocker scoped to exactly [t10, t11): does not touch the
+        # snapshot covering only t11 (start t10 < span_end(t12) is true, but
+        # end t11 > first_time t11 is false => no overlap).
+        session.execute(
+            text(
+                """
+                insert into public.data_quality_events (
+                    exchange_id, symbol_version_id, interval_code, event_type,
+                    severity, details, detection_policy_version,
+                    affected_range_start, affected_range_end
+                ) values (
+                    :eid, :sid, '1h', 'gap_detected', 'warning',
+                    '{}'::jsonb, '1.0', :rs, :re
+                )
+                """
+            ),
+            {
+                "eid": EXCHANGE_ID,
+                "sid": SYMBOL_VERSION_ID,
+                "rs": t10,
+                "re": t11,
+            },
+        )
+        session.commit()
+        snapshot = service.create_snapshot(
+            analysis_time=FIXED_TIME,
+            candle_ids=[candle_ids[1]],
+            quality_outcome="approved",
+            freshness_outcome="fresh",
+        )
+        assert snapshot.quality_outcome == "approved"
+        # Candle-scoped blocker on an unrelated candle must not block either.
+        session.execute(
+            text(
+                """
+                insert into public.data_quality_events (
+                    exchange_id, symbol_version_id, interval_code, event_type,
+                    severity, details, detection_policy_version,
+                    affected_candle_id
+                ) values (
+                    :eid, :sid, '1h', 'correction_pending', 'warning',
+                    '{}'::jsonb, '1.0', :cid
+                )
+                """
+            ),
+            {
+                "eid": EXCHANGE_ID,
+                "sid": SYMBOL_VERSION_ID,
+                "cid": candle_ids[0],
+            },
+        )
+        session.commit()
+        snapshot2 = service.create_snapshot(
+            analysis_time=FIXED_TIME,
+            candle_ids=[candle_ids[1]],
+            quality_outcome="approved",
+            freshness_outcome="fresh",
+        )
+        assert snapshot2.quality_outcome == "approved"
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_gap_report_rejects_duplicate_overlap_reversed_ranges(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """GapReport missing ranges must be a strictly ascending, disjoint
+    canonical sequence; duplicates, overlaps, and reversed ranges are
+    rejected."""
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        base = GapReport(
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval_code="1h",
+            interval_seconds=3600,
+            expected_start=FIXED_TIME - timedelta(hours=2),
+            expected_end=FIXED_TIME,
+            missing_count=2,
+            missing_ranges=(
+                (FIXED_TIME - timedelta(hours=2), FIXED_TIME - timedelta(hours=1)),
+                (FIXED_TIME - timedelta(hours=1), FIXED_TIME),
+            ),
+            severity="error",
+        )
+        # Duplicate ranges.
+        dup = GapReport(
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval_code="1h",
+            interval_seconds=3600,
+            expected_start=FIXED_TIME - timedelta(hours=2),
+            expected_end=FIXED_TIME,
+            missing_count=2,
+            missing_ranges=(
+                (FIXED_TIME - timedelta(hours=2), FIXED_TIME - timedelta(hours=1)),
+                (FIXED_TIME - timedelta(hours=2), FIXED_TIME - timedelta(hours=1)),
+            ),
+            severity="error",
+        )
+        with pytest.raises(ValueError):
+            await service.repair_gaps(
+                symbol=SYMBOL, gap_report=dup, idempotency_key="test-dup-ranges"
+            )
+        # Overlapping ranges.
+        overlap = GapReport(
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval_code="1h",
+            interval_seconds=3600,
+            expected_start=FIXED_TIME - timedelta(hours=2),
+            expected_end=FIXED_TIME,
+            missing_count=2,
+            missing_ranges=(
+                (FIXED_TIME - timedelta(hours=2), FIXED_TIME),
+                (FIXED_TIME - timedelta(hours=1), FIXED_TIME),
+            ),
+            severity="error",
+        )
+        with pytest.raises(ValueError):
+            await service.repair_gaps(
+                symbol=SYMBOL, gap_report=overlap, idempotency_key="test-overlap"
+            )
+        # Reversed (non-ascending) ranges.
+        reversed_ranges = GapReport(
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval_code="1h",
+            interval_seconds=3600,
+            expected_start=FIXED_TIME - timedelta(hours=2),
+            expected_end=FIXED_TIME,
+            missing_count=2,
+            missing_ranges=(
+                (FIXED_TIME - timedelta(hours=1), FIXED_TIME),
+                (FIXED_TIME - timedelta(hours=2), FIXED_TIME - timedelta(hours=1)),
+            ),
+            severity="error",
+        )
+        with pytest.raises(ValueError):
+            await service.repair_gaps(
+                symbol=SYMBOL,
+                gap_report=reversed_ranges,
+                idempotency_key="test-reversed",
+            )
+        # The canonical ascending disjoint report is accepted.
+        result = await service.repair_gaps(
+            symbol=SYMBOL, gap_report=base, idempotency_key="test-canonical"
+        )
+        assert result.status == IngestionStatus.COMPLETED
+    finally:
+        session.close()

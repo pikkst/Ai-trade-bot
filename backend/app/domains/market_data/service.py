@@ -73,6 +73,7 @@ _DEFAULT_INCREMENTAL_MAX_RANGE_HOURS = 2
 _DEFAULT_INCREMENTAL_OVERLAP_HOURS = 1
 _DEFAULT_INTERVAL = CandleInterval.ONE_HOUR
 _MAX_PAGE_CANDLES = 1000
+_SNAPSHOT_SCHEMA_VERSION = "1.0"
 
 
 class MarketDataService:
@@ -107,6 +108,7 @@ class MarketDataService:
             interval_seconds=_INTERVAL_SECONDS[interval]
         )
         self._interval_seconds = _INTERVAL_SECONDS[interval]
+        self._snapshot_schema_version = _SNAPSHOT_SCHEMA_VERSION
 
     async def load_server_time(self) -> ExchangeTime:
         assert_network_call_allowed()
@@ -186,11 +188,14 @@ class MarketDataService:
     def _normalize_range(
         self, start_time: datetime, end_time: datetime
     ) -> tuple[datetime, datetime]:
-        """Reject zero/inverted ranges and align boundaries to the interval.
+        """Validate a backfill range without widening the requested bounds.
 
         A missing evidence range must never appear as an empty successful
-        dataset: start >= end is invalid. Boundaries are floored/ceiled to
-        the interval so the expected open-time sequence is deterministic.
+        dataset: start >= end is invalid. Boundaries must already be aligned
+        to interval boundaries — silently widening [start, end) would fetch
+        and persist evidence outside the caller's requested bounds and could
+        expand into an unfinalized candle near the current interval, so
+        non-aligned boundaries are rejected instead of normalized.
         """
         if start_time.tzinfo is None or end_time.tzinfo is None:
             raise ValueError("Backfill boundaries must be timezone-aware UTC")
@@ -201,13 +206,17 @@ class MarketDataService:
                 "Backfill requires start_time < end_time; "
                 f"got [{start_time.isoformat()}, {end_time.isoformat()})"
             )
-        aligned_start = self._align_to_interval(start_time)
-        aligned_end = self._align_to_interval(end_time)
-        if aligned_end < end_time:
-            # Ceil a partial trailing interval so the last expected open time
-            # is included in the half-open range.
-            aligned_end = aligned_end + timedelta(seconds=self._interval_seconds)
-        return aligned_start, aligned_end
+        if start_time != self._align_to_interval(start_time):
+            raise ValueError(
+                "Backfill start_time must be aligned to an interval boundary; "
+                f"got {start_time.isoformat()}"
+            )
+        if end_time != self._align_to_interval(end_time):
+            raise ValueError(
+                "Backfill end_time must be aligned to an interval boundary; "
+                f"got {end_time.isoformat()}"
+            )
+        return start_time, end_time
 
     async def incremental_fetch(
         self,
@@ -481,6 +490,7 @@ class MarketDataService:
         if not gap_report.missing_ranges:
             raise ValueError("GapReport missing_count > 0 but missing_ranges is empty")
         covered_count = 0
+        previous_end: datetime | None = None
         for range_start, range_end in gap_report.missing_ranges:
             if range_start < gap_report.expected_start or range_end > (
                 gap_report.expected_end
@@ -492,6 +502,14 @@ class MarketDataService:
                 range_end != self._align_to_interval(range_end)
             ):
                 raise ValueError("GapReport missing range is not interval-aligned")
+            # Canonical sequence: strictly ascending and disjoint. Duplicated,
+            # overlapping, or reversed ranges would double-count evidence and
+            # change the aggregate repair hash for the same logical missing set.
+            if previous_end is not None and range_start < previous_end:
+                raise ValueError(
+                    "GapReport missing ranges are not strictly ascending/disjoint"
+                )
+            previous_end = range_end
             covered_count += int(
                 (range_end - range_start).total_seconds() // gap_report.interval_seconds
             )
@@ -848,11 +866,15 @@ class MarketDataService:
                       or (
                           blocker.affected_range_start is not null
                           and blocker.affected_range_end is not null
-                          and blocker.affected_range_start <= :last_time
-                          and blocker.affected_range_end >= :first_time
+                          -- Half-open overlap: blocker [start, end) touches
+                          -- the candidate span [first_time, span_end) only
+                          -- when start < span_end AND end > first_time.
+                          and blocker.affected_range_start < :span_end
+                          and blocker.affected_range_end > :first_time
                       )
                       or (
                           blocker.affected_candle_id is not null
+                          and blocker.affected_candle_id = any(:candle_ids)
                       )
                   )
                   and not exists (
@@ -879,7 +901,8 @@ class MarketDataService:
                 "symbol_version_id": self._symbol_version_id,
                 "interval_code": self._interval.value,
                 "first_time": first_time,
-                "last_time": last_time,
+                "span_end": last_time + timedelta(seconds=self._interval_seconds),
+                "candle_ids": candle_ids,
             },
         ).scalar_one()
         if blocking > 0:
@@ -1264,18 +1287,46 @@ class MarketDataService:
                     batch_by_time=batch_by_time,
                     clock_drift_ms=clock_drift_ms,
                 )
+                quality_events: list[QualityEvent] = []
+                # Pre-scan the ENTIRE page for same-open-time ambiguity BEFORE
+                # any insert/correction/invalidation write. Provider ordering
+                # must not let an earlier unambiguous-looking row mutate
+                # canonical state when a later row in the same page conflicts:
+                # reject the whole page when any identity is ambiguous.
+                page_conflict = next(
+                    (r for r in validated if r.duplicate_conflict), None
+                )
+                if page_conflict is not None:
+                    self._fail_on_duplicate_conflict(
+                        result=page_conflict,
+                        ingestion_id=ingestion_id,
+                        quality_events=quality_events,
+                        inserted_total=inserted_total,
+                        duplicates_total=duplicates_total,
+                        invalid_total=invalid_total,
+                        corrected_total=corrected_total,
+                        request_count=request_count,
+                        retry_count=retry_count,
+                        provider_latency_ms=provider_latency_ms,
+                        start_time=start_time,
+                        end_time=end_time,
+                        current_start=current_start,
+                        accepted_by_time=accepted_by_time,
+                    )
                 accepted_times: set[datetime] = set()
                 page_inserted = 0
                 page_duplicates = 0
                 page_invalid = 0
                 page_corrected = 0
-                quality_events: list[QualityEvent] = []
                 for result in validated:
                     if not result.is_valid:
                         page_invalid += 1
                         # Scope the invalid evidence to the exact failed
                         # candle identity/interval so one malformed historical
                         # candle can never block unrelated future snapshots.
+                        # Use a real half-open [T, T+interval) range: the gate
+                        # compares half-open overlap, so a point [T, T] would
+                        # never match even its own candle.
                         failed_at = result.candle.time
                         quality_events.append(
                             make_quality_event(
@@ -1285,7 +1336,8 @@ class MarketDataService:
                                 interval_code=self._interval.value,
                                 details={"reasons": result.invalid_reasons},
                                 affected_range_start=failed_at,
-                                affected_range_end=failed_at,
+                                affected_range_end=failed_at
+                                + timedelta(seconds=self._interval_seconds),
                                 ingestion_id=ingestion_id,
                             )
                         )
@@ -1699,7 +1751,8 @@ class MarketDataService:
                     "reason": "same_page_conflict",
                 },
                 affected_range_start=result.candle.time,
-                affected_range_end=result.candle.time,
+                affected_range_end=result.candle.time
+                + timedelta(seconds=self._interval_seconds),
                 ingestion_id=ingestion_id,
             )
         )
@@ -2427,7 +2480,7 @@ class MarketDataService:
                     :analysis_time, :first_event_time, :last_event_time, :candle_count,
                     :quality_outcome, :quality_policy_version, :freshness_outcome,
                     :freshness_policy_version, 'rest', :ingestion_id, :snapshot_hash,
-                    '1.0', :creator_cycle_id, :creator_job_id
+                    :snapshot_schema_version, :creator_cycle_id, :creator_job_id
                 )
                 on conflict (snapshot_hash) do nothing
                 returning id
@@ -2448,6 +2501,7 @@ class MarketDataService:
                 "freshness_policy_version": self._policy.policy_version,
                 "ingestion_id": ingestion_id,
                 "snapshot_hash": snapshot_hash,
+                "snapshot_schema_version": self._snapshot_schema_version,
                 "creator_cycle_id": creator_cycle_id,
                 "creator_job_id": creator_job_id,
             },
@@ -2542,6 +2596,9 @@ class MarketDataService:
             "candle_count": count,
             "quality_outcome": quality_outcome,
             "freshness_outcome": freshness_outcome,
+            "quality_policy_version": self._policy.policy_version,
+            "freshness_policy_version": self._policy.policy_version,
+            "snapshot_schema_version": self._snapshot_schema_version,
             "candle_ids": [str(cid) for cid in candle_ids],
         }
         serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))

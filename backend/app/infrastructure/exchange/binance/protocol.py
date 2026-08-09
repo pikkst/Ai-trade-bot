@@ -118,6 +118,12 @@ class BinanceRateLimitError(BinanceProviderError):
     code = "binance_rate_limit"
 
 
+class BinanceServerError(BinanceProviderError):
+    """A transient Binance server-side 5xx failure (retriable)."""
+
+    code = "binance_server_error"
+
+
 class BinanceMalformedDataError(BinanceProviderError):
     code = "binance_malformed_data"
 

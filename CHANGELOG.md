@@ -10,7 +10,7 @@ All notable project changes are documented here.
 
 - Additive Supabase/Alembic migration `20260808150000_m007_quality_state_governance` adding the `clock_drift_recovered` terminal vocabulary and scoping authenticated snapshot reads to workspace membership.
 - Additive Supabase/Alembic migration `20260808160000_m007_terminal_resolution_idempotency` adding the structured `supersedes_event_id` column and a partial unique index `(supersedes_event_id, event_type)` so a blocker can never be superseded twice by the same terminal type.
-- Additive Supabase/Alembic migration `20260808170000_m007_preflight_identity_backfill` adding the dedicated `preflight_failure` ingestion type, backfilling `supersedes_event_id` from legacy JSON details (with deduplication), and enforcing valid terminal transitions with a database trigger.
+- Additive Supabase/Alembic migration `20260808170000_m007_preflight_identity_backfill` adding the dedicated `preflight_failure` ingestion type, non-destructively backfilling `supersedes_event_id` from legacy JSON details (only the canonical earliest terminal per blocker/type receives the structured parent; all historical rows are preserved as append-only evidence), and enforcing valid terminal transitions with a database trigger that coalesces unknown parent types to false (fail closed).
 
 #### Fixed
 
@@ -21,6 +21,12 @@ All notable project changes are documented here.
 - Symbol binding now also binds the configured exchange: the resolved symbol version must match both `symbol_version_id` and `exchange_id`, so provider data can never be attributed to a foreign exchange's symbol version.
 - Ingestion work for a market+interval is serialized by a single advisory lock (exchange + symbol version + interval), so overlapping ranges with different types contend and cannot race writes/counters/corrections.
 - Terminal transitions are explicit and fail closed: an allowed-transition map drives both the resolver and the snapshot gate (no tautological `ELSE`), and a database trigger rejects any terminal child whose parent blocker cannot legally resolve as that terminal type.
+- Same-page ambiguity is detected across the whole validated page BEFORE any write: a conflict anywhere in the page fails the ingestion closed, so an earlier unambiguous-looking row cannot mutate canonical candle/correction/snapshot state that later gets rejected.
+- The snapshot quality gate uses half-open overlap for range-scoped blockers (candidate span `[first_time, last_time + interval)`) and exact membership for candle-scoped blockers, so boundary-adjacent and unrelated-candle evidence never blocks a fresh snapshot.
+- `GapReport` missing ranges must be a canonical strictly ascending, disjoint sequence; duplicated, overlapping, or reversed ranges are rejected so the aggregate repair hash is deterministic for a given logical missing set.
+- The snapshot content hash now binds the quality/freshness policy versions and the snapshot schema version, so the same membership/time under a different policy version cannot collide on `snapshot_hash`.
+- Transient Binance 5xx responses are retried via a dedicated `BinanceServerError` type (kept separate from non-retriable `BinanceProviderUnavailableError`), and malformed server-time responses fail deterministically through `BinanceMalformedDataError`.
+- Backfill rejects non-aligned boundaries instead of silently widening `[start, end)`, so no evidence is ever fetched or persisted outside the caller's requested bounds.
 
 - Incremental fetch ranges are now aligned to finalized interval boundaries using trusted exchange time: a 1h fetch at a non-hour wall clock never expects a not-yet-finalized candle, and the start is floored to an interval.
 - `detect_gaps` now requires explicit `expected_start`/`expected_end` boundaries; completeness is never inferred from whatever data exists, so an empty requested range and a missing leading candle are reported as gaps.

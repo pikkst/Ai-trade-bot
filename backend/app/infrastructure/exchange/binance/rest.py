@@ -22,6 +22,7 @@ from app.infrastructure.exchange.binance.protocol import (
     BinanceMalformedDataError,
     BinanceProviderUnavailableError,
     BinanceRateLimitError,
+    BinanceServerError,
     BinanceTimeoutError,
     Candle,
     CandleInterval,
@@ -105,7 +106,17 @@ class BinanceRestProvider:
     async def get_server_time(self) -> ExchangeTime:
         local_time = self._clock.now()
         response = await self._request("GET", _SERVER_TIME_PATH)
-        server_time_ms = int(response["serverTime"])
+        if not isinstance(response, dict) or "serverTime" not in response:
+            raise BinanceMalformedDataError(
+                "Binance server-time response missing serverTime field"
+            )
+        try:
+            server_time_ms = int(response["serverTime"])
+        except (TypeError, ValueError) as exc:
+            raise BinanceMalformedDataError(
+                "Binance server-time response has a non-numeric serverTime "
+                f"value: {response['serverTime']!r}"
+            ) from exc
         server_time = datetime.fromtimestamp(server_time_ms / 1000.0, tz=timezone.utc)
         drift_ms = int((server_time - local_time).total_seconds() * 1000)
         self._last_server_time = server_time
@@ -232,6 +243,7 @@ class BinanceRestProvider:
             retry=retry_if_exception_type(
                 (
                     BinanceRateLimitError,
+                    BinanceServerError,
                     BinanceTimeoutError,
                     httpx.TimeoutException,
                 )
@@ -275,7 +287,7 @@ class BinanceRestProvider:
                             "status": response.status_code,
                         },
                     )
-                    raise BinanceProviderUnavailableError(
+                    raise BinanceServerError(
                         f"Binance server error {response.status_code} on {path}"
                     )
                 if response.status_code == 400:
@@ -315,6 +327,10 @@ class BinanceRestProvider:
                 raise
             except BinanceTimeoutError:
                 raise
+            except BinanceMalformedDataError:
+                raise
+            except BinanceServerError:
+                raise
             except Exception as exc:
                 logger.error(
                     "binance_request_failed",
@@ -331,6 +347,10 @@ class BinanceRestProvider:
         except BinanceTimeoutError:
             raise
         except BinanceInvalidSymbolError:
+            raise
+        except BinanceServerError:
+            raise
+        except BinanceMalformedDataError:
             raise
         except Exception as exc:
             raise BinanceProviderUnavailableError(

@@ -705,6 +705,50 @@ def test_compute_page_hash_deterministic() -> None:
     assert service._compute_page_hash(hashes) != service._compute_page_hash(["a" * 64])
 
 
+def test_snapshot_hash_includes_policy_versions() -> None:
+    """The snapshot content hash must bind the policy and schema versions so a
+    different policy version with identical labels cannot collide."""
+    session = MockSession()
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    candle_ids = [UUID("42000000-0000-0000-0000-000000000001")]
+
+    def make_service(policy_version: str) -> MarketDataService:
+        return MarketDataService(
+            session=session,  # type: ignore[arg-type]
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+            policy=ValidationPolicy(
+                interval_seconds=3600,
+                policy_version=policy_version,
+            ),
+        )
+
+    v1 = make_service("policy-v1")
+    v2 = make_service("policy-v2")
+    kwargs = {
+        "analysis_time": FIXED_TIME,
+        "first_time": FIXED_TIME - timedelta(hours=1),
+        "last_time": FIXED_TIME - timedelta(hours=1),
+        "count": 1,
+        "quality_outcome": "approved",
+        "freshness_outcome": "fresh",
+    }
+    hash_v1 = v1._compute_snapshot_hash(candle_ids, **kwargs)
+    hash_v2 = v2._compute_snapshot_hash(candle_ids, **kwargs)
+    assert hash_v1 != hash_v2
+    assert v1._compute_snapshot_hash(candle_ids, **kwargs) == hash_v1
+
+
 def test_derive_quality_outcome_contiguous() -> None:
     session = MockSession()
     provider = FakeBinanceProvider(
