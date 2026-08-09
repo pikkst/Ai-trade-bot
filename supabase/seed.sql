@@ -187,14 +187,17 @@ set display_name = excluded.display_name,
 insert into public.exchange_symbol_versions (
     id, exchange_id, native_symbol, base_asset, quote_asset, status,
     price_precision, quantity_precision, tick_size, step_size,
-    min_quantity, min_notional, metadata_hash, effective_at, created_at
+    min_quantity, max_quantity, min_notional, max_notional,
+    metadata_hash, raw_metadata_hash, retrieved_at, effective_at, created_at
 )
 values (
     '41000000-0000-0000-0000-000000000001',
     '40000000-0000-0000-0000-000000000001',
     'BTCEUR', 'BTC', 'EUR', 'trading',
-    2, 6, 0.01, 0.000001, 0.000001, 5,
+    2, 6, 0.01, 0.000001, 0.000001, 9000.000000, 5, null,
     encode(extensions.digest('BINANCE:BTCEUR:v1', 'sha256'), 'hex'),
+    encode(extensions.digest('BINANCE:BTCEUR:raw:v1', 'sha256'), 'hex'),
+    '2026-01-01T00:00:00Z',
     '2026-01-01T00:00:00Z',
     '2026-01-01T00:00:00Z'
 )
@@ -205,8 +208,12 @@ set status = excluded.status,
     tick_size = excluded.tick_size,
     step_size = excluded.step_size,
     min_quantity = excluded.min_quantity,
+    max_quantity = excluded.max_quantity,
     min_notional = excluded.min_notional,
-    metadata_hash = excluded.metadata_hash;
+    max_notional = excluded.max_notional,
+    metadata_hash = excluded.metadata_hash,
+    raw_metadata_hash = excluded.raw_metadata_hash,
+    retrieved_at = excluded.retrieved_at;
 
 insert into public.candles (
     id, symbol_version_id, interval_code, open_time, close_time,
