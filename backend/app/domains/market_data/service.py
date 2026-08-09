@@ -103,7 +103,21 @@ class MarketDataService:
         self._interval = interval
         self._clock = clock or get_clock()
         self._backfill_max_range_days = backfill_max_range_days
+        if incremental_max_range_hours <= 0:
+            raise ValueError(
+                "incremental_max_range_hours must be positive; "
+                f"got {incremental_max_range_hours}"
+            )
         self._incremental_max_range_hours = incremental_max_range_hours
+        if (
+            incremental_overlap_hours < 0
+            or incremental_overlap_hours >= incremental_max_range_hours
+        ):
+            raise ValueError(
+                "incremental_overlap_hours must satisfy "
+                f"0 <= overlap < max_range; got overlap={incremental_overlap_hours}, "
+                f"max_range={incremental_max_range_hours}"
+            )
         self._incremental_overlap_hours = incremental_overlap_hours
         self._policy = policy or ValidationPolicy(
             interval_seconds=_INTERVAL_SECONDS[interval]
@@ -119,7 +133,96 @@ class MarketDataService:
         assert_network_call_allowed()
         return await self._provider.get_symbol_metadata(symbol)
 
-    def _validate_symbol_binding(self, symbol: str) -> None:
+    def _compute_symbol_metadata_hash(self, metadata: SymbolMetadata) -> str:
+        payload = {
+            "symbol": metadata.symbol,
+            "base_asset": metadata.base_asset,
+            "quote_asset": metadata.quote_asset,
+            "status": metadata.status.value,
+            "price_precision": metadata.price_precision,
+            "quantity_precision": metadata.quantity_precision,
+            "min_quantity": str(metadata.min_quantity),
+            "max_quantity": str(metadata.max_quantity),
+            "min_notional": str(metadata.min_notional),
+            "tick_size": str(metadata.tick_size),
+            "step_size": str(metadata.step_size),
+        }
+        serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    async def refresh_symbol_metadata(self, symbol: str) -> UUID:
+        """Fetch, normalize, hash, and persist/version symbol metadata.
+
+        Returns the canonical symbol_version_id. If the authoritative metadata
+        has changed since the last effective version, a new immutable version
+        row is inserted and the new ID is returned.
+        """
+        assert_network_call_allowed()
+        metadata = await self._provider.get_symbol_metadata(symbol)
+        metadata_hash = self._compute_symbol_metadata_hash(metadata)
+        now = self._clock.now()
+        row = (
+            self._session.execute(
+                text(
+                    """
+                    select id, metadata_hash
+                    from public.exchange_symbol_versions
+                    where exchange_id = :exchange_id
+                      and native_symbol = :native_symbol
+                      and superseded_by is null
+                    order by effective_at desc
+                    limit 1
+                    """
+                ),
+                {
+                    "exchange_id": self._exchange_id,
+                    "native_symbol": symbol.upper(),
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is not None and row["metadata_hash"] == metadata_hash:
+            return cast(UUID, row["id"])
+        new_id = self._session.execute(
+            text(
+                """
+                insert into public.exchange_symbol_versions (
+                    exchange_id, native_symbol, base_asset, quote_asset,
+                    status, price_precision, quantity_precision,
+                    tick_size, step_size, min_quantity, max_quantity,
+                    min_notional, max_notional, metadata_hash, effective_at
+                ) values (
+                    :exchange_id, :native_symbol, :base_asset, :quote_asset,
+                    :status, :price_precision, :quantity_precision,
+                    :tick_size, :step_size, :min_quantity, :max_quantity,
+                    :min_notional, :max_notional, :metadata_hash, :effective_at
+                )
+                returning id
+                """
+            ),
+            {
+                "exchange_id": self._exchange_id,
+                "native_symbol": symbol.upper(),
+                "base_asset": metadata.base_asset,
+                "quote_asset": metadata.quote_asset,
+                "status": metadata.status.value,
+                "price_precision": metadata.price_precision,
+                "quantity_precision": metadata.quantity_precision,
+                "tick_size": metadata.tick_size,
+                "step_size": metadata.step_size,
+                "min_quantity": metadata.min_quantity,
+                "max_quantity": metadata.max_quantity,
+                "min_notional": metadata.min_notional,
+                "max_notional": metadata.max_quantity,
+                "metadata_hash": metadata_hash,
+                "effective_at": now,
+            },
+        ).scalar_one()
+        self._session.commit()
+        return cast(UUID, new_id)
+
+    async def _validate_symbol_binding(self, symbol: str) -> None:
         """Reject a requested symbol that is not the configured symbol version.
 
         Canonical candle identity includes exchange + symbol-version +
@@ -132,7 +235,7 @@ class MarketDataService:
             self._session.execute(
                 text(
                     """
-                    select native_symbol, exchange_id
+                    select native_symbol, exchange_id, metadata_hash
                     from public.exchange_symbol_versions
                     where id = :symbol_version_id
                     """
@@ -143,9 +246,10 @@ class MarketDataService:
             .one_or_none()
         )
         if row is None:
-            raise ValueError(
-                f"symbol_version_id {self._symbol_version_id} does not exist"
-            )
+            canonical_id = await self.refresh_symbol_metadata(symbol)
+            if canonical_id != self._symbol_version_id:
+                self._symbol_version_id = canonical_id
+            return
         if cast(UUID, row["exchange_id"]) != self._exchange_id:
             raise ValueError(
                 f"symbol_version_id {self._symbol_version_id} is owned by "
@@ -168,7 +272,7 @@ class MarketDataService:
         idempotency_key: str,
     ) -> IngestionResult:
         assert_network_call_allowed()
-        self._validate_symbol_binding(symbol)
+        await self._validate_symbol_binding(symbol)
         # The symbol-binding SELECT autobegan a session transaction; close it
         # before any provider I/O.
         self._session.commit()
@@ -225,7 +329,7 @@ class MarketDataService:
         idempotency_key: str,
     ) -> IngestionResult:
         assert_network_call_allowed()
-        self._validate_symbol_binding(symbol)
+        await self._validate_symbol_binding(symbol)
         # The symbol-binding SELECT above autobegan a session transaction;
         # close it so the server-time provider I/O runs with no active DB
         # transaction.
@@ -257,9 +361,29 @@ class MarketDataService:
         )
         start_time, end_time = self._compute_incremental_range(st.server_time)
         if start_time >= end_time:
+            latest_candle_time = self._get_latest_finalized_candle_time()
+            self._bulk_insert_quality_events(
+                [
+                    make_quality_event(
+                        event_type=QualityState.STALE.value,
+                        severity="error",
+                        symbol_version_id=self._symbol_version_id,
+                        interval_code=self._interval.value,
+                        details={
+                            "reason": "future_persisted_candle_or_invalid_range",
+                            "server_time": st.server_time.isoformat(),
+                            "latest_candle": latest_candle_time.isoformat()
+                            if latest_candle_time
+                            else None,
+                        },
+                        affected_range_start=start_time,
+                        affected_range_end=end_time,
+                    )
+                ]
+            )
             return IngestionResult(
                 ingestion_type=IngestionType.INCREMENTAL,
-                status=IngestionStatus.COMPLETED,
+                status=IngestionStatus.FAILED,
                 inserted_count=0,
                 duplicate_count=0,
                 invalid_count=0,
@@ -268,7 +392,7 @@ class MarketDataService:
                 retry_count=preflight_retry_count,
                 request_count=1,
                 provider_latency_ms=None,
-                safe_error=None,
+                safe_error="future_persisted_candle_or_invalid_range",
                 content_hash=self._compute_ingestion_hash(start_time, end_time),
                 idempotency_key=idempotency_key,
                 actual_start_time=start_time,
@@ -302,9 +426,10 @@ class MarketDataService:
         incremental/backfill ingestion row: completed evidence stays
         byte-for-byte immutable while this failure is separately auditable.
         """
-        provisional_end = self._align_to_interval(self._clock.now())
-        provisional_start = self._align_to_interval(
-            provisional_end - timedelta(hours=self._incremental_max_range_hours)
+        attempt_time = self._clock.now()
+        provisional_end = attempt_time
+        provisional_start = provisional_end - timedelta(
+            hours=self._incremental_max_range_hours
         )
         ingestion_id = self._get_or_create_ingestion(
             ingestion_type=IngestionType.PREFLIGHT_FAILURE,
@@ -313,7 +438,7 @@ class MarketDataService:
             idempotency_key=self._derive_child_key(
                 parent_key=idempotency_key,
                 label="preflight-failure",
-                salt=provisional_end.isoformat(),
+                salt=attempt_time.isoformat(),
             ),
         )
         retry_count = max(0, getattr(self._provider, "retry_count", 0) - retry_before)
@@ -352,9 +477,10 @@ class MarketDataService:
         evidence so the cancellation is auditable and never leaves the task
         in an ambiguous 'running' state.
         """
-        provisional_end = self._align_to_interval(self._clock.now())
-        provisional_start = self._align_to_interval(
-            provisional_end - timedelta(hours=self._incremental_max_range_hours)
+        attempt_time = self._clock.now()
+        provisional_end = attempt_time
+        provisional_start = provisional_end - timedelta(
+            hours=self._incremental_max_range_hours
         )
         ingestion_id = self._get_or_create_ingestion(
             ingestion_type=IngestionType.PREFLIGHT_FAILURE,
@@ -363,7 +489,7 @@ class MarketDataService:
             idempotency_key=self._derive_child_key(
                 parent_key=idempotency_key,
                 label="preflight-cancelled",
-                salt=provisional_end.isoformat(),
+                salt=attempt_time.isoformat(),
             ),
         )
         retry_count = max(0, getattr(self._provider, "retry_count", 0) - retry_before)
@@ -645,7 +771,7 @@ class MarketDataService:
         idempotency_key: str,
     ) -> IngestionResult:
         assert_network_call_allowed()
-        self._validate_symbol_binding(symbol)
+        await self._validate_symbol_binding(symbol)
         # Validate the complete caller-supplied report contract BEFORE any
         # short-circuit or provider request: a foreign or internally
         # inconsistent GapReport must never drive this service's fetches or be
@@ -790,6 +916,11 @@ class MarketDataService:
     ) -> SnapshotResult:
         if not candle_ids:
             raise ValueError("Cannot create snapshot with empty candle membership")
+        if ingestion_id is None:
+            raise ValueError(
+                "Snapshot requires an ingestion_id for exact lineage; "
+                "caller-supplied None is not accepted"
+            )
         # Canonicalize membership chronologically so identical input always
         # resolves to the same identity and hash.
         canonical_ids = self._canonicalize_candle_ids(candle_ids)
@@ -813,10 +944,9 @@ class MarketDataService:
                 f"Snapshot gate failed: quality={derived_quality}, "
                 f"freshness={derived_freshness}"
             )
-        if ingestion_id is not None:
-            self._validate_snapshot_ingestion(
-                ingestion_id, first_time, last_time, canonical_ids
-            )
+        self._validate_snapshot_ingestion(
+            ingestion_id, first_time, last_time, canonical_ids
+        )
         snapshot_hash = self._compute_snapshot_hash(
             candle_ids=canonical_ids,
             analysis_time=analysis_time,
@@ -1579,6 +1709,28 @@ class MarketDataService:
                         current_start=current_start,
                         accepted_by_time=accepted_by_time,
                     )
+                # Pre-scan the ENTIRE page for out-of-order evidence BEFORE any
+                # correction/duplicate/insert mutation. A provider page that is
+                # not monotonically ascending by open time is invalid evidence:
+                # fail the whole page before canonical state can be mutated.
+                page_out_of_order = any(r.out_of_order for r in validated)
+                if page_out_of_order:
+                    self._fail_on_out_of_order_page(
+                        validated=validated,
+                        ingestion_id=ingestion_id,
+                        quality_events=quality_events,
+                        inserted_total=inserted_total,
+                        duplicates_total=duplicates_total,
+                        invalid_total=invalid_total,
+                        corrected_total=corrected_total,
+                        request_count=request_count,
+                        retry_count=retry_count,
+                        provider_latency_ms=provider_latency_ms,
+                        start_time=start_time,
+                        end_time=end_time,
+                        current_start=current_start,
+                        accepted_by_time=accepted_by_time,
+                    )
                 accepted_times: set[datetime] = set()
                 page_inserted = 0
                 page_duplicates = 0
@@ -2122,6 +2274,89 @@ class MarketDataService:
         raise BinanceProviderUnavailableError(
             "duplicate_conflict: inconsistent same-open-time "
             "candles within one provider page"
+        )
+
+    def _fail_on_out_of_order_page(
+        self,
+        validated: list[Any],
+        ingestion_id: UUID,
+        quality_events: list[QualityEvent],
+        inserted_total: int,
+        duplicates_total: int,
+        invalid_total: int,
+        corrected_total: int,
+        request_count: int,
+        retry_count: int,
+        provider_latency_ms: int | None,
+        start_time: datetime,
+        end_time: datetime,
+        current_start: datetime,
+        accepted_by_time: dict[datetime, str],
+    ) -> None:
+        """Fail the affected page/ingestion on an out-of-order provider page.
+
+        A page whose rows are not monotonically ascending by open time is
+        invalid evidence. This is invoked before correction/duplicate/insert
+        mutation so no canonical state is changed by an unordered page.
+        """
+        affected = next(r for r in validated if r.out_of_order)
+        quality_events.append(
+            make_quality_event(
+                event_type=QualityState.OUT_OF_ORDER.value,
+                severity="error",
+                symbol_version_id=self._symbol_version_id,
+                interval_code=self._interval.value,
+                details={
+                    "hash": affected.content_hash,
+                    "open_time": affected.candle.time.isoformat(),
+                    "reason": "out_of_order_page",
+                },
+                affected_range_start=current_start,
+                affected_range_end=min(
+                    current_start
+                    + timedelta(seconds=self._interval_seconds) * len(validated),
+                    end_time,
+                ),
+                ingestion_id=ingestion_id,
+            )
+        )
+        self._bulk_insert_quality_events(quality_events)
+        self._persist_page_evidence(
+            ingestion_id=ingestion_id,
+            checkpoint=current_start,
+            inserted=inserted_total,
+            duplicates=duplicates_total,
+            invalid=invalid_total,
+            corrected=corrected_total,
+            request_count=request_count,
+            retry_count=retry_count,
+            accepted_by_time=accepted_by_time,
+        )
+        self._update_ingestion(
+            ingestion_id=ingestion_id,
+            status=IngestionStatus.FAILED,
+            inserted=inserted_total,
+            duplicates=duplicates_total,
+            invalid=invalid_total,
+            corrected=corrected_total,
+            request_count=request_count,
+            retry_count=retry_count,
+            provider_latency_ms=provider_latency_ms,
+            safe_error=(
+                "out_of_order: provider page is not monotonically ascending "
+                "by open time"
+            ),
+            content_hash=self._compute_ingestion_hash(
+                start_time, end_time, accepted_by_time
+            ),
+            actual_start_time=start_time,
+            actual_end_time=end_time,
+            checkpoint=current_start,
+            accepted_by_time=accepted_by_time,
+        )
+        self._session.commit()
+        raise BinanceProviderUnavailableError(
+            "out_of_order: provider page is not monotonically ascending by open time"
         )
 
     def _apply_correction(

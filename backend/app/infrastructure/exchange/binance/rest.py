@@ -223,6 +223,11 @@ class BinanceRestProvider:
                 "limit": max_candles_per_request,
             }
             response = await self._request("GET", _KLINES_PATH, params=params)
+            if not isinstance(response, list):
+                raise BinanceMalformedDataError(
+                    "Binance /klines response must be a list, "
+                    f"got {type(response).__name__}"
+                )
             if not response:
                 break
             for row in response:
@@ -436,12 +441,12 @@ def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
             price_filter = f
         elif filter_type == "LOT_SIZE":
             lot_filter = f
-        elif filter_type == "MIN_NOTIONAL":
+        elif filter_type in ("MIN_NOTIONAL", "NOTIONAL"):
             notional_filter = f
     if price_filter is None or lot_filter is None or notional_filter is None:
         raise BinanceMalformedDataError(
             "symbol metadata is missing required filters "
-            "(PRICE_FILTER, LOT_SIZE, MIN_NOTIONAL)"
+            "(PRICE_FILTER, LOT_SIZE, MIN_NOTIONAL or NOTIONAL)"
         )
     for field in ("tickSize",):
         if not price_filter.get(field):
@@ -456,7 +461,7 @@ def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
     for field in ("minNotional",):
         if not notional_filter.get(field):
             raise BinanceMalformedDataError(
-                f"MIN_NOTIONAL is missing required field {field}"
+                f"notional filter is missing required field {field}"
             )
     try:
         tick_size = Decimal(str(price_filter.get("tickSize")))

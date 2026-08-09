@@ -350,7 +350,7 @@ Core domains can be implemented and tested against stable project-owned interfac
 
 # Stage B — Core Research Domains
 
-## [x] Master Task 7 — M007 Binance REST Market Data and Quality
+## [ ] Master Task 7 — M007 Binance REST Market Data and Quality
 
 ### Outcome
 

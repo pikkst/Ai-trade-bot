@@ -998,7 +998,8 @@ async def test_incremental_fetch_noop_when_range_empty() -> None:
         symbol="BTCEUR",
         idempotency_key="test-incremental-noop",
     )
-    assert result.status == IngestionStatus.COMPLETED
+    assert result.status == IngestionStatus.FAILED
+    assert result.safe_error == "future_persisted_candle_or_invalid_range"
     assert result.inserted_count == 0
     assert result.duplicate_count == 0
 
