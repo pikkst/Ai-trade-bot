@@ -3315,9 +3315,9 @@ async def test_metadata_lock_key_within_signed_int64() -> None:
     """The deterministic metadata advisory lock key must fit in PostgreSQL's
     signed bigint domain for the actual seeded Binance/BTCEUR identity."""
     key = int.from_bytes(
-        hashlib.sha256(
-            f"metadata_refresh:{EXCHANGE_ID}:{SYMBOL}".encode()
-        ).digest()[:8],
+        hashlib.sha256(f"metadata_refresh:{EXCHANGE_ID}:{SYMBOL}".encode()).digest()[
+            :8
+        ],
         signed=True,
     )
     assert -9223372036854775808 <= key <= 9223372036854775807
@@ -3351,20 +3351,17 @@ async def test_metadata_version_change_preserves_single_current(
         )
         initial_id = await service.refresh_symbol_metadata(SYMBOL)
         session.commit()
-        current_rows = (
-            session.execute(
-                text(
-                    """
+        current_rows = session.execute(
+            text(
+                """
                     select count(*) from public.exchange_symbol_versions
                     where exchange_id = :eid
                       and native_symbol = :sym
                       and superseded_by is null
                     """
-                ),
-                {"eid": EXCHANGE_ID, "sym": SYMBOL},
-            )
-            .scalar_one()
-        )
+            ),
+            {"eid": EXCHANGE_ID, "sym": SYMBOL},
+        ).scalar_one()
         assert current_rows == 1
 
         provider._symbol_metadata[SYMBOL] = SymbolMetadata(
@@ -3386,33 +3383,27 @@ async def test_metadata_version_change_preserves_single_current(
         changed_id = await service.refresh_symbol_metadata(SYMBOL)
         session.commit()
         assert changed_id != initial_id
-        current_rows = (
-            session.execute(
-                text(
-                    """
+        current_rows = session.execute(
+            text(
+                """
                     select count(*) from public.exchange_symbol_versions
                     where exchange_id = :eid
                       and native_symbol = :sym
                       and superseded_by is null
                     """
-                ),
-                {"eid": EXCHANGE_ID, "sym": SYMBOL},
-            )
-            .scalar_one()
-        )
+            ),
+            {"eid": EXCHANGE_ID, "sym": SYMBOL},
+        ).scalar_one()
         assert current_rows == 1
-        prior = (
-            session.execute(
-                text(
-                    """
+        prior = session.execute(
+            text(
+                """
                     select superseded_by from public.exchange_symbol_versions
                     where id = :id
                     """
-                ),
-                {"id": initial_id},
-            )
-            .scalar_one()
-        )
+            ),
+            {"id": initial_id},
+        ).scalar_one()
         assert prior == changed_id
     finally:
         session.close()
@@ -3526,41 +3517,36 @@ async def test_pre_m007_multiple_effective_versions_upgrade_safely(
             connection.execute(
                 text(
                     """
-                    create unique index if not exists exchange_symbol_versions_current_idx
+                    create unique index if not exists
+                    exchange_symbol_versions_current_idx
                         on public.exchange_symbol_versions (exchange_id, native_symbol)
                         where superseded_by is null
                     """
                 )
             )
 
-        current_rows = (
-            session.execute(
-                text(
-                    """
+        current_rows = session.execute(
+            text(
+                """
                     select count(*) from public.exchange_symbol_versions
                     where exchange_id = :eid
                       and native_symbol = :sym
                       and superseded_by is null
                     """
-                ),
-                {"eid": EXCHANGE_ID, "sym": SYMBOL},
-            )
-            .scalar_one()
-        )
+            ),
+            {"eid": EXCHANGE_ID, "sym": SYMBOL},
+        ).scalar_one()
         assert current_rows == 1
-        total_rows = (
-            session.execute(
-                text(
-                    """
+        total_rows = session.execute(
+            text(
+                """
                     select count(*) from public.exchange_symbol_versions
                     where exchange_id = :eid
                       and native_symbol = :sym
                     """
-                ),
-                {"eid": EXCHANGE_ID, "sym": SYMBOL},
-            )
-            .scalar_one()
-        )
+            ),
+            {"eid": EXCHANGE_ID, "sym": SYMBOL},
+        ).scalar_one()
         assert total_rows == 2
     finally:
         session.close()
@@ -3594,18 +3580,6 @@ async def test_unchanged_refresh_advances_last_verified_at(
         session.commit()
         if service._symbol_version_id != initial_id:
             service._symbol_version_id = initial_id
-        old_verified = (
-            session.execute(
-                text(
-                    """
-                    select last_verified_at from public.exchange_symbol_versions
-                    where id = :id
-                    """
-                ),
-                {"id": initial_id},
-            )
-            .scalar_one()
-        )
 
         stale_time = FIXED_TIME + timedelta(hours=25)
         session.execute(
