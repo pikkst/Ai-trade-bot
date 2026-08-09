@@ -191,20 +191,20 @@ class BinanceRestProvider:
                 "utf-8"
             )
         ).hexdigest()
-        metadata = _parse_symbol_metadata(symbol_info)
+        parsed = _parse_symbol_metadata(symbol_info)
         metadata = SymbolMetadata(
-            symbol=metadata.symbol,
-            base_asset=metadata.base_asset,
-            quote_asset=metadata.quote_asset,
-            status=metadata.status,
-            price_precision=metadata.price_precision,
-            quantity_precision=metadata.quantity_precision,
-            min_quantity=metadata.min_quantity,
-            max_quantity=metadata.max_quantity,
-            min_notional=metadata.min_notional,
-            max_notional=metadata.max_notional,
-            tick_size=metadata.tick_size,
-            step_size=metadata.step_size,
+            symbol=parsed["symbol"],
+            base_asset=parsed["base_asset"],
+            quote_asset=parsed["quote_asset"],
+            status=parsed["status"],
+            price_precision=parsed["price_precision"],
+            quantity_precision=parsed["quantity_precision"],
+            min_quantity=parsed["min_quantity"],
+            max_quantity=parsed["max_quantity"],
+            min_notional=parsed["min_notional"],
+            max_notional=parsed["max_notional"],
+            tick_size=parsed["tick_size"],
+            step_size=parsed["step_size"],
             raw_metadata_hash=raw_hash,
             retrieved_at=self._clock.now(),
         )
@@ -429,7 +429,7 @@ class BinanceRestProvider:
             ) from exc
 
 
-def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
+def _parse_symbol_metadata(raw: dict[str, Any]) -> dict[str, Any]:
     symbol_name = raw.get("symbol")
     base_asset = raw.get("baseAsset")
     quote_asset = raw.get("quoteAsset")
@@ -547,20 +547,20 @@ def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
         raise BinanceMalformedDataError(
             f"symbol metadata has invalid filter values: {exc}"
         ) from exc
-    return SymbolMetadata(
-        symbol=symbol_name,
-        base_asset=base_asset,
-        quote_asset=quote_asset,
-        status=status,
-        price_precision=price_precision,
-        quantity_precision=quantity_precision,
-        min_quantity=min_quantity,
-        max_quantity=max_quantity,
-        min_notional=min_notional,
-        max_notional=max_notional,
-        tick_size=tick_size,
-        step_size=step_size,
-    )
+    return {
+        "symbol": symbol_name,
+        "base_asset": base_asset,
+        "quote_asset": quote_asset,
+        "status": status,
+        "price_precision": price_precision,
+        "quantity_precision": quantity_precision,
+        "min_quantity": min_quantity,
+        "max_quantity": max_quantity,
+        "min_notional": min_notional,
+        "max_notional": max_notional,
+        "tick_size": tick_size,
+        "step_size": step_size,
+    }
 
 
 def _parse_kline(row: list[Any], interval: CandleInterval) -> Candle:

@@ -82,6 +82,8 @@ class FakeBinanceProvider:
                 max_notional=None,
                 tick_size=Decimal("0.01"),
                 step_size=Decimal("0.000001"),
+                raw_metadata_hash="a" * 64,
+                retrieved_at=datetime(2026, 8, 1, 0, 0, 0, tzinfo=timezone.utc),
             )
         }
         self._base_time = datetime(2026, 8, 1, 0, 0, 0, tzinfo=timezone.utc)

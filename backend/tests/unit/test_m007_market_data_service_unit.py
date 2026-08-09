@@ -137,6 +137,7 @@ class MockSession:
                 "native_symbol": "BTCEUR",
                 "exchange_id": EXCHANGE_ID,
                 "superseded_by": None,
+                "retrieved_at": FIXED_TIME,
             }
             return result
         if "from public.market_data_ingestions where id" in sql:

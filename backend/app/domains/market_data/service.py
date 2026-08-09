@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hashlib
 import json
 import logging
@@ -95,6 +94,7 @@ class MarketDataService:
         incremental_max_range_hours: int = _DEFAULT_INCREMENTAL_MAX_RANGE_HOURS,
         incremental_overlap_hours: int = _DEFAULT_INCREMENTAL_OVERLAP_HOURS,
         policy: ValidationPolicy | None = None,
+        metadata_max_age_hours: int = 24,
     ) -> None:
         self._session = session
         self._provider = provider
@@ -125,6 +125,11 @@ class MarketDataService:
         )
         self._interval_seconds = _INTERVAL_SECONDS[interval]
         self._snapshot_schema_version = _SNAPSHOT_SCHEMA_VERSION
+        if metadata_max_age_hours <= 0:
+            raise ValueError(
+                f"metadata_max_age_hours must be positive; got {metadata_max_age_hours}"
+            )
+        self._metadata_max_age_hours = metadata_max_age_hours
 
     async def load_server_time(self) -> ExchangeTime:
         assert_network_call_allowed()
@@ -150,6 +155,7 @@ class MarketDataService:
             else None,
             "tick_size": str(metadata.tick_size),
             "step_size": str(metadata.step_size),
+            "raw_metadata_hash": metadata.raw_metadata_hash,
         }
         serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -166,16 +172,19 @@ class MarketDataService:
         assert_network_call_allowed()
         metadata = await self._provider.get_symbol_metadata(symbol, force_refresh=True)
         metadata_hash = self._compute_symbol_metadata_hash(metadata)
-        raw_hash = metadata.raw_metadata_hash or ""
+        raw_hash = metadata.raw_metadata_hash
         retrieved_at = metadata.retrieved_at or self._clock.now()
-        symbol_key = hash((self._exchange_id, symbol.upper()))
-        lock_acquired = False
+        symbol_key = int(
+            hashlib.sha256(
+                f"metadata_refresh:{self._exchange_id}:{symbol.upper()}".encode()
+            ).hexdigest()[:16],
+            16,
+        )
         try:
             self._session.execute(
                 text("select pg_advisory_xact_lock(:lock_key)"),
                 {"lock_key": symbol_key},
             )
-            lock_acquired = True
             row = (
                 self._session.execute(
                     text(
@@ -253,13 +262,9 @@ class MarketDataService:
                 )
             self._session.commit()
             return cast(UUID, new_id)
-        finally:
-            if lock_acquired:
-                with contextlib.suppress(Exception):
-                    self._session.execute(
-                        text("select pg_advisory_unlock(:lock_key)"),
-                        {"lock_key": symbol_key},
-                    )
+        except Exception:
+            self._session.rollback()
+            raise
 
     async def _validate_symbol_binding(self, symbol: str) -> None:
         """Reject a requested symbol that is not the configured symbol version.
@@ -274,7 +279,8 @@ class MarketDataService:
             self._session.execute(
                 text(
                     """
-                    select native_symbol, exchange_id, superseded_by
+                    select native_symbol, exchange_id, superseded_by,
+                           retrieved_at
                     from public.exchange_symbol_versions
                     where id = :symbol_version_id
                     """
@@ -304,6 +310,16 @@ class MarketDataService:
                 f"{self._symbol_version_id}"
             )
         if row["superseded_by"] is not None:
+            self._session.commit()
+            canonical_id = await self.refresh_symbol_metadata(symbol)
+            if canonical_id != self._symbol_version_id:
+                self._symbol_version_id = canonical_id
+            return
+        retrieved_at = row.get("retrieved_at")
+        if retrieved_at is None or (
+            self._clock.now() - retrieved_at
+            > timedelta(hours=self._metadata_max_age_hours)
+        ):
             self._session.commit()
             canonical_id = await self.refresh_symbol_metadata(symbol)
             if canonical_id != self._symbol_version_id:

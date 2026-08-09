@@ -75,6 +75,17 @@ def upgrade() -> None:
             """
         )
     ).scalar_one()
+    has_current_idx = bind.execute(
+        text(
+            """
+            select count(*) > 0
+            from pg_index
+            where indrelid = 'public.exchange_symbol_versions'::regclass
+              and indpred is not null
+              and pg_get_indexdef(indexrelid) like '%superseded_by is null%'
+            """
+        )
+    ).scalar_one()
     if not has_superseded_by:
         raise RuntimeError(
             "exchange_symbol_versions.superseded_by is missing; "
@@ -98,6 +109,11 @@ def upgrade() -> None:
     if not has_retrieved_at:
         raise RuntimeError(
             "exchange_symbol_versions.retrieved_at is missing; "
+            "run the Supabase migration first"
+        )
+    if not has_current_idx:
+        raise RuntimeError(
+            "exchange_symbol_versions_current_idx partial unique index is missing; "
             "run the Supabase migration first"
         )
 
