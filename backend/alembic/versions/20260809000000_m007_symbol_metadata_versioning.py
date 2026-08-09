@@ -82,7 +82,7 @@ def upgrade() -> None:
             from pg_index
             where indrelid = 'public.exchange_symbol_versions'::regclass
               and indpred is not null
-              and pg_get_indexdef(indexrelid) like '%superseded_by is null%'
+              and pg_get_indexdef(indexrelid) ilike '%superseded_by is null%'
             """
         )
     ).scalar_one()
