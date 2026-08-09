@@ -11,12 +11,15 @@ COLORAMA_BLOCK = (
     "    # via the-daily-roast-ai (pyproject.toml)\n"
 )
 
+TZDATA_PREFIX = "tzdata=="
+
 
 def normalize_lock(content: str) -> str:
     """Return a lock that is identical on Windows and Linux."""
     lines = content.splitlines(keepends=True)
     normalized: list[str] = []
     skipping_colorama = False
+    skipping_tzdata = False
 
     for line in lines:
         if line.startswith(COLORAMA_PREFIX):
@@ -25,6 +28,14 @@ def normalize_lock(content: str) -> str:
         if skipping_colorama and (line.startswith(" ") or not line.strip()):
             continue
         skipping_colorama = False
+
+        if line.startswith(TZDATA_PREFIX):
+            skipping_tzdata = True
+            continue
+        if skipping_tzdata and (line.startswith(" ") or not line.strip()):
+            continue
+        skipping_tzdata = False
+
         normalized.append(line)
 
     insert_at = next(
