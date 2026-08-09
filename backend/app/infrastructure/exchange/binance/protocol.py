@@ -77,6 +77,7 @@ class SymbolMetadata:
     min_quantity: Decimal
     max_quantity: Decimal
     min_notional: Decimal
+    max_notional: Decimal | None
     tick_size: Decimal
     step_size: Decimal
 
@@ -151,7 +152,9 @@ class BinanceExchangeError(BinanceProviderError):
 class MarketDataProvider(Protocol):
     async def get_server_time(self) -> ExchangeTime: ...
 
-    async def get_symbol_metadata(self, symbol: str) -> SymbolMetadata: ...
+    async def get_symbol_metadata(
+        self, symbol: str, *, force_refresh: bool = False
+    ) -> SymbolMetadata: ...
 
     async def get_finalized_candles(
         self,

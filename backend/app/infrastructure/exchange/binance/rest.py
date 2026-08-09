@@ -161,9 +161,11 @@ class BinanceRestProvider:
             )
         return ExchangeTime(server_time=server_time, clock_drift_ms=drift_ms)
 
-    async def get_symbol_metadata(self, symbol: str) -> SymbolMetadata:
+    async def get_symbol_metadata(
+        self, symbol: str, *, force_refresh: bool = False
+    ) -> SymbolMetadata:
         cache_key = symbol.upper()
-        if cache_key in self._symbol_metadata_cache:
+        if not force_refresh and cache_key in self._symbol_metadata_cache:
             return self._symbol_metadata_cache[cache_key]
         response = await self._request("GET", _EXCHANGE_INFO_PATH)
         if not isinstance(response, dict) or not isinstance(
@@ -463,6 +465,19 @@ def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
             raise BinanceMalformedDataError(
                 f"notional filter is missing required field {field}"
             )
+    max_notional_raw = notional_filter.get("maxNotional")
+    max_notional = None
+    if max_notional_raw is not None:
+        try:
+            max_notional = Decimal(str(max_notional_raw))
+            if max_notional < 0:
+                raise BinanceMalformedDataError(
+                    f"notional maxNotional must be non-negative, got {max_notional}"
+                )
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise BinanceMalformedDataError(
+                f"notional maxNotional is invalid: {exc}"
+            ) from exc
     try:
         tick_size = Decimal(str(price_filter.get("tickSize")))
         if tick_size <= 0:
@@ -511,6 +526,7 @@ def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
         min_quantity=min_quantity,
         max_quantity=max_quantity,
         min_notional=min_notional,
+        max_notional=max_notional,
         tick_size=tick_size,
         step_size=step_size,
     )

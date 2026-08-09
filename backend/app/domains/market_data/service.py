@@ -144,6 +144,9 @@ class MarketDataService:
             "min_quantity": str(metadata.min_quantity),
             "max_quantity": str(metadata.max_quantity),
             "min_notional": str(metadata.min_notional),
+            "max_notional": str(metadata.max_notional)
+            if metadata.max_notional is not None
+            else None,
             "tick_size": str(metadata.tick_size),
             "step_size": str(metadata.step_size),
         }
@@ -155,10 +158,11 @@ class MarketDataService:
 
         Returns the canonical symbol_version_id. If the authoritative metadata
         has changed since the last effective version, a new immutable version
-        row is inserted and the new ID is returned.
+        row is inserted and the new ID is returned. The prior effective version
+        is linked via superseded_by.
         """
         assert_network_call_allowed()
-        metadata = await self._provider.get_symbol_metadata(symbol)
+        metadata = await self._provider.get_symbol_metadata(symbol, force_refresh=True)
         metadata_hash = self._compute_symbol_metadata_hash(metadata)
         now = self._clock.now()
         row = (
@@ -184,6 +188,7 @@ class MarketDataService:
         )
         if row is not None and row["metadata_hash"] == metadata_hash:
             return cast(UUID, row["id"])
+        prior_id = row["id"] if row is not None else None
         new_id = self._session.execute(
             text(
                 """
@@ -191,12 +196,14 @@ class MarketDataService:
                     exchange_id, native_symbol, base_asset, quote_asset,
                     status, price_precision, quantity_precision,
                     tick_size, step_size, min_quantity, max_quantity,
-                    min_notional, max_notional, metadata_hash, effective_at
+                    min_notional, max_notional, metadata_hash, effective_at,
+                    superseded_by
                 ) values (
                     :exchange_id, :native_symbol, :base_asset, :quote_asset,
                     :status, :price_precision, :quantity_precision,
                     :tick_size, :step_size, :min_quantity, :max_quantity,
-                    :min_notional, :max_notional, :metadata_hash, :effective_at
+                    :min_notional, :max_notional, :metadata_hash, :effective_at,
+                    :prior_id
                 )
                 returning id
                 """
@@ -214,11 +221,23 @@ class MarketDataService:
                 "min_quantity": metadata.min_quantity,
                 "max_quantity": metadata.max_quantity,
                 "min_notional": metadata.min_notional,
-                "max_notional": metadata.max_quantity,
+                "max_notional": metadata.max_notional,
                 "metadata_hash": metadata_hash,
                 "effective_at": now,
+                "prior_id": prior_id,
             },
         ).scalar_one()
+        if prior_id is not None:
+            self._session.execute(
+                text(
+                    """
+                    update public.exchange_symbol_versions
+                    set superseded_by = :new_id
+                    where id = :prior_id
+                    """
+                ),
+                {"prior_id": prior_id, "new_id": new_id},
+            )
         self._session.commit()
         return cast(UUID, new_id)
 
@@ -235,7 +254,7 @@ class MarketDataService:
             self._session.execute(
                 text(
                     """
-                    select native_symbol, exchange_id, metadata_hash
+                    select native_symbol, exchange_id
                     from public.exchange_symbol_versions
                     where id = :symbol_version_id
                     """
@@ -246,6 +265,7 @@ class MarketDataService:
             .one_or_none()
         )
         if row is None:
+            self._session.commit()
             canonical_id = await self.refresh_symbol_metadata(symbol)
             if canonical_id != self._symbol_version_id:
                 self._symbol_version_id = canonical_id
@@ -362,25 +382,55 @@ class MarketDataService:
         start_time, end_time = self._compute_incremental_range(st.server_time)
         if start_time >= end_time:
             latest_candle_time = self._get_latest_finalized_candle_time()
-            self._bulk_insert_quality_events(
-                [
-                    make_quality_event(
-                        event_type=QualityState.STALE.value,
-                        severity="error",
-                        symbol_version_id=self._symbol_version_id,
-                        interval_code=self._interval.value,
-                        details={
-                            "reason": "future_persisted_candle_or_invalid_range",
-                            "server_time": st.server_time.isoformat(),
-                            "latest_candle": latest_candle_time.isoformat()
-                            if latest_candle_time
-                            else None,
-                        },
-                        affected_range_start=start_time,
-                        affected_range_end=end_time,
-                    )
-                ]
+            quality_events = [
+                make_quality_event(
+                    event_type=QualityState.STALE.value,
+                    severity="error",
+                    symbol_version_id=self._symbol_version_id,
+                    interval_code=self._interval.value,
+                    details={
+                        "reason": "future_persisted_candle_or_invalid_range",
+                        "server_time": st.server_time.isoformat(),
+                        "latest_candle": latest_candle_time.isoformat()
+                        if latest_candle_time
+                        else None,
+                    },
+                    affected_range_start=start_time,
+                    affected_range_end=end_time,
+                )
+            ]
+            self._bulk_insert_quality_events(quality_events)
+            provisional_end = self._align_to_interval(st.server_time)
+            provisional_start = provisional_end - timedelta(
+                hours=self._incremental_max_range_hours
             )
+            ingestion_id = self._get_or_create_ingestion(
+                ingestion_type=IngestionType.PREFLIGHT_FAILURE,
+                start_time=provisional_start,
+                end_time=provisional_end,
+                idempotency_key=self._derive_child_key(
+                    parent_key=idempotency_key,
+                    label="incremental-range-impossible",
+                    salt=st.server_time.isoformat(),
+                ),
+            )
+            self._update_ingestion(
+                ingestion_id=ingestion_id,
+                status=IngestionStatus.FAILED,
+                inserted=0,
+                duplicates=0,
+                invalid=0,
+                corrected=0,
+                request_count=1,
+                retry_count=preflight_retry_count,
+                provider_latency_ms=None,
+                safe_error="future_persisted_candle_or_invalid_range",
+                content_hash=self._compute_ingestion_hash(start_time, end_time),
+                actual_start_time=start_time,
+                actual_end_time=end_time,
+                checkpoint=start_time,
+            )
+            self._session.commit()
             return IngestionResult(
                 ingestion_type=IngestionType.INCREMENTAL,
                 status=IngestionStatus.FAILED,

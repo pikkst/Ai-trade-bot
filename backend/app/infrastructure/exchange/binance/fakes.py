@@ -79,6 +79,7 @@ class FakeBinanceProvider:
                 min_quantity=Decimal("0.00001"),
                 max_quantity=Decimal("9000.00000"),
                 min_notional=Decimal("10.00"),
+                max_notional=None,
                 tick_size=Decimal("0.01"),
                 step_size=Decimal("0.000001"),
             )
@@ -112,7 +113,9 @@ class FakeBinanceProvider:
         drift_ms = int((server_time - local_time).total_seconds() * 1000)
         return ExchangeTime(server_time=server_time, clock_drift_ms=drift_ms)
 
-    async def get_symbol_metadata(self, symbol: str) -> SymbolMetadata:
+    async def get_symbol_metadata(
+        self, symbol: str, *, force_refresh: bool = False
+    ) -> SymbolMetadata:
         self._check_scenario()
         metadata = self._symbol_metadata.get(symbol.upper())
         if metadata is None:
