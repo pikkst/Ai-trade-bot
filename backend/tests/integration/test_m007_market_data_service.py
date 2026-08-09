@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from contextlib import contextmanager
@@ -42,6 +43,7 @@ from app.infrastructure.exchange.binance.protocol import (
     ProviderHealth,
     RateLimitState,
     SymbolMetadata,
+    SymbolStatus,
 )
 
 pytestmark = pytest.mark.database
@@ -189,10 +191,13 @@ def _clean_m007_rows(engine: Engine) -> None:
             text(
                 """
                 delete from public.candles
-                where symbol_version_id = :sid
+                where symbol_version_id in (
+                    select id from public.exchange_symbol_versions
+                    where exchange_id = :eid and native_symbol = :sym
+                )
                 """
             ),
-            {"sid": SYMBOL_VERSION_ID},
+            {"eid": EXCHANGE_ID, "sym": SYMBOL},
         )
         connection.execute(
             text(
@@ -202,6 +207,16 @@ def _clean_m007_rows(engine: Engine) -> None:
                 """
             ),
             {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text(
+                """
+                delete from public.exchange_symbol_versions
+                where exchange_id = :eid and native_symbol = :sym
+                  and id != :sid
+                """
+            ),
+            {"eid": EXCHANGE_ID, "sym": SYMBOL, "sid": SYMBOL_VERSION_ID},
         )
         connection.execute(
             text(
@@ -232,6 +247,7 @@ def _clean_m007_rows(engine: Engine) -> None:
                     :md5, :raw_md5, timezone('utc', now()),
                     timezone('utc', now())
                 )
+                on conflict (id) do nothing
                 """
             ),
             {
@@ -280,9 +296,9 @@ class BoundaryAssertingProvider:
         self._assert_no_transaction()
         return await self._inner.get_server_time()
 
-    async def get_symbol_metadata(self, symbol: str) -> SymbolMetadata:
+    async def get_symbol_metadata(self, symbol: str, **kwargs: Any) -> SymbolMetadata:
         self._assert_no_transaction()
-        return await self._inner.get_symbol_metadata(symbol)
+        return await self._inner.get_symbol_metadata(symbol, **kwargs)
 
     async def get_finalized_candles(
         self,
@@ -3292,3 +3308,410 @@ async def test_cancellation_persists_cancelled_state(
         session.close()
     assert row["status"] == IngestionStatus.CANCELLED.value
     assert row["safe_error"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_metadata_lock_key_within_signed_int64() -> None:
+    """The deterministic metadata advisory lock key must fit in PostgreSQL's
+    signed bigint domain for the actual seeded Binance/BTCEUR identity."""
+    key = int.from_bytes(
+        hashlib.sha256(
+            f"metadata_refresh:{EXCHANGE_ID}:{SYMBOL}".encode()
+        ).digest()[:8],
+        signed=True,
+    )
+    assert -9223372036854775808 <= key <= 9223372036854775807
+
+
+@pytest.mark.asyncio
+async def test_metadata_version_change_preserves_single_current(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """A metadata change creates a new version and exactly one row remains
+    current under the unique partial index."""
+    from decimal import Decimal
+
+    session = build_session_factory(database_engine)()
+    try:
+        provider = FakeBinanceProvider(
+            config=FakeBinanceConfig(
+                scenario=FakeBinanceScenario.SUCCESS,
+                fixed_clock_time=FIXED_TIME,
+                fixture_version="2026-08-08-m007-v1",
+            )
+        )
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        initial_id = await service.refresh_symbol_metadata(SYMBOL)
+        session.commit()
+        current_rows = (
+            session.execute(
+                text(
+                    """
+                    select count(*) from public.exchange_symbol_versions
+                    where exchange_id = :eid
+                      and native_symbol = :sym
+                      and superseded_by is null
+                    """
+                ),
+                {"eid": EXCHANGE_ID, "sym": SYMBOL},
+            )
+            .scalar_one()
+        )
+        assert current_rows == 1
+
+        provider._symbol_metadata[SYMBOL] = SymbolMetadata(
+            symbol=SYMBOL,
+            base_asset="BTC",
+            quote_asset="EUR",
+            status=SymbolStatus.TRADING,
+            price_precision=2,
+            quantity_precision=6,
+            min_quantity=Decimal("0.00001"),
+            max_quantity=Decimal("9000.00000"),
+            min_notional=Decimal("10.00"),
+            max_notional=None,
+            tick_size=Decimal("0.02"),
+            step_size=Decimal("0.000001"),
+            raw_metadata_hash="b" * 64,
+            retrieved_at=FIXED_TIME + timedelta(minutes=1),
+        )
+        changed_id = await service.refresh_symbol_metadata(SYMBOL)
+        session.commit()
+        assert changed_id != initial_id
+        current_rows = (
+            session.execute(
+                text(
+                    """
+                    select count(*) from public.exchange_symbol_versions
+                    where exchange_id = :eid
+                      and native_symbol = :sym
+                      and superseded_by is null
+                    """
+                ),
+                {"eid": EXCHANGE_ID, "sym": SYMBOL},
+            )
+            .scalar_one()
+        )
+        assert current_rows == 1
+        prior = (
+            session.execute(
+                text(
+                    """
+                    select superseded_by from public.exchange_symbol_versions
+                    where id = :id
+                    """
+                ),
+                {"id": initial_id},
+            )
+            .scalar_one()
+        )
+        assert prior == changed_id
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_pre_m007_multiple_effective_versions_upgrade_safely(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Pre-M007 multiple effective rows for one symbol are resolved to exactly
+    one current row without deleting history."""
+    session = build_session_factory(database_engine)()
+    try:
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    drop index if exists public.exchange_symbol_versions_current_idx
+                    """
+                )
+            )
+        session.execute(
+            text(
+                """
+                delete from public.exchange_symbol_versions
+                where exchange_id = :eid and native_symbol = :sym
+                """
+            ),
+            {"eid": EXCHANGE_ID, "sym": SYMBOL},
+        )
+        session.execute(
+            text(
+                """
+                insert into public.exchange_symbol_versions (
+                    id, exchange_id, native_symbol, base_asset, quote_asset,
+                    status, price_precision, quantity_precision, tick_size,
+                    step_size, min_quantity, max_quantity, min_notional,
+                    max_notional, metadata_hash, effective_at,
+                    superseded_by, raw_metadata_hash, retrieved_at,
+                    last_verified_at
+                ) values (
+                    :sid, :eid, 'BTCEUR', 'BTC', 'EUR', 'trading',
+                    2, 6, 0.01, 0.000001, 0.000001, 9000.000000, 5, null,
+                    :md5, :effective_at,
+                    null, :md5, :retrieved_at, :retrieved_at
+                )
+                """
+            ),
+            {
+                "sid": UUID("41000000-0000-0000-0000-000000000004"),
+                "eid": EXCHANGE_ID,
+                "md5": "m" * 64,
+                "effective_at": FIXED_TIME - timedelta(days=2),
+                "retrieved_at": FIXED_TIME - timedelta(days=2),
+            },
+        )
+        session.execute(
+            text(
+                """
+                insert into public.exchange_symbol_versions (
+                    id, exchange_id, native_symbol, base_asset, quote_asset,
+                    status, price_precision, quantity_precision, tick_size,
+                    step_size, min_quantity, max_quantity, min_notional,
+                    max_notional, metadata_hash, effective_at,
+                    superseded_by, raw_metadata_hash, retrieved_at,
+                    last_verified_at
+                ) values (
+                    :sid, :eid, 'BTCEUR', 'BTC', 'EUR', 'trading',
+                    2, 6, 0.01, 0.000001, 0.000001, 9000.000000, 5, null,
+                    :md5, :effective_at,
+                    null, :md5, :retrieved_at, :retrieved_at
+                )
+                """
+            ),
+            {
+                "sid": UUID("41000000-0000-0000-0000-000000000003"),
+                "eid": EXCHANGE_ID,
+                "md5": "n" * 64,
+                "effective_at": FIXED_TIME - timedelta(days=1),
+                "retrieved_at": FIXED_TIME - timedelta(days=1),
+            },
+        )
+        session.commit()
+
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    with ranked as (
+                        select id, exchange_id, native_symbol,
+                               row_number() over (
+                                   partition by exchange_id, native_symbol
+                                   order by effective_at desc
+                               ) as rn
+                        from public.exchange_symbol_versions
+                        where superseded_by is null
+                    )
+                    update public.exchange_symbol_versions sv
+                    set superseded_by = (
+                        select id from ranked r
+                        where r.exchange_id = sv.exchange_id
+                          and r.native_symbol = sv.native_symbol
+                          and r.rn = 1
+                    )
+                    from ranked r2
+                    where sv.id = r2.id
+                      and r2.rn > 1
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    create unique index if not exists exchange_symbol_versions_current_idx
+                        on public.exchange_symbol_versions (exchange_id, native_symbol)
+                        where superseded_by is null
+                    """
+                )
+            )
+
+        current_rows = (
+            session.execute(
+                text(
+                    """
+                    select count(*) from public.exchange_symbol_versions
+                    where exchange_id = :eid
+                      and native_symbol = :sym
+                      and superseded_by is null
+                    """
+                ),
+                {"eid": EXCHANGE_ID, "sym": SYMBOL},
+            )
+            .scalar_one()
+        )
+        assert current_rows == 1
+        total_rows = (
+            session.execute(
+                text(
+                    """
+                    select count(*) from public.exchange_symbol_versions
+                    where exchange_id = :eid
+                      and native_symbol = :sym
+                    """
+                ),
+                {"eid": EXCHANGE_ID, "sym": SYMBOL},
+            )
+            .scalar_one()
+        )
+        assert total_rows == 2
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_unchanged_refresh_advances_last_verified_at(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """A stale version is refreshed; if unchanged, last_verified_at advances
+    so the next ingestion does not trigger another authoritative refresh."""
+    session = build_session_factory(database_engine)()
+    try:
+        provider = FakeBinanceProvider(
+            config=FakeBinanceConfig(
+                scenario=FakeBinanceScenario.SUCCESS,
+                fixed_clock_time=FIXED_TIME,
+                fixture_version="2026-08-08-m007-v1",
+            )
+        )
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        initial_id = await service.refresh_symbol_metadata(SYMBOL)
+        session.commit()
+        if service._symbol_version_id != initial_id:
+            service._symbol_version_id = initial_id
+        old_verified = (
+            session.execute(
+                text(
+                    """
+                    select last_verified_at from public.exchange_symbol_versions
+                    where id = :id
+                    """
+                ),
+                {"id": initial_id},
+            )
+            .scalar_one()
+        )
+
+        stale_time = FIXED_TIME + timedelta(hours=25)
+        session.execute(
+            text(
+                """
+                update public.exchange_symbol_versions
+                set retrieved_at = :t, last_verified_at = :t
+                where id = :id
+                """
+            ),
+            {"id": initial_id, "t": stale_time},
+        )
+        session.commit()
+
+        provider._request_count = 0
+        unchanged_id = await service.refresh_symbol_metadata(SYMBOL)
+        session.commit()
+        assert unchanged_id == initial_id
+        new_verified = (
+            session.execute(
+                text(
+                    """
+                    select last_verified_at, retrieved_at
+                    from public.exchange_symbol_versions
+                    where id = :id
+                    """
+                ),
+                {"id": initial_id},
+            )
+            .mappings()
+            .one()
+        )
+        assert new_verified["last_verified_at"] == FIXED_TIME
+        assert provider._request_count == 1
+
+        provider._request_count = 0
+        await service._validate_symbol_binding(SYMBOL)
+        assert provider._request_count == 0
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_normalized_hash_decoupled_from_raw_hash(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Two raw payloads with identical normalized metadata but different
+    irrelevant raw fields produce the same normalized version identity
+    while their raw hashes differ."""
+    from decimal import Decimal
+
+    base_metadata = SymbolMetadata(
+        symbol="BTCEUR",
+        base_asset="BTC",
+        quote_asset="EUR",
+        status=SymbolStatus.TRADING,
+        price_precision=2,
+        quantity_precision=6,
+        min_quantity=Decimal("0.00001"),
+        max_quantity=Decimal("9000.00000"),
+        min_notional=Decimal("10.00"),
+        max_notional=None,
+        tick_size=Decimal("0.01"),
+        step_size=Decimal("0.000001"),
+        raw_metadata_hash="a" * 64,
+        retrieved_at=FIXED_TIME,
+    )
+    mutated_raw = SymbolMetadata(
+        symbol="BTCEUR",
+        base_asset="BTC",
+        quote_asset="EUR",
+        status=SymbolStatus.TRADING,
+        price_precision=2,
+        quantity_precision=6,
+        min_quantity=Decimal("0.00001"),
+        max_quantity=Decimal("9000.00000"),
+        min_notional=Decimal("10.00"),
+        max_notional=None,
+        tick_size=Decimal("0.01"),
+        step_size=Decimal("0.000001"),
+        raw_metadata_hash="b" * 64,
+        retrieved_at=FIXED_TIME,
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        service = MarketDataService(
+            session=session,
+            provider=BoundaryAssertingProvider(
+                FakeBinanceProvider(
+                    config=FakeBinanceConfig(
+                        scenario=FakeBinanceScenario.SUCCESS,
+                        fixed_clock_time=FIXED_TIME,
+                        fixture_version="2026-08-08-m007-v1",
+                    )
+                ),
+                session,
+            ),
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        base_hash = service._compute_symbol_metadata_hash(base_metadata)
+        mutated_hash = service._compute_symbol_metadata_hash(mutated_raw)
+        assert base_hash == mutated_hash
+        assert base_metadata.raw_metadata_hash != mutated_raw.raw_metadata_hash
+    finally:
+        session.close()

@@ -155,7 +155,6 @@ class MarketDataService:
             else None,
             "tick_size": str(metadata.tick_size),
             "step_size": str(metadata.step_size),
-            "raw_metadata_hash": metadata.raw_metadata_hash,
         }
         serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -174,11 +173,11 @@ class MarketDataService:
         metadata_hash = self._compute_symbol_metadata_hash(metadata)
         raw_hash = metadata.raw_metadata_hash
         retrieved_at = metadata.retrieved_at or self._clock.now()
-        symbol_key = int(
+        symbol_key = int.from_bytes(
             hashlib.sha256(
                 f"metadata_refresh:{self._exchange_id}:{symbol.upper()}".encode()
-            ).hexdigest()[:16],
-            16,
+            ).digest()[:8],
+            signed=True,
         )
         try:
             self._session.execute(
@@ -207,49 +206,61 @@ class MarketDataService:
                 .one_or_none()
             )
             if row is not None and row["metadata_hash"] == metadata_hash:
+                self._session.execute(
+                    text(
+                        """
+                        update public.exchange_symbol_versions
+                        set last_verified_at = :now
+                        where id = :id
+                        """
+                    ),
+                    {"id": row["id"], "now": self._clock.now()},
+                )
                 self._session.commit()
                 return cast(UUID, row["id"])
             prior_id = row["id"] if row is not None else None
-            new_id = self._session.execute(
-                text(
-                    """
-                    insert into public.exchange_symbol_versions (
-                        exchange_id, native_symbol, base_asset, quote_asset,
-                        status, price_precision, quantity_precision,
-                        tick_size, step_size, min_quantity, max_quantity,
-                        min_notional, max_notional, metadata_hash, effective_at,
-                        superseded_by, raw_metadata_hash, retrieved_at
-                    ) values (
-                        :exchange_id, :native_symbol, :base_asset, :quote_asset,
-                        :status, :price_precision, :quantity_precision,
-                        :tick_size, :step_size, :min_quantity, :max_quantity,
-                        :min_notional, :max_notional, :metadata_hash, :effective_at,
-                        null, :raw_hash, :retrieved_at
-                    )
-                    returning id
-                    """
-                ),
-                {
-                    "exchange_id": self._exchange_id,
-                    "native_symbol": symbol.upper(),
-                    "base_asset": metadata.base_asset,
-                    "quote_asset": metadata.quote_asset,
-                    "status": metadata.status.value,
-                    "price_precision": metadata.price_precision,
-                    "quantity_precision": metadata.quantity_precision,
-                    "tick_size": metadata.tick_size,
-                    "step_size": metadata.step_size,
-                    "min_quantity": metadata.min_quantity,
-                    "max_quantity": metadata.max_quantity,
-                    "min_notional": metadata.min_notional,
-                    "max_notional": metadata.max_notional,
-                    "metadata_hash": metadata_hash,
-                    "effective_at": retrieved_at,
-                    "raw_hash": raw_hash,
-                    "retrieved_at": retrieved_at,
-                },
-            ).scalar_one()
             if prior_id is not None:
+                new_id = self._session.execute(
+                    text(
+                        """
+                        insert into public.exchange_symbol_versions (
+                            exchange_id, native_symbol, base_asset, quote_asset,
+                            status, price_precision, quantity_precision,
+                            tick_size, step_size, min_quantity, max_quantity,
+                            min_notional, max_notional, metadata_hash, effective_at,
+                            superseded_by, raw_metadata_hash, retrieved_at,
+                            last_verified_at
+                        ) values (
+                            :exchange_id, :native_symbol, :base_asset, :quote_asset,
+                            :status, :price_precision, :quantity_precision,
+                            :tick_size, :step_size, :min_quantity, :max_quantity,
+                            :min_notional, :max_notional, :metadata_hash, :effective_at,
+                            :prior_id, :raw_hash, :retrieved_at, :retrieved_at
+                        )
+                        returning id
+                        """
+                    ),
+                    {
+                        "exchange_id": self._exchange_id,
+                        "native_symbol": symbol.upper(),
+                        "base_asset": metadata.base_asset,
+                        "quote_asset": metadata.quote_asset,
+                        "status": metadata.status.value,
+                        "price_precision": metadata.price_precision,
+                        "quantity_precision": metadata.quantity_precision,
+                        "tick_size": metadata.tick_size,
+                        "step_size": metadata.step_size,
+                        "min_quantity": metadata.min_quantity,
+                        "max_quantity": metadata.max_quantity,
+                        "min_notional": metadata.min_notional,
+                        "max_notional": metadata.max_notional,
+                        "metadata_hash": metadata_hash,
+                        "effective_at": retrieved_at,
+                        "prior_id": prior_id,
+                        "raw_hash": raw_hash,
+                        "retrieved_at": retrieved_at,
+                    },
+                ).scalar_one()
                 self._session.execute(
                     text(
                         """
@@ -260,6 +271,57 @@ class MarketDataService:
                     ),
                     {"prior_id": prior_id, "new_id": new_id},
                 )
+                self._session.execute(
+                    text(
+                        """
+                        update public.exchange_symbol_versions
+                        set superseded_by = null
+                        where id = :new_id
+                        """
+                    ),
+                    {"new_id": new_id},
+                )
+            else:
+                new_id = self._session.execute(
+                    text(
+                        """
+                        insert into public.exchange_symbol_versions (
+                            exchange_id, native_symbol, base_asset, quote_asset,
+                            status, price_precision, quantity_precision,
+                            tick_size, step_size, min_quantity, max_quantity,
+                            min_notional, max_notional, metadata_hash, effective_at,
+                            superseded_by, raw_metadata_hash, retrieved_at,
+                            last_verified_at
+                        ) values (
+                            :exchange_id, :native_symbol, :base_asset, :quote_asset,
+                            :status, :price_precision, :quantity_precision,
+                            :tick_size, :step_size, :min_quantity, :max_quantity,
+                            :min_notional, :max_notional, :metadata_hash, :effective_at,
+                            null, :raw_hash, :retrieved_at, :retrieved_at
+                        )
+                        returning id
+                        """
+                    ),
+                    {
+                        "exchange_id": self._exchange_id,
+                        "native_symbol": symbol.upper(),
+                        "base_asset": metadata.base_asset,
+                        "quote_asset": metadata.quote_asset,
+                        "status": metadata.status.value,
+                        "price_precision": metadata.price_precision,
+                        "quantity_precision": metadata.quantity_precision,
+                        "tick_size": metadata.tick_size,
+                        "step_size": metadata.step_size,
+                        "min_quantity": metadata.min_quantity,
+                        "max_quantity": metadata.max_quantity,
+                        "min_notional": metadata.min_notional,
+                        "max_notional": metadata.max_notional,
+                        "metadata_hash": metadata_hash,
+                        "effective_at": retrieved_at,
+                        "raw_hash": raw_hash,
+                        "retrieved_at": retrieved_at,
+                    },
+                ).scalar_one()
             self._session.commit()
             return cast(UUID, new_id)
         except Exception:
@@ -280,7 +342,7 @@ class MarketDataService:
                 text(
                     """
                     select native_symbol, exchange_id, superseded_by,
-                           retrieved_at
+                           retrieved_at, last_verified_at
                     from public.exchange_symbol_versions
                     where id = :symbol_version_id
                     """
@@ -315,9 +377,9 @@ class MarketDataService:
             if canonical_id != self._symbol_version_id:
                 self._symbol_version_id = canonical_id
             return
-        retrieved_at = row.get("retrieved_at")
-        if retrieved_at is None or (
-            self._clock.now() - retrieved_at
+        last_verified_at = row.get("last_verified_at") or row.get("retrieved_at")
+        if last_verified_at is None or (
+            self._clock.now() - last_verified_at
             > timedelta(hours=self._metadata_max_age_hours)
         ):
             self._session.commit()
