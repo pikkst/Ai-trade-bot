@@ -136,6 +136,7 @@ class MockSession:
             result._one_or_none_value = {
                 "native_symbol": "BTCEUR",
                 "exchange_id": EXCHANGE_ID,
+                "superseded_by": None,
             }
             return result
         if "from public.market_data_ingestions where id" in sql:

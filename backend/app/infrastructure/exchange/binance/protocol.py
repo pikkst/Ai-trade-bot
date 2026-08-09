@@ -80,6 +80,8 @@ class SymbolMetadata:
     max_notional: Decimal | None
     tick_size: Decimal
     step_size: Decimal
+    raw_metadata_hash: str | None = None
+    retrieved_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

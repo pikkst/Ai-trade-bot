@@ -53,6 +53,28 @@ def upgrade() -> None:
             """
         )
     ).scalar_one()
+    has_raw_hash = bind.execute(
+        text(
+            """
+            select count(*) > 0
+            from pg_attribute
+            where attrelid = 'public.exchange_symbol_versions'::regclass
+              and attname = 'raw_metadata_hash'
+              and not attisdropped
+            """
+        )
+    ).scalar_one()
+    has_retrieved_at = bind.execute(
+        text(
+            """
+            select count(*) > 0
+            from pg_attribute
+            where attrelid = 'public.exchange_symbol_versions'::regclass
+              and attname = 'retrieved_at'
+              and not attisdropped
+            """
+        )
+    ).scalar_one()
     if not has_superseded_by:
         raise RuntimeError(
             "exchange_symbol_versions.superseded_by is missing; "
@@ -66,6 +88,16 @@ def upgrade() -> None:
     if not has_max_notional:
         raise RuntimeError(
             "exchange_symbol_versions.max_notional is missing; "
+            "run the Supabase migration first"
+        )
+    if not has_raw_hash:
+        raise RuntimeError(
+            "exchange_symbol_versions.raw_metadata_hash is missing; "
+            "run the Supabase migration first"
+        )
+    if not has_retrieved_at:
+        raise RuntimeError(
+            "exchange_symbol_versions.retrieved_at is missing; "
             "run the Supabase migration first"
         )
 

@@ -3,7 +3,9 @@
 --  - add superseded_by predecessor linkage to exchange_symbol_versions so
 --    immutable version history is navigable;
 --  - add max_quantity and max_notional so the full provider metadata can be
---    version-controlled.
+--    version-controlled;
+--  - add raw_metadata_hash and retrieved_at so the authoritative source
+--    observation is reproducible.
 
 alter table public.exchange_symbol_versions
     add column if not exists superseded_by uuid
@@ -17,3 +19,10 @@ alter table public.exchange_symbol_versions
 
 alter table public.exchange_symbol_versions
     add column if not exists max_notional numeric(38, 18) check (max_notional >= 0);
+
+alter table public.exchange_symbol_versions
+    add column if not exists raw_metadata_hash text
+        check (length(raw_metadata_hash) = 64);
+
+alter table public.exchange_symbol_versions
+    add column if not exists retrieved_at timestamptz;

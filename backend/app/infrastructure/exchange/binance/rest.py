@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -185,7 +186,28 @@ class BinanceRestProvider:
                 break
         if symbol_info is None:
             raise BinanceInvalidSymbolError(f"Unknown symbol {symbol}")
+        raw_hash = hashlib.sha256(
+            json.dumps(symbol_info, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
         metadata = _parse_symbol_metadata(symbol_info)
+        metadata = SymbolMetadata(
+            symbol=metadata.symbol,
+            base_asset=metadata.base_asset,
+            quote_asset=metadata.quote_asset,
+            status=metadata.status,
+            price_precision=metadata.price_precision,
+            quantity_precision=metadata.quantity_precision,
+            min_quantity=metadata.min_quantity,
+            max_quantity=metadata.max_quantity,
+            min_notional=metadata.min_notional,
+            max_notional=metadata.max_notional,
+            tick_size=metadata.tick_size,
+            step_size=metadata.step_size,
+            raw_metadata_hash=raw_hash,
+            retrieved_at=self._clock.now(),
+        )
         self._symbol_metadata_cache[cache_key] = metadata
         return metadata
 
@@ -470,6 +492,10 @@ def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
     if max_notional_raw is not None:
         try:
             max_notional = Decimal(str(max_notional_raw))
+            if not max_notional.is_finite():
+                raise BinanceMalformedDataError(
+                    f"notional maxNotional must be finite, got {max_notional}"
+                )
             if max_notional < 0:
                 raise BinanceMalformedDataError(
                     f"notional maxNotional must be non-negative, got {max_notional}"
@@ -480,35 +506,40 @@ def _parse_symbol_metadata(raw: dict[str, Any]) -> SymbolMetadata:
             ) from exc
     try:
         tick_size = Decimal(str(price_filter.get("tickSize")))
-        if tick_size <= 0:
+        if tick_size <= 0 or not tick_size.is_finite():
             raise BinanceMalformedDataError(
-                f"PRICE_FILTER tickSize must be positive, got {tick_size}"
+                f"PRICE_FILTER tickSize must be positive finite, got {tick_size}"
             )
         price_precision = _decimal_precision(tick_size)
         step_size = Decimal(str(lot_filter.get("stepSize")))
-        if step_size <= 0:
+        if step_size <= 0 or not step_size.is_finite():
             raise BinanceMalformedDataError(
-                f"LOT_SIZE stepSize must be positive, got {step_size}"
+                f"LOT_SIZE stepSize must be positive finite, got {step_size}"
             )
         quantity_precision = _decimal_precision(step_size)
         min_quantity = Decimal(str(lot_filter.get("minQty")))
-        if min_quantity < 0:
+        if min_quantity < 0 or not min_quantity.is_finite():
             raise BinanceMalformedDataError(
-                f"LOT_SIZE minQty must be non-negative, got {min_quantity}"
+                f"LOT_SIZE minQty must be non-negative finite, got {min_quantity}"
             )
         max_quantity = Decimal(str(lot_filter.get("maxQty")))
-        if max_quantity < 0:
+        if max_quantity < 0 or not max_quantity.is_finite():
             raise BinanceMalformedDataError(
-                f"LOT_SIZE maxQty must be non-negative, got {max_quantity}"
+                f"LOT_SIZE maxQty must be non-negative finite, got {max_quantity}"
             )
         if max_quantity < min_quantity:
             raise BinanceMalformedDataError(
                 f"LOT_SIZE maxQty {max_quantity} is less than minQty {min_quantity}"
             )
         min_notional = Decimal(str(notional_filter.get("minNotional")))
-        if min_notional <= 0:
+        if min_notional <= 0 or not min_notional.is_finite():
             raise BinanceMalformedDataError(
-                f"MIN_NOTIONAL minNotional must be positive, got {min_notional}"
+                f"MIN_NOTIONAL minNotional must be positive finite, got {min_notional}"
+            )
+        if max_notional is not None and max_notional < min_notional:
+            raise BinanceMalformedDataError(
+                f"notional maxNotional {max_notional} is less than "
+                f"minNotional {min_notional}"
             )
     except (InvalidOperation, TypeError, ValueError) as exc:
         if isinstance(exc, BinanceMalformedDataError):

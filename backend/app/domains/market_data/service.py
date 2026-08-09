@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -159,87 +160,106 @@ class MarketDataService:
         Returns the canonical symbol_version_id. If the authoritative metadata
         has changed since the last effective version, a new immutable version
         row is inserted and the new ID is returned. The prior effective version
-        is linked via superseded_by.
+        is linked via superseded_by. Concurrent refresh for the same symbol is
+        serialized with a PostgreSQL advisory lock.
         """
         assert_network_call_allowed()
         metadata = await self._provider.get_symbol_metadata(symbol, force_refresh=True)
         metadata_hash = self._compute_symbol_metadata_hash(metadata)
-        now = self._clock.now()
-        row = (
+        raw_hash = metadata.raw_metadata_hash or ""
+        retrieved_at = metadata.retrieved_at or self._clock.now()
+        symbol_key = hash((self._exchange_id, symbol.upper()))
+        lock_acquired = False
+        try:
             self._session.execute(
+                text("select pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": symbol_key},
+            )
+            lock_acquired = True
+            row = (
+                self._session.execute(
+                    text(
+                        """
+                        select id, metadata_hash
+                        from public.exchange_symbol_versions
+                        where exchange_id = :exchange_id
+                          and native_symbol = :native_symbol
+                          and superseded_by is null
+                        order by effective_at desc
+                        limit 1
+                        """
+                    ),
+                    {
+                        "exchange_id": self._exchange_id,
+                        "native_symbol": symbol.upper(),
+                    },
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is not None and row["metadata_hash"] == metadata_hash:
+                self._session.commit()
+                return cast(UUID, row["id"])
+            prior_id = row["id"] if row is not None else None
+            new_id = self._session.execute(
                 text(
                     """
-                    select id, metadata_hash
-                    from public.exchange_symbol_versions
-                    where exchange_id = :exchange_id
-                      and native_symbol = :native_symbol
-                      and superseded_by is null
-                    order by effective_at desc
-                    limit 1
+                    insert into public.exchange_symbol_versions (
+                        exchange_id, native_symbol, base_asset, quote_asset,
+                        status, price_precision, quantity_precision,
+                        tick_size, step_size, min_quantity, max_quantity,
+                        min_notional, max_notional, metadata_hash, effective_at,
+                        superseded_by, raw_metadata_hash, retrieved_at
+                    ) values (
+                        :exchange_id, :native_symbol, :base_asset, :quote_asset,
+                        :status, :price_precision, :quantity_precision,
+                        :tick_size, :step_size, :min_quantity, :max_quantity,
+                        :min_notional, :max_notional, :metadata_hash, :effective_at,
+                        null, :raw_hash, :retrieved_at
+                    )
+                    returning id
                     """
                 ),
                 {
                     "exchange_id": self._exchange_id,
                     "native_symbol": symbol.upper(),
+                    "base_asset": metadata.base_asset,
+                    "quote_asset": metadata.quote_asset,
+                    "status": metadata.status.value,
+                    "price_precision": metadata.price_precision,
+                    "quantity_precision": metadata.quantity_precision,
+                    "tick_size": metadata.tick_size,
+                    "step_size": metadata.step_size,
+                    "min_quantity": metadata.min_quantity,
+                    "max_quantity": metadata.max_quantity,
+                    "min_notional": metadata.min_notional,
+                    "max_notional": metadata.max_notional,
+                    "metadata_hash": metadata_hash,
+                    "effective_at": retrieved_at,
+                    "raw_hash": raw_hash,
+                    "retrieved_at": retrieved_at,
                 },
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if row is not None and row["metadata_hash"] == metadata_hash:
-            return cast(UUID, row["id"])
-        prior_id = row["id"] if row is not None else None
-        new_id = self._session.execute(
-            text(
-                """
-                insert into public.exchange_symbol_versions (
-                    exchange_id, native_symbol, base_asset, quote_asset,
-                    status, price_precision, quantity_precision,
-                    tick_size, step_size, min_quantity, max_quantity,
-                    min_notional, max_notional, metadata_hash, effective_at,
-                    superseded_by
-                ) values (
-                    :exchange_id, :native_symbol, :base_asset, :quote_asset,
-                    :status, :price_precision, :quantity_precision,
-                    :tick_size, :step_size, :min_quantity, :max_quantity,
-                    :min_notional, :max_notional, :metadata_hash, :effective_at,
-                    :prior_id
+            ).scalar_one()
+            if prior_id is not None:
+                self._session.execute(
+                    text(
+                        """
+                        update public.exchange_symbol_versions
+                        set superseded_by = :new_id
+                        where id = :prior_id
+                        """
+                    ),
+                    {"prior_id": prior_id, "new_id": new_id},
                 )
-                returning id
-                """
-            ),
-            {
-                "exchange_id": self._exchange_id,
-                "native_symbol": symbol.upper(),
-                "base_asset": metadata.base_asset,
-                "quote_asset": metadata.quote_asset,
-                "status": metadata.status.value,
-                "price_precision": metadata.price_precision,
-                "quantity_precision": metadata.quantity_precision,
-                "tick_size": metadata.tick_size,
-                "step_size": metadata.step_size,
-                "min_quantity": metadata.min_quantity,
-                "max_quantity": metadata.max_quantity,
-                "min_notional": metadata.min_notional,
-                "max_notional": metadata.max_notional,
-                "metadata_hash": metadata_hash,
-                "effective_at": now,
-                "prior_id": prior_id,
-            },
-        ).scalar_one()
-        if prior_id is not None:
-            self._session.execute(
-                text(
-                    """
-                    update public.exchange_symbol_versions
-                    set superseded_by = :new_id
-                    where id = :prior_id
-                    """
-                ),
-                {"prior_id": prior_id, "new_id": new_id},
-            )
-        self._session.commit()
-        return cast(UUID, new_id)
+            self._session.commit()
+            return cast(UUID, new_id)
+        finally:
+            if lock_acquired:
+                with contextlib.suppress(Exception):
+                    self._session.execute(
+                        text("select pg_advisory_unlock(:lock_key)"),
+                        {"lock_key": symbol_key},
+                    )
 
     async def _validate_symbol_binding(self, symbol: str) -> None:
         """Reject a requested symbol that is not the configured symbol version.
@@ -254,7 +274,7 @@ class MarketDataService:
             self._session.execute(
                 text(
                     """
-                    select native_symbol, exchange_id
+                    select native_symbol, exchange_id, superseded_by
                     from public.exchange_symbol_versions
                     where id = :symbol_version_id
                     """
@@ -283,6 +303,11 @@ class MarketDataService:
                 f"{native_symbol!r} for symbol_version_id "
                 f"{self._symbol_version_id}"
             )
+        if row["superseded_by"] is not None:
+            self._session.commit()
+            canonical_id = await self.refresh_symbol_metadata(symbol)
+            if canonical_id != self._symbol_version_id:
+                self._symbol_version_id = canonical_id
 
     async def backfill(
         self,
