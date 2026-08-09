@@ -47,8 +47,8 @@ from app.infrastructure.exchange.binance.protocol import (
 pytestmark = pytest.mark.database
 
 FIXED_TIME = datetime(2026, 8, 8, 12, 0, 0, tzinfo=timezone.utc)
-SYMBOL_VERSION_ID = UUID("41000000-0000-0000-0000-00000000000A")
-EXCHANGE_ID = UUID("40000000-0000-0000-0000-000000000001")
+SYMBOL_VERSION_ID = UUID("41000000-0000-0000-0000-000000000002")
+EXCHANGE_ID = UUID("40000000-0000-0000-0000-0000000000EF")
 WORKSPACE_ID = UUID("20000000-0000-0000-0000-000000000001")
 SYMBOL = "BTCEUR"
 
@@ -113,6 +113,27 @@ def _clean_m007_rows(engine: Engine) -> None:
         )
         connection.execute(
             text(
+                """
+                delete from public.market_snapshot_candles
+                where snapshot_id in (
+                    select id from public.market_snapshots
+                    where symbol_version_id = :sid
+                )
+                """
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text(
+                """
+                delete from public.market_snapshots
+                where symbol_version_id = :sid
+                """
+            ),
+            {"sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text(
                 "delete from public.workspace_memberships "
                 "where workspace_id in ("
                 "  select id from public.workspaces where name like 'm007-%'"
@@ -135,35 +156,66 @@ def _clean_m007_rows(engine: Engine) -> None:
             {"sid": SYMBOL_VERSION_ID},
         )
         connection.execute(
-            text("delete from public.market_snapshots where symbol_version_id = :sid"),
-            {"sid": SYMBOL_VERSION_ID},
+            text(
+                """
+                delete from public.data_quality_events
+                where exchange_id = :eid
+                  and symbol_version_id = :sid
+                """
+            ),
+            {"eid": EXCHANGE_ID, "sid": SYMBOL_VERSION_ID},
         )
         connection.execute(
             text(
-                "delete from public.candle_corrections where symbol_version_id = :sid"
+                """
+                delete from public.candle_corrections
+                where exchange_id = :eid
+                  and symbol_version_id = :sid
+                """
+            ),
+            {"eid": EXCHANGE_ID, "sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text(
+                """
+                delete from public.market_data_ingestions
+                where exchange_id = :eid
+                  and symbol_version_id = :sid
+                """
+            ),
+            {"eid": EXCHANGE_ID, "sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text(
+                """
+                delete from public.candles
+                where symbol_version_id = :sid
+                """
             ),
             {"sid": SYMBOL_VERSION_ID},
         )
         connection.execute(
             text(
-                "delete from public.data_quality_events where symbol_version_id = :sid"
+                """
+                delete from public.exchange_symbol_versions
+                where id = :sid
+                """
             ),
             {"sid": SYMBOL_VERSION_ID},
         )
         connection.execute(
             text(
-                "delete from public.market_data_ingestions "
-                "where symbol_version_id = :sid"
+                """
+                insert into public.exchanges (
+                    id, code, display_name, data_capability, active, created_at
+                ) values (
+                    :eid, 'M007-TEST', 'M007 Test Exchange', 'public_market_data',
+                    true, timezone('utc', now())
+                )
+                on conflict (id) do nothing
+                """
             ),
-            {"sid": SYMBOL_VERSION_ID},
-        )
-        connection.execute(
-            text("delete from public.candles where symbol_version_id = :sid"),
-            {"sid": SYMBOL_VERSION_ID},
-        )
-        connection.execute(
-            text("delete from public.exchange_symbol_versions where id = :sid"),
-            {"sid": SYMBOL_VERSION_ID},
+            {"eid": EXCHANGE_ID},
         )
         connection.execute(
             text(
@@ -171,12 +223,14 @@ def _clean_m007_rows(engine: Engine) -> None:
                 insert into public.exchange_symbol_versions (
                     id, exchange_id, native_symbol, base_asset, quote_asset,
                     status, price_precision, quantity_precision, tick_size,
-                    step_size, min_quantity, min_notional, metadata_hash,
-                    effective_at
+                    step_size, min_quantity, max_quantity, min_notional,
+                    max_notional, metadata_hash, raw_metadata_hash,
+                    retrieved_at, effective_at
                 ) values (
                     :sid, :eid, 'BTCEUR', 'BTC', 'EUR', 'trading',
-                    2, 6, 0.01, 0.000001, 0.000001, 5,
-                    :md5, timezone('utc', now())
+                    2, 6, 0.01, 0.000001, 0.000001, 9000.000000, 5, null,
+                    :md5, :raw_md5, timezone('utc', now()),
+                    timezone('utc', now())
                 )
                 """
             ),
@@ -184,7 +238,21 @@ def _clean_m007_rows(engine: Engine) -> None:
                 "sid": SYMBOL_VERSION_ID,
                 "eid": EXCHANGE_ID,
                 "md5": "m" * 64,
+                "raw_md5": "r" * 64,
             },
+        )
+        connection.execute(
+            text(
+                """
+                update public.exchange_symbol_versions
+                set superseded_by = :sid
+                where exchange_id = :eid
+                  and native_symbol = 'BTCEUR'
+                  and superseded_by is null
+                  and id != :sid
+                """
+            ),
+            {"eid": EXCHANGE_ID, "sid": SYMBOL_VERSION_ID},
         )
     # Close pooled connections so no session-level advisory lock from a prior
     # run survives into the next test phase.
@@ -2449,12 +2517,14 @@ async def test_symbol_binding_rejects_cross_exchange(
                 insert into public.exchange_symbol_versions (
                     id, exchange_id, native_symbol, base_asset, quote_asset,
                     status, price_precision, quantity_precision, tick_size,
-                    step_size, min_quantity, min_notional, metadata_hash,
-                    effective_at
+                    step_size, min_quantity, max_quantity, min_notional,
+                    max_notional, metadata_hash, raw_metadata_hash,
+                    retrieved_at, effective_at
                 ) values (
                     :sid, :eid, 'BTCEUR', 'BTC', 'EUR', 'trading',
-                    2, 6, 0.01, 0.000001, 0.000001, 5,
-                    :md5, timezone('utc', now())
+                    2, 6, 0.01, 0.000001, 0.000001, 9000.000000, 5, null,
+                    :md5, :raw_md5, timezone('utc', now()),
+                    timezone('utc', now())
                 )
                 """
             ),
@@ -2462,6 +2532,7 @@ async def test_symbol_binding_rejects_cross_exchange(
                 "sid": other_symbol,
                 "eid": other_exchange,
                 "md5": "n" * 64,
+                "raw_md5": "s" * 64,
             },
         )
         session.commit()
