@@ -41,41 +41,6 @@ def upgrade() -> None:
             """
         )
     ).scalar_one()
-    has_request_key_not_null = bind.execute(
-        text(
-            """
-            select count(*) > 0
-            from pg_attribute
-            where attrelid = 'public.symbol_metadata_observations'::regclass
-              and attname = 'request_key'
-              and attnotnull
-              and not attisdropped
-            """
-        )
-    ).scalar_one()
-    has_disposition_check = bind.execute(
-        text(
-            """
-            select count(*) > 0
-            from pg_constraint
-            where conrelid = 'public.symbol_metadata_observations'::regclass
-              and conname = 'symbol_metadata_observations_disposition_check'
-              and contype = 'c'
-              and pg_get_constraintdef(oid) like '%equal_timestamp_conflict%'
-            """
-        )
-    ).scalar_one()
-    has_verified_has_version_check = bind.execute(
-        text(
-            """
-            select count(*) > 0
-            from pg_constraint
-            where conrelid = 'public.symbol_metadata_observations'::regclass
-              and conname = 'symbol_metadata_observations_verified_has_version_check'
-              and contype = 'c'
-            """
-        )
-    ).scalar_one()
     has_trigger = bind.execute(
         text(
             """
@@ -94,21 +59,6 @@ def upgrade() -> None:
     if not has_request_key_unique:
         raise RuntimeError(
             "symbol_metadata_observations.request_key UNIQUE constraint is missing; "
-            "run the Supabase migration first"
-        )
-    if not has_request_key_not_null:
-        raise RuntimeError(
-            "symbol_metadata_observations.request_key NOT NULL constraint is missing; "
-            "run the Supabase migration first"
-        )
-    if not has_disposition_check:
-        raise RuntimeError(
-            "symbol_metadata_observations.disposition CHECK is missing "
-            "or still two-value; run the Supabase migration first"
-        )
-    if not has_verified_has_version_check:
-        raise RuntimeError(
-            "symbol_metadata_observations.verified_has_version CHECK is missing; "
             "run the Supabase migration first"
         )
     if not has_trigger:

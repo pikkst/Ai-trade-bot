@@ -7,6 +7,7 @@ import hashlib
 import json
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterator, cast
 from uuid import UUID
@@ -195,7 +196,31 @@ def _ensure_m007_migration_columns(engine: Engine) -> None:
                     """
                 )
             ).scalar_one()
-            if has_unique:
+            has_not_null = connection.execute(
+                text(
+                    """
+                    select count(*) > 0
+                    from pg_attribute
+                    where attrelid = 'public.symbol_metadata_observations'::regclass
+                      and attname = 'request_key'
+                      and attnotnull
+                      and not attisdropped
+                    """
+                )
+            ).scalar_one()
+            has_verified_check = connection.execute(
+                text(
+                    """
+                    select count(*) > 0
+                    from pg_constraint
+                    where conrelid = 'public.symbol_metadata_observations'::regclass
+                      and conname =
+                          'symbol_metadata_observations_verified_has_version_check'
+                      and contype = 'c'
+                    """
+                )
+            ).scalar_one()
+            if has_unique and has_not_null and has_verified_check:
                 return
 
         repo_root = Path(__file__).resolve().parents[3]
@@ -256,6 +281,66 @@ def _ensure_m007_migration_columns(engine: Engine) -> None:
             / "20260810200000_m007_observation_ledger_canonicalization.sql"
         )
         sql = canonical_path.read_text(encoding="utf-8")
+        statements = []
+        current = []
+        in_dollar = False
+        i = 0
+        while i < len(sql):
+            char = sql[i]
+            if char == "$" and not in_dollar and sql[i : i + 2] == "$$":
+                in_dollar = True
+                current.append("$$")
+                i += 2
+                continue
+            if char == "$" and in_dollar and sql[i : i + 2] == "$$":
+                in_dollar = False
+                current.append("$$")
+                i += 2
+                continue
+            current.append(char)
+            if char == ";" and not in_dollar:
+                stmt = "".join(current).strip()
+                if stmt:
+                    non_comment_lines = [
+                        line
+                        for line in stmt.splitlines()
+                        if not line.strip().startswith("--")
+                    ]
+                    if non_comment_lines:
+                        statements.append(stmt)
+                current = []
+            i += 1
+        if current:
+            stmt = "".join(current).strip()
+            if stmt:
+                non_comment_lines = [
+                    line
+                    for line in stmt.splitlines()
+                    if not line.strip().startswith("--")
+                ]
+                if non_comment_lines:
+                    statements.append(stmt)
+
+        connection.execute(
+            text(
+                """
+                alter table public.symbol_metadata_observations
+                    drop constraint if exists
+                        symbol_metadata_observations_request_key_key
+                """
+            )
+        )
+
+        for stmt in statements:
+            connection.execute(text(stmt))
+
+        hardening_path = (
+            repo_root
+            / "supabase"
+            / "migrations"
+            / "20260810300000_m007_observation_ledger_canonicalization_hardening.sql"
+        )
+        sql = hardening_path.read_text(encoding="utf-8")
         statements = []
         current = []
         in_dollar = False
@@ -1936,10 +2021,34 @@ async def test_same_page_conflict_with_existing_db_candle_fails_closed(
         session.commit()
         provider = FakeBinanceProvider(
             config=FakeBinanceConfig(
-                scenario=FakeBinanceScenario.DUPLICATE_CONFLICT,
+                scenario=FakeBinanceScenario.SUCCESS,
                 fixed_clock_time=FIXED_TIME,
                 fixture_version="2026-08-08-m007-v1",
             )
+        )
+        provider._symbol_metadata["BTCEUR"] = SymbolMetadata(
+            symbol="BTCEUR",
+            base_asset="BTC",
+            quote_asset="EUR",
+            status=SymbolStatus.TRADING,
+            price_precision=2,
+            quantity_precision=6,
+            min_quantity=Decimal("0.00001"),
+            max_quantity=Decimal("9000.00000"),
+            min_notional=Decimal("10.00"),
+            max_notional=None,
+            tick_size=Decimal("0.01"),
+            step_size=Decimal("0.000001"),
+            raw_metadata_hash="a" * 64,
+            retrieved_at=FIXED_TIME,
+            request_evidence={
+                "provider": "fake_binance",
+                "endpoint": "get_symbol_metadata",
+                "symbol": "BTCEUR",
+                "force_refresh": True,
+                "fixture_version": "2026-08-08-m007-v1",
+                "scenario": FakeBinanceScenario.SUCCESS.value,
+            },
         )
         service = MarketDataService(
             session=session,
@@ -4736,8 +4845,33 @@ async def test_upgrade_from_46ded15_schema_converges_safely(
                 text(
                     """
                     alter table public.symbol_metadata_observations
-                        alter column symbol_version_id set not null
+                        add column request_key text not null unique
+                """
+                )
+            )
+            connection.execute(
+                text(
                     """
+                    alter table public.symbol_metadata_observations
+                        add column disposition text not null default 'verified'
+                """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    alter table public.symbol_metadata_observations
+                        add constraint symbol_metadata_observations_disposition_check
+                        check (disposition in ('verified', 'stale_conflict'))
+                """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    alter table public.symbol_metadata_observations
+                        alter column symbol_version_id drop not null
+                """
                 )
             )
             connection.execute(
@@ -4746,11 +4880,11 @@ async def test_upgrade_from_46ded15_schema_converges_safely(
                     insert into public.symbol_metadata_observations (
                         id, symbol_version_id, exchange_id, native_symbol,
                         metadata_hash, raw_metadata_hash, retrieved_at,
-                        observed_at, request_evidence
+                        observed_at, request_evidence, request_key, disposition
                     ) values (
                         :sid, :vid, :eid, :sym,
                         :md5, :raw, :retrieved_at,
-                        :observed_at, :evidence
+                        :observed_at, :evidence, :req_key, 'verified'
                     )
                     on conflict (id) do nothing
                     """
@@ -4767,6 +4901,7 @@ async def test_upgrade_from_46ded15_schema_converges_safely(
                     "retrieved_at": FIXED_TIME - timedelta(hours=1),
                     "observed_at": FIXED_TIME,
                     "evidence": json.dumps({"provider": "test"}),
+                    "req_key": "legacy-key",
                 },
             )
         for stmt in _read_migration_statements(
@@ -4775,6 +4910,10 @@ async def test_upgrade_from_46ded15_schema_converges_safely(
             session.execute(text(stmt))
         for stmt in _read_migration_statements(
             "20260810200000_m007_observation_ledger_canonicalization.sql"
+        ):
+            session.execute(text(stmt))
+        for stmt in _read_migration_statements(
+            "20260810300000_m007_observation_ledger_canonicalization_hardening.sql"
         ):
             session.execute(text(stmt))
         session.commit()
@@ -4795,6 +4934,7 @@ async def test_upgrade_from_46ded15_schema_converges_safely(
         assert len(rows) == 1
         assert rows[0]["disposition"] == "verified"
         assert rows[0]["request_key"] is not None
+        assert rows[0]["request_key"] != "legacy-key"
         session.execute(
             text(
                 """
@@ -5395,6 +5535,30 @@ async def test_legacy_row_unchanged_refresh_does_not_loop(
                 fixed_clock_time=FIXED_TIME,
                 fixture_version="2026-08-08-m007-v1",
             )
+        )
+        provider._symbol_metadata["BTCEUR"] = SymbolMetadata(
+            symbol="BTCEUR",
+            base_asset="BTC",
+            quote_asset="EUR",
+            status=SymbolStatus.TRADING,
+            price_precision=2,
+            quantity_precision=6,
+            min_quantity=Decimal("0.00001"),
+            max_quantity=Decimal("9000.00000"),
+            min_notional=Decimal("10.00"),
+            max_notional=None,
+            tick_size=Decimal("0.01"),
+            step_size=Decimal("0.000001"),
+            raw_metadata_hash="a" * 64,
+            retrieved_at=FIXED_TIME,
+            request_evidence={
+                "provider": "fake_binance",
+                "endpoint": "get_symbol_metadata",
+                "symbol": "BTCEUR",
+                "force_refresh": True,
+                "fixture_version": "2026-08-08-m007-v1",
+                "scenario": FakeBinanceScenario.SUCCESS.value,
+            },
         )
         service = MarketDataService(
             session=session,

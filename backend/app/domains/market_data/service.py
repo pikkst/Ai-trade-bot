@@ -76,6 +76,7 @@ _DEFAULT_INCREMENTAL_OVERLAP_HOURS = 1
 _DEFAULT_INTERVAL = CandleInterval.ONE_HOUR
 _MAX_PAGE_CANDLES = 1000
 _SNAPSHOT_SCHEMA_VERSION = "1.0"
+_CLOCK_DRIFT_TOLERANCE = timedelta(hours=1)
 
 
 class MarketDataService:
@@ -398,20 +399,28 @@ class MarketDataService:
                     request_evidence=request_evidence,
                 )
                 if inserted:
-                    self._session.execute(
-                        text(
-                            """
-                            update public.exchange_symbol_versions
-                            set last_verified_at = greatest(last_verified_at, :now)
-                            where id = :id
-                            """
-                        ),
-                        {"id": row["id"], "now": self._clock.now()},
-                    )
+                    now = self._clock.now()
+                    if now - retrieved_at <= timedelta(
+                        hours=self._metadata_max_age_hours
+                    ):
+                        self._session.execute(
+                            text(
+                                """
+                                update public.exchange_symbol_versions
+                                set last_verified_at = greatest(last_verified_at, :now)
+                                where id = :id
+                                """
+                            ),
+                            {"id": row["id"], "now": retrieved_at},
+                        )
                 self._session.commit()
                 return cast(UUID, row["id"])
             prior_id = row["id"] if row is not None else None
             if prior_id is not None:
+                now = self._clock.now()
+                is_stale = now - retrieved_at > timedelta(
+                    hours=self._metadata_max_age_hours
+                )
                 new_id = self._session.execute(
                     text(
                         """
@@ -427,7 +436,8 @@ class MarketDataService:
                             :status, :price_precision, :quantity_precision,
                             :tick_size, :step_size, :min_quantity, :max_quantity,
                             :min_notional, :max_notional, :metadata_hash, :effective_at,
-                            :prior_id, :raw_hash, :retrieved_at, :retrieved_at
+                            :prior_id, :raw_hash, :retrieved_at,
+                            case when :is_stale then null else :retrieved_at end
                         )
                         returning id
                         """
@@ -451,6 +461,7 @@ class MarketDataService:
                         "prior_id": prior_id,
                         "raw_hash": raw_hash,
                         "retrieved_at": retrieved_at,
+                        "is_stale": is_stale,
                     },
                 ).scalar_one()
                 self._session.execute(
@@ -474,6 +485,10 @@ class MarketDataService:
                     {"new_id": new_id},
                 )
             else:
+                now = self._clock.now()
+                is_stale = now - retrieved_at > timedelta(
+                    hours=self._metadata_max_age_hours
+                )
                 new_id = self._session.execute(
                     text(
                         """
@@ -489,7 +504,8 @@ class MarketDataService:
                             :status, :price_precision, :quantity_precision,
                             :tick_size, :step_size, :min_quantity, :max_quantity,
                             :min_notional, :max_notional, :metadata_hash, :effective_at,
-                            null, :raw_hash, :retrieved_at, :retrieved_at
+                            null, :raw_hash, :retrieved_at,
+                            case when :is_stale then null else :retrieved_at end
                         )
                         returning id
                         """
@@ -512,6 +528,7 @@ class MarketDataService:
                         "effective_at": retrieved_at,
                         "raw_hash": raw_hash,
                         "retrieved_at": retrieved_at,
+                        "is_stale": is_stale,
                     },
                 ).scalar_one()
             inserted = self._record_metadata_observation(
@@ -595,7 +612,7 @@ class MarketDataService:
         if (
             last_verified_at is None
             or (now - last_verified_at > timedelta(hours=self._metadata_max_age_hours))
-            or (last_verified_at - now > timedelta(hours=self._metadata_max_age_hours))
+            or (last_verified_at - now > _CLOCK_DRIFT_TOLERANCE)
         ):
             self._session.rollback()
             canonical_id = await self.refresh_symbol_metadata(symbol)

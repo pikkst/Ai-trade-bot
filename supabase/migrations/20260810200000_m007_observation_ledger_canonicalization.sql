@@ -1,9 +1,8 @@
--- M007 observation-ledger canonicalization and provenance hardening.
+-- M007 observation-ledger repair and provenance hardening.
 -- Forward migration from the 20260810120000 state to the current shape:
 --  - canonicalize existing request_keys to the DB function algorithm;
 --  - neutralize synthetic freshness evidence for legacy_unavailable rows;
---  - enforce observation-to-version identity at the DB boundary;
---  - normalize disposition CHECK and observation invariants.
+--  - enforce observation-to-version identity at the DB boundary.
 
 -- ============================================================================
 -- 1. Canonicalize existing request_keys.
@@ -52,7 +51,7 @@ select encode(
                 'exchange_id', p_exchange_id::text,
                 'raw_metadata_hash', p_raw_metadata_hash,
                 'request', public.jsonb_sort_keys(p_request_evidence),
-                'retrieved_at', to_char(p_retrieved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US'),
+                'retrieved_at', regexp_replace(replace(p_retrieved_at::text, ' ', 'T'), '([+-])(\d{2})(\d{2})$', '\1\2:\3'),
                 'symbol', upper(p_native_symbol)
             )::text,
             'UTF8'
@@ -98,44 +97,15 @@ end
 from collision_groups cg
 where o.id = cg.id;
 
--- State-aware request_key UNIQUE and NOT NULL constraints.
+-- State-aware request_key UNIQUE constraint.
 alter table public.symbol_metadata_observations
     drop constraint if exists symbol_metadata_observations_request_key_key;
 
 alter table public.symbol_metadata_observations
     add constraint symbol_metadata_observations_request_key_key unique (request_key);
 
-alter table public.symbol_metadata_observations
-    alter column request_key set not null;
-
 -- ============================================================================
--- 2. Normalize disposition CHECK and observation invariants.
--- ============================================================================
-
--- Drop any existing disposition CHECK (old two-value or new three-value)
--- and recreate the canonical three-value contract. This handles the
--- 46ded15 -> 101200 -> 102000 path where the old two-value CHECK survived.
-alter table public.symbol_metadata_observations
-    drop constraint if exists symbol_metadata_observations_disposition_check;
-
-alter table public.symbol_metadata_observations
-    add constraint symbol_metadata_observations_disposition_check
-    check (disposition in ('verified', 'stale_conflict', 'equal_timestamp_conflict'));
-
--- Verified and equal_timestamp_conflict observations must reference a version;
--- stale_conflict observations may have a NULL resolved version.
-alter table public.symbol_metadata_observations
-    drop constraint if exists symbol_metadata_observations_verified_has_version_check;
-
-alter table public.symbol_metadata_observations
-    add constraint symbol_metadata_observations_verified_has_version_check
-    check (
-        disposition = 'stale_conflict'
-        or symbol_version_id is not null
-    );
-
--- ============================================================================
--- 3. Neutralize synthetic freshness evidence for legacy rows.
+-- 2. Neutralize synthetic freshness evidence for legacy rows.
 -- ============================================================================
 
 -- Detect fabricated legacy evidence injected by the restored
@@ -167,7 +137,7 @@ where source_evidence_state = 'legacy_unavailable'
   and last_verified_at = retrieved_at;
 
 -- ============================================================================
--- 4. Enforce observation-to-version identity at the DB boundary.
+-- 3. Enforce observation-to-version identity at the DB boundary.
 -- ============================================================================
 
 -- equal_timestamp_conflict observations document a deliberate hash mismatch
