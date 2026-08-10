@@ -196,7 +196,9 @@ class MockSession:
                     "exchange_id": str(params["exchange_id"]),
                     "symbol": params["native_symbol"],
                     "raw_metadata_hash": params["raw_hash"],
-                    "retrieved_at": params["retrieved_at"].isoformat(),
+                    "retrieved_at": params["retrieved_at"]
+                    .astimezone(timezone.utc)
+                    .strftime("%Y-%m-%dT%H:%M:%S.%f"),
                 },
                 sort_keys=True,
                 separators=(",", ":"),

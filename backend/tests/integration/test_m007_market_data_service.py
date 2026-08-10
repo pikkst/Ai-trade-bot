@@ -14,7 +14,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.core.clock import FixedClock
@@ -3898,7 +3898,7 @@ async def test_unchanged_refresh_does_not_advance_last_verified_at(
         if service._symbol_version_id != initial_id:
             service._symbol_version_id = initial_id
 
-        stale_time = FIXED_TIME + timedelta(hours=25)
+        newer_time = FIXED_TIME + timedelta(hours=1)
         session.execute(
             text(
                 """
@@ -3907,7 +3907,7 @@ async def test_unchanged_refresh_does_not_advance_last_verified_at(
                 where id = :id
                 """
             ),
-            {"id": initial_id, "t": stale_time},
+            {"id": initial_id, "t": newer_time},
         )
         session.commit()
 
@@ -3929,7 +3929,7 @@ async def test_unchanged_refresh_does_not_advance_last_verified_at(
             .mappings()
             .one()
         )
-        assert new_verified["last_verified_at"] == stale_time
+        assert new_verified["last_verified_at"] == newer_time
         assert provider._request_count == 1
 
         provider._request_count = 0
@@ -4662,8 +4662,39 @@ async def test_upgrade_from_46ded15_schema_converges_safely(
             connection.execute(
                 text(
                     """
-                    alter table public.symbol_metadata_observations
-                        add column if not exists request_key text not null unique
+                    delete from public.symbol_metadata_observations
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    drop trigger if exists
+                        symbol_metadata_observations_version_identity_trg
+                        on public.symbol_metadata_observations
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    drop function if exists
+                        public.validate_observation_version_identity()
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    drop function if exists
+                        public.compute_metadata_request_key()
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    drop function if exists public.jsonb_sort_keys()
                     """
                 )
             )
@@ -4671,9 +4702,41 @@ async def test_upgrade_from_46ded15_schema_converges_safely(
                 text(
                     """
                     alter table public.symbol_metadata_observations
-                        add column if not exists disposition
-                            text not null default 'verified'
-                            check (disposition in ('verified', 'stale_conflict'))
+                        drop constraint if exists
+                            symbol_metadata_observations_request_key_key
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    alter table public.symbol_metadata_observations
+                        drop column if exists request_key
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    alter table public.symbol_metadata_observations
+                        drop constraint if exists
+                            symbol_metadata_observations_disposition_check
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    alter table public.symbol_metadata_observations
+                        drop column if exists disposition
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    alter table public.symbol_metadata_observations
+                        alter column symbol_version_id set not null
                     """
                 )
             )
@@ -4683,12 +4746,13 @@ async def test_upgrade_from_46ded15_schema_converges_safely(
                     insert into public.symbol_metadata_observations (
                         id, symbol_version_id, exchange_id, native_symbol,
                         metadata_hash, raw_metadata_hash, retrieved_at,
-                        observed_at, request_evidence, request_key, disposition
+                        observed_at, request_evidence
                     ) values (
                         :sid, :vid, :eid, :sym,
                         :md5, :raw, :retrieved_at,
-                        :observed_at, :evidence, :req_key, 'verified'
+                        :observed_at, :evidence
                     )
+                    on conflict (id) do nothing
                     """
                 ),
                 {
@@ -4703,7 +4767,6 @@ async def test_upgrade_from_46ded15_schema_converges_safely(
                     "retrieved_at": FIXED_TIME - timedelta(hours=1),
                     "observed_at": FIXED_TIME,
                     "evidence": json.dumps({"provider": "test"}),
-                    "req_key": "legacy-key",
                 },
             )
         for stmt in _read_migration_statements(
@@ -4731,6 +4794,36 @@ async def test_upgrade_from_46ded15_schema_converges_safely(
         )
         assert len(rows) == 1
         assert rows[0]["disposition"] == "verified"
+        assert rows[0]["request_key"] is not None
+        session.execute(
+            text(
+                """
+                insert into public.symbol_metadata_observations (
+                    request_key, symbol_version_id, exchange_id, native_symbol,
+                    disposition, metadata_hash, raw_metadata_hash,
+                    retrieved_at, observed_at, request_evidence
+                ) values (
+                    :req_key, :vid, :eid, :sym,
+                    'equal_timestamp_conflict', :md5, :raw, :retrieved_at,
+                    :observed_at, :evidence
+                )
+                """
+            ),
+            {
+                "req_key": "upgrade-conflict-key",
+                "vid": SYMBOL_VERSION_ID,
+                "eid": EXCHANGE_ID,
+                "sym": SYMBOL,
+                "md5": (
+                    "a38e91f5386eb1a1d6f898005b1f07efb24b58d411acaf1a064b20e065aca4dd"
+                ),
+                "raw": "b" * 64,
+                "retrieved_at": FIXED_TIME - timedelta(hours=1),
+                "observed_at": FIXED_TIME,
+                "evidence": json.dumps({"provider": "test"}),
+            },
+        )
+        session.commit()
     finally:
         session.close()
 
@@ -5098,4 +5191,246 @@ async def test_equal_timestamp_conflict_rejects_cross_symbol_version(
                 },
             )
     finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_request_key_not_null_after_canonicalization(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """After canonicalization, NULL request_key inserts are rejected."""
+    session = build_session_factory(database_engine)()
+    try:
+        version_id = UUID("90000000-0000-0000-0000-000000000050")
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    insert into public.exchange_symbol_versions (
+                        id, exchange_id, native_symbol, base_asset, quote_asset,
+                        status, price_precision, quantity_precision, tick_size,
+                        step_size, min_quantity, max_quantity, min_notional,
+                        max_notional, metadata_hash, effective_at,
+                        superseded_by, raw_metadata_hash, retrieved_at,
+                        last_verified_at
+                    ) values (
+                        :sid, :eid, 'ETHBTC', 'ETH', 'BTC', 'trading',
+                        2, 6, 0.01, 0.000001, 0.000001, 9000.000000, 5, null,
+                        :md5, :effective_at,
+                        null, :raw, :retrieved_at,
+                        :effective_at
+                    )
+                    on conflict (id) do nothing
+                    """
+                ),
+                {
+                    "sid": version_id,
+                    "eid": EXCHANGE_ID,
+                    "md5": "a" * 64,
+                    "raw": "b" * 64,
+                    "effective_at": FIXED_TIME,
+                    "retrieved_at": FIXED_TIME,
+                },
+            )
+        with pytest.raises(IntegrityError, match='null value in column "request_key"'):
+            session.execute(
+                text(
+                    """
+                    insert into public.symbol_metadata_observations (
+                        symbol_version_id, exchange_id, native_symbol,
+                        disposition, metadata_hash, raw_metadata_hash,
+                        retrieved_at, observed_at, request_evidence
+                    ) values (
+                        :vid, :eid, :sym,
+                        'verified', :md5, :raw, :retrieved_at,
+                        :observed_at, :evidence
+                    )
+                    """
+                ),
+                {
+                    "vid": version_id,
+                    "eid": EXCHANGE_ID,
+                    "sym": "ETHBTC",
+                    "md5": "a" * 64,
+                    "raw": "b" * 64,
+                    "retrieved_at": FIXED_TIME,
+                    "observed_at": FIXED_TIME,
+                    "evidence": json.dumps({"provider": "test"}),
+                },
+            )
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_verified_observation_requires_symbol_version(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """A verified observation cannot be persisted without a symbol version."""
+    session = build_session_factory(database_engine)()
+    try:
+        with pytest.raises(IntegrityError, match="verified_has_version_check"):
+            session.execute(
+                text(
+                    """
+                    insert into public.symbol_metadata_observations (
+                        request_key, symbol_version_id, exchange_id, native_symbol,
+                        disposition, metadata_hash, raw_metadata_hash,
+                        retrieved_at, observed_at, request_evidence
+                    ) values (
+                        :req_key, null, :eid, :sym,
+                        'verified', :md5, :raw, :retrieved_at,
+                        :observed_at, :evidence
+                    )
+                    """
+                ),
+                {
+                    "req_key": "no-version-key",
+                    "eid": EXCHANGE_ID,
+                    "sym": SYMBOL,
+                    "md5": "a" * 64,
+                    "raw": "b" * 64,
+                    "retrieved_at": FIXED_TIME,
+                    "observed_at": FIXED_TIME,
+                    "evidence": json.dumps({"provider": "test"}),
+                },
+            )
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_equal_timestamp_conflict_requires_symbol_version(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """An equal_timestamp_conflict observation cannot be persisted without a
+    symbol version."""
+    session = build_session_factory(database_engine)()
+    try:
+        with pytest.raises(IntegrityError, match="verified_has_version_check"):
+            session.execute(
+                text(
+                    """
+                    insert into public.symbol_metadata_observations (
+                        request_key, symbol_version_id, exchange_id, native_symbol,
+                        disposition, metadata_hash, raw_metadata_hash,
+                        retrieved_at, observed_at, request_evidence
+                    ) values (
+                        :req_key, null, :eid, :sym,
+                        'equal_timestamp_conflict', :md5, :raw, :retrieved_at,
+                        :observed_at, :evidence
+                    )
+                    """
+                ),
+                {
+                    "req_key": "conflict-no-version-key",
+                    "eid": EXCHANGE_ID,
+                    "sym": SYMBOL,
+                    "md5": "a" * 64,
+                    "raw": "b" * 64,
+                    "retrieved_at": FIXED_TIME,
+                    "observed_at": FIXED_TIME,
+                    "evidence": json.dumps({"provider": "test"}),
+                },
+            )
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_legacy_row_unchanged_refresh_does_not_loop(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """A legacy_unavailable version that gets an unchanged authoritative refresh
+    records genuine observation evidence and does not force another refresh on
+    the next binding validation."""
+    session = build_session_factory(database_engine)()
+    try:
+        legacy_id = UUID("90000000-0000-0000-0000-000000000040")
+        legacy_exchange_id = UUID("50000000-0000-0000-0000-000000000001")
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    insert into public.exchanges
+                        (id, code, display_name, data_capability, active)
+                    values (:eid, 'LEGACY', 'Legacy Exchange', 'spot', true)
+                    on conflict (id) do nothing
+                    """
+                ),
+                {"eid": legacy_exchange_id},
+            )
+            connection.execute(
+                text(
+                    """
+                    insert into public.exchange_symbol_versions (
+                        id, exchange_id, native_symbol, base_asset, quote_asset,
+                        status, price_precision, quantity_precision, tick_size,
+                        step_size, min_quantity, max_quantity, min_notional,
+                        max_notional, metadata_hash, effective_at,
+                        superseded_by, raw_metadata_hash, retrieved_at,
+                        last_verified_at, source_evidence_state
+                    ) values (
+                        :sid, :eid, 'BTCEUR', 'BTC', 'EUR', 'trading',
+                        2, 6, 0.01, 0.000001, 0.000001, 9000.000000, 5, null,
+                        :md5, :effective_at,
+                        null, :md5, :effective_at,
+                        :effective_at, 'legacy_unavailable'
+                    )
+                    on conflict (id) do nothing
+                    """
+                ),
+                {
+                    "sid": legacy_id,
+                    "eid": legacy_exchange_id,
+                    "md5": (
+                        "a38e91f5386eb1a1d6f898005b1f07efb24b58d411acaf1a064b20e065aca4dd"
+                    ),
+                    "effective_at": FIXED_TIME - timedelta(hours=25),
+                },
+            )
+        provider = FakeBinanceProvider(
+            config=FakeBinanceConfig(
+                scenario=FakeBinanceScenario.SUCCESS,
+                fixed_clock_time=FIXED_TIME,
+                fixture_version="2026-08-08-m007-v1",
+            )
+        )
+        service = MarketDataService(
+            session=session,
+            provider=BoundaryAssertingProvider(provider, session),
+            workspace_id=WORKSPACE_ID,
+            exchange_id=legacy_exchange_id,
+            symbol_version_id=legacy_id,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+            metadata_max_age_hours=24,
+        )
+        call_count = 0
+        original_get_symbol_metadata = provider.get_symbol_metadata
+
+        async def counting_get_symbol_metadata(
+            symbol: str, **kwargs: Any
+        ) -> SymbolMetadata:
+            nonlocal call_count
+            call_count += 1
+            return await original_get_symbol_metadata(symbol, **kwargs)
+
+        provider.get_symbol_metadata = counting_get_symbol_metadata  # type: ignore[method-assign]
+        await service._validate_symbol_binding(SYMBOL)
+        assert call_count == 1
+        call_count = 0
+        await service._validate_symbol_binding(SYMBOL)
+        assert call_count == 0
+    finally:
+        with database_engine.begin() as cleanup_conn:
+            cleanup_conn.execute(
+                text(
+                    """
+                    delete from public.symbol_metadata_observations
+                    where symbol_version_id = :vid
+                    """
+                ),
+                {"vid": legacy_id},
+            )
         session.close()

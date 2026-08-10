@@ -182,7 +182,9 @@ class MarketDataService:
                 "exchange_id": str(self._exchange_id),
                 "symbol": symbol.upper(),
                 "raw_metadata_hash": raw_hash,
-                "retrieved_at": retrieved_at.isoformat(),
+                "retrieved_at": retrieved_at.astimezone(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%S.%f"
+                ),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -404,7 +406,7 @@ class MarketDataService:
                             where id = :id
                             """
                         ),
-                        {"id": row["id"], "now": retrieved_at},
+                        {"id": row["id"], "now": self._clock.now()},
                     )
                 self._session.commit()
                 return cast(UUID, row["id"])
@@ -531,7 +533,7 @@ class MarketDataService:
                         where id = :id
                         """
                     ),
-                    {"id": new_id, "now": retrieved_at},
+                    {"id": new_id, "now": self._clock.now()},
                 )
             self._session.commit()
             return cast(UUID, new_id)
@@ -564,7 +566,7 @@ class MarketDataService:
             .one_or_none()
         )
         if row is None:
-            self._session.commit()
+            self._session.rollback()
             canonical_id = await self.refresh_symbol_metadata(symbol)
             if canonical_id != self._symbol_version_id:
                 self._symbol_version_id = canonical_id
@@ -583,21 +585,19 @@ class MarketDataService:
                 f"{self._symbol_version_id}"
             )
         if row["superseded_by"] is not None:
-            self._session.commit()
+            self._session.rollback()
             canonical_id = await self.refresh_symbol_metadata(symbol)
             if canonical_id != self._symbol_version_id:
                 self._symbol_version_id = canonical_id
             return
         last_verified_at = row.get("last_verified_at") or row.get("retrieved_at")
+        now = self._clock.now()
         if (
-            row.get("source_evidence_state") != "observed"
-            or last_verified_at is None
-            or (
-                self._clock.now() - last_verified_at
-                > timedelta(hours=self._metadata_max_age_hours)
-            )
+            last_verified_at is None
+            or (now - last_verified_at > timedelta(hours=self._metadata_max_age_hours))
+            or (last_verified_at - now > timedelta(hours=self._metadata_max_age_hours))
         ):
-            self._session.commit()
+            self._session.rollback()
             canonical_id = await self.refresh_symbol_metadata(symbol)
             if canonical_id != self._symbol_version_id:
                 self._symbol_version_id = canonical_id
