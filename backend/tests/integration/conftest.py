@@ -52,10 +52,10 @@ def _ensure_m007_migration_columns(engine: Engine) -> None:
                 i += 2
                 continue
             if char == "$" and in_dollar and sql[i : i + 2] == "$$":
-                    in_dollar = False
-                    current.append("$$")
-                    i += 2
-                    continue
+                in_dollar = False
+                current.append("$$")
+                i += 2
+                continue
             current.append(char)
             if char == ";" and not in_dollar:
                 stmt = "".join(current).strip()

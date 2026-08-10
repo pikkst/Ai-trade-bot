@@ -129,9 +129,7 @@ def _read_migration_statements(filename: str) -> list[str]:
         stmt = "".join(current).strip()
         if stmt:
             non_comment_lines = [
-                line
-                for line in stmt.splitlines()
-                if not line.strip().startswith("--")
+                line for line in stmt.splitlines() if not line.strip().startswith("--")
             ]
             if non_comment_lines:
                 statements.append(stmt)
