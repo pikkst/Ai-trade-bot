@@ -170,14 +170,16 @@ class MarketDataService:
         """Deterministic observation/request identity for idempotent delivery.
 
         The key binds the bounded canonical request identity to the source
-        observation (raw hash + retrieval time). Exact replay or duplicate
-        delivery of the same request+source observation produces the same key,
-        while a genuinely new refresh attempt (different retrieval time or raw
-        payload) produces a new key.
+        observation (raw hash + retrieval time) and the exchange identity so
+        identical observations on different exchanges remain distinct. Exact
+        replay or duplicate delivery of the same request+source observation
+        produces the same key, while a genuinely new refresh attempt
+        (different retrieval time or raw payload) produces a new key.
         """
         canonical = json.dumps(
             {
                 "request": request_evidence,
+                "exchange_id": str(self._exchange_id),
                 "symbol": symbol.upper(),
                 "raw_metadata_hash": raw_hash,
                 "retrieved_at": retrieved_at.isoformat(),
@@ -198,25 +200,17 @@ class MarketDataService:
         observed_at: datetime,
         disposition: str = "verified",
         request_evidence: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> bool:
         """Persist one immutable bounded raw observation.
 
-        Every refresh (changed, unchanged, or discarded stale conflict)
-        records the raw hash, retrieval time, and canonical request evidence
-        so the source observation can be reproduced. The row is append-only
-        and keyed by a deterministic request_key so duplicate delivery is a
-        no-op.
-
-        A verified observation is linked to the exact symbol version it
-        verified and its metadata_hash must equal that version's hash; a
-        stale_conflict observation is linked to the matching historical
-        version when one exists, otherwise it is stored without a version.
+        Returns True if a new row was inserted, False if the request_key
+        collided with an existing observation (duplicate replay).
         """
         evidence = request_evidence or {"provider": type(self._provider).__name__}
         request_key = self._metadata_request_key(
             symbol, evidence, raw_hash, retrieved_at
         )
-        self._session.execute(
+        result = self._session.execute(
             text(
                 """
                 insert into public.symbol_metadata_observations (
@@ -244,6 +238,7 @@ class MarketDataService:
                 "request_evidence": json.dumps(evidence),
             },
         )
+        return bool(result.rowcount)
 
     def _resolve_observation_version(
         self,
@@ -251,40 +246,33 @@ class MarketDataService:
         metadata_hash: str,
         event_time: datetime,
     ) -> UUID | None:
-        """Return the version whose metadata_hash matches and whose effective
-        window contains event_time, or None if no such version exists.
+        """Return the version effective at event_time whose metadata_hash
+        matches the observation, or None if no such version exists.
 
-        Used to link a discarded stale observation to the exact historical
-        version it describes (when one exists) instead of the version it did
-        not verify.
+        This proves the matched version was actually authoritative for the
+        observation's time window, instead of merely being the latest
+        historical version with the same hash.
         """
+        effective_id = self._resolve_effective_symbol_version(symbol, event_time)
+        if effective_id is None:
+            return None
         row = (
             self._session.execute(
                 text(
                     """
-                    select id
+                    select metadata_hash
                     from public.exchange_symbol_versions
-                    where exchange_id = :exchange_id
-                      and native_symbol = :native_symbol
-                      and metadata_hash = :metadata_hash
-                      and effective_at <= :event_time
-                    order by effective_at desc
-                    limit 1
+                    where id = :id
                     """
                 ),
-                {
-                    "exchange_id": self._exchange_id,
-                    "native_symbol": symbol.upper(),
-                    "metadata_hash": metadata_hash,
-                    "event_time": event_time,
-                },
+                {"id": effective_id},
             )
             .mappings()
             .one_or_none()
         )
-        if row is None:
+        if row is None or row["metadata_hash"] != metadata_hash:
             return None
-        return cast(UUID, row["id"])
+        return effective_id
 
     async def refresh_symbol_metadata(self, symbol: str) -> UUID:
         """Fetch, normalize, hash, and persist/version symbol metadata.
@@ -376,11 +364,17 @@ class MarketDataService:
                 and row["metadata_hash"] != metadata_hash
                 and retrieved_at == cast(datetime, row["effective_at"])
             ):
-                # Equal-timestamp conflicting payload: the local adapter clock
-                # provides no process-independent ordering between two
-                # different payloads observed at the same time. Fail closed
-                # with a deterministic conflict instead of guessing which
-                # payload is authoritative.
+                self._record_metadata_observation(
+                    row["id"],
+                    symbol,
+                    metadata_hash=metadata_hash,
+                    raw_hash=raw_hash,
+                    retrieved_at=retrieved_at,
+                    observed_at=observed_at,
+                    disposition="equal_timestamp_conflict",
+                    request_evidence=request_evidence,
+                )
+                self._session.commit()
                 raise MetadataObservationConflictError(
                     "conflicting symbol metadata observed at the same "
                     f"retrieved_at {retrieved_at.isoformat()} for "
@@ -388,7 +382,7 @@ class MarketDataService:
                     "no process-independent ordering exists"
                 )
             if row is not None and row["metadata_hash"] == metadata_hash:
-                self._record_metadata_observation(
+                inserted = self._record_metadata_observation(
                     row["id"],
                     symbol,
                     metadata_hash=metadata_hash,
@@ -398,16 +392,17 @@ class MarketDataService:
                     disposition="verified",
                     request_evidence=request_evidence,
                 )
-                self._session.execute(
-                    text(
-                        """
-                        update public.exchange_symbol_versions
-                        set last_verified_at = :now
-                        where id = :id
-                        """
-                    ),
-                    {"id": row["id"], "now": observed_at},
-                )
+                if inserted:
+                    self._session.execute(
+                        text(
+                            """
+                            update public.exchange_symbol_versions
+                            set last_verified_at = :now
+                            where id = :id
+                            """
+                        ),
+                        {"id": row["id"], "now": retrieved_at},
+                    )
                 self._session.commit()
                 return cast(UUID, row["id"])
             prior_id = row["id"] if row is not None else None
@@ -514,7 +509,7 @@ class MarketDataService:
                         "retrieved_at": retrieved_at,
                     },
                 ).scalar_one()
-            self._record_metadata_observation(
+            inserted = self._record_metadata_observation(
                 new_id,
                 symbol,
                 metadata_hash=metadata_hash,
@@ -524,6 +519,17 @@ class MarketDataService:
                 disposition="verified",
                 request_evidence=request_evidence,
             )
+            if inserted:
+                self._session.execute(
+                    text(
+                        """
+                        update public.exchange_symbol_versions
+                        set last_verified_at = :now
+                        where id = :id
+                        """
+                    ),
+                    {"id": new_id, "now": retrieved_at},
+                )
             self._session.commit()
             return cast(UUID, new_id)
         except Exception:

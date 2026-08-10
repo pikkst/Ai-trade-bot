@@ -17,7 +17,7 @@ major_version = 15
 
 [db.migrations]
 enabled = true
-schema_paths = []
+schema_paths = ["./migrations"]
 
 [db.seed]
 enabled = true

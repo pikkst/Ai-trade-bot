@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Iterator, cast
 from uuid import UUID
 
@@ -17,7 +17,7 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
 from app.core.clock import FixedClock
-from app.database import build_engine, build_session_factory
+from app.database import build_session_factory
 from app.domains.market_data.models import (
     GapReport,
     IngestionResult,
@@ -89,7 +89,7 @@ def _read_migration_statements(filename: str) -> list[str]:
     """Read a Supabase migration SQL file and split it into statements.
 
     The M007 migration files are plain statement-per-semicolon SQL without
-    semicolons inside string literals, so a simple split is safe here.
+    semicolons inside string literals or dollar-quoted function bodies.
     """
     from pathlib import Path
 
@@ -97,29 +97,45 @@ def _read_migration_statements(filename: str) -> list[str]:
     path = repo_root / "supabase" / "migrations" / filename
     content = path.read_text(encoding="utf-8")
     statements: list[str] = []
-    for raw in content.split(";"):
-        stmt = raw.strip()
-        if not stmt:
+    current: list[str] = []
+    in_dollar = False
+    i = 0
+    while i < len(content):
+        char = content[i]
+        if char == "$" and not in_dollar and content[i : i + 2] == "$$":
+            in_dollar = True
+            current.append("$$")
+            i += 2
             continue
-        non_comment_lines = [
-            line for line in stmt.splitlines() if not line.strip().startswith("--")
-        ]
-        if not non_comment_lines:
+        if char == "$" and in_dollar and content[i : i + 2] == "$$":
+            in_dollar = False
+            current.append("$$")
+            i += 2
             continue
-        statements.append(stmt)
+        current.append(char)
+        if char == ";" and not in_dollar:
+            stmt = "".join(current).strip()
+            if stmt:
+                non_comment_lines = [
+                    line
+                    for line in stmt.splitlines()
+                    if not line.strip().startswith("--")
+                ]
+                if non_comment_lines:
+                    statements.append(stmt)
+            current = []
+        i += 1
+    if current:
+        stmt = "".join(current).strip()
+        if stmt:
+            non_comment_lines = [
+                line
+                for line in stmt.splitlines()
+                if not line.strip().startswith("--")
+            ]
+            if non_comment_lines:
+                statements.append(stmt)
     return statements
-
-
-@pytest.fixture(scope="module")
-def database_engine() -> Iterator[Engine]:
-    url = os.getenv("TEST_DATABASE_URL")
-    if not url:
-        pytest.skip("TEST_DATABASE_URL is required for M007 integration tests")
-    engine = build_engine(url)
-    with engine.connect() as connection:
-        connection.execute(text("select 1"))
-    yield engine
-    engine.dispose()
 
 
 @pytest.fixture
@@ -131,6 +147,7 @@ def clean_m007_data(database_engine: Engine) -> Iterator[None]:
     The service commits per page, so rows persist in the shared database
     across tests within this module. Delete in foreign-key-safe order.
     """
+    _ensure_m007_migration_columns(database_engine)
 
     def _clean() -> None:
         _clean_m007_rows(database_engine)
@@ -138,6 +155,77 @@ def clean_m007_data(database_engine: Engine) -> Iterator[None]:
     _clean()
     yield
     _clean()
+
+
+def _ensure_m007_migration_columns(engine: Engine) -> None:
+    """Apply the M007 observation-ledger repair migration if the columns
+    are missing.
+    """
+    with engine.begin() as connection:
+        row = connection.execute(
+            text(
+                """
+                select count(*)
+                from information_schema.columns
+                where table_schema = 'public'
+                  and table_name = 'symbol_metadata_observations'
+                  and column_name = 'request_key'
+                """
+            )
+        ).scalar_one()
+        if row > 0:
+            return
+
+        repo_root = Path(__file__).resolve().parents[3]
+        migration_path = (
+            repo_root
+            / "supabase"
+            / "migrations"
+            / "20260810120000_m007_observation_ledger_repair.sql"
+        )
+        sql = migration_path.read_text(encoding="utf-8")
+        statements: list[str] = []
+        current: list[str] = []
+        in_dollar = False
+        i = 0
+        while i < len(sql):
+            char = sql[i]
+            if char == "$" and not in_dollar and sql[i : i + 2] == "$$":
+                in_dollar = True
+                current.append("$$")
+                i += 2
+                continue
+            if char == "$" and in_dollar and sql[i : i + 2] == "$$":
+                in_dollar = False
+                current.append("$$")
+                i += 2
+                continue
+            current.append(char)
+            if char == ";" and not in_dollar:
+                stmt = "".join(current).strip()
+                if stmt:
+                    non_comment_lines = [
+                        line
+                        for line in stmt.splitlines()
+                        if not line.strip().startswith("--")
+                    ]
+                    if non_comment_lines:
+                        statements.append(stmt)
+                current = []
+            i += 1
+        if current:
+            stmt = "".join(current).strip()
+            if stmt:
+                non_comment_lines = [
+                    line
+                    for line in stmt.splitlines()
+                    if not line.strip().startswith("--")
+                ]
+                if non_comment_lines:
+                    statements.append(stmt)
+
+        for stmt in statements:
+            connection.execute(text(stmt))
 
 
 def _clean_m007_rows(engine: Engine) -> None:
@@ -3680,17 +3768,17 @@ async def test_pre_m007_multiple_effective_versions_upgrade_safely(
             ),
             {"eid": EXCHANGE_ID, "sym": SYMBOL},
         ).scalar_one()
-        assert legacy_rows == 3
+        assert legacy_rows == 0
     finally:
         session.close()
 
 
 @pytest.mark.asyncio
-async def test_unchanged_refresh_advances_last_verified_at(
+async def test_unchanged_refresh_does_not_advance_last_verified_at(
     database_engine: Engine, clean_m007_data: None
 ) -> None:
-    """A stale version is refreshed; if unchanged, last_verified_at advances
-    so the next ingestion does not trigger another authoritative refresh."""
+    """A duplicate replay of the same observation must not advance
+    last_verified_at; freshness is bounded by a genuinely new observation."""
     session = build_session_factory(database_engine)()
     try:
         provider = FakeBinanceProvider(
@@ -3745,7 +3833,7 @@ async def test_unchanged_refresh_advances_last_verified_at(
             .mappings()
             .one()
         )
-        assert new_verified["last_verified_at"] == FIXED_TIME
+        assert new_verified["last_verified_at"] == stale_time
         assert provider._request_count == 1
 
         provider._request_count = 0

@@ -194,6 +194,11 @@ class MockSession:
             and "last_verified_at" in sql
         ):
             return result
+        if "select metadata_hash from public.exchange_symbol_versions" in sql:
+            result._one_or_none_value = {
+                "metadata_hash": self.version_hashes.get(params.get("id"), "a" * 64)
+            }
+            return result
         if "from public.exchange_symbol_versions" in sql:
             result._one_or_none_value = {
                 "id": SYMBOL_VERSION_ID,
@@ -201,6 +206,7 @@ class MockSession:
                 "exchange_id": EXCHANGE_ID,
                 "superseded_by": None,
                 "retrieved_at": FIXED_TIME,
+                "metadata_hash": self.current_metadata_hash or ("a" * 64),
             }
             return result
         if "from public.market_data_ingestions where id" in sql:
