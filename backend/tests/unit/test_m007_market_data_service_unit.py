@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, cast
@@ -187,7 +189,35 @@ class MockSession:
                 result._one_or_none_value = {"id": self.effective_version_id}
             return result
         if "insert into public.symbol_metadata_observations" in sql:
-            self.observations.append(dict(params))
+            evidence = json.loads(params["request_evidence"])
+            canonical = json.dumps(
+                {
+                    "request": evidence,
+                    "exchange_id": str(params["exchange_id"]),
+                    "symbol": params["native_symbol"],
+                    "raw_metadata_hash": params["raw_hash"],
+                    "retrieved_at": params["retrieved_at"].isoformat(),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            request_key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            self.observations.append(
+                {
+                    "request_key": request_key,
+                    "symbol_version_id": params["symbol_version_id"],
+                    "exchange_id": params["exchange_id"],
+                    "native_symbol": params["native_symbol"],
+                    "disposition": params["disposition"],
+                    "metadata_hash": params["metadata_hash"],
+                    "raw_hash": params["raw_hash"],
+                    "raw_metadata_hash": params["raw_hash"],
+                    "retrieved_at": params["retrieved_at"],
+                    "observed_at": params["observed_at"],
+                    "request_evidence": evidence,
+                }
+            )
+            result.rowcount = 1
             return result
         if (
             "update public.exchange_symbol_versions" in sql
@@ -1779,9 +1809,7 @@ async def test_refresh_unchanged_records_verified_observation() -> None:
     assert obs["disposition"] == "verified"
     assert obs["raw_hash"] == "a" * 64
     assert obs["metadata_hash"] == session.current_metadata_hash
-    import json as _json
-
-    evidence = _json.loads(obs["request_evidence"])
+    evidence = obs["request_evidence"]
     assert evidence["provider"] == "fake_binance"
     assert evidence["endpoint"] == "get_symbol_metadata"
     assert evidence["symbol"] == "BTCEUR"

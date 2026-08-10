@@ -63,8 +63,7 @@ def upgrade() -> None:
             failures.append(f"{role} attributes differ from {expected}")
         if prohibited_members:
             failures.append(
-                f"{role} has prohibited runtime/browser members: "
-                f"{prohibited_members}"
+                f"{role} has prohibited runtime/browser members: {prohibited_members}"
             )
     if failures:
         raise RuntimeError("Invalid trusted-role graph: " + "; ".join(failures))

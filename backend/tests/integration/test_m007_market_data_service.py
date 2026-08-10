@@ -14,6 +14,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.core.clock import FixedClock
@@ -437,6 +438,22 @@ def _clean_m007_rows(engine: Engine) -> None:
                 """
             ),
             {"eid": EXCHANGE_ID, "sid": SYMBOL_VERSION_ID},
+        )
+        connection.execute(
+            text(
+                """
+                delete from public.symbol_metadata_observations
+                where id::text like '90000000-%'
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                delete from public.exchange_symbol_versions
+                where id::text like '90000000-%'
+                """
+            )
         )
     # Close pooled connections so no session-level advisory lock from a prior
     # run survives into the next test phase.
@@ -4545,6 +4562,447 @@ async def test_backfill_missing_configured_version_rechecks_history(
                 start_time=datetime(2025, 12, 31, 0, 0, tzinfo=timezone.utc),
                 end_time=datetime(2025, 12, 31, 1, 0, tzinfo=timezone.utc),
                 idempotency_key="test-missing-configured",
+            )
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_upgrade_from_46ded15_schema_converges_safely(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """The 20260810120000 repair migrates a database that applied the edited
+    46ded15 092200 migration (inline request_key unique, two-value disposition
+    CHECK) to the current three-value contract without duplicate_object or
+    CHECK violations."""
+    session = build_session_factory(database_engine)()
+    try:
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    alter table public.symbol_metadata_observations
+                        add column if not exists request_key text not null unique
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    alter table public.symbol_metadata_observations
+                        add column if not exists disposition
+                            text not null default 'verified'
+                            check (disposition in ('verified', 'stale_conflict'))
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    insert into public.symbol_metadata_observations (
+                        id, symbol_version_id, exchange_id, native_symbol,
+                        metadata_hash, raw_metadata_hash, retrieved_at,
+                        observed_at, request_evidence, request_key, disposition
+                    ) values (
+                        :sid, :vid, :eid, :sym,
+                        :md5, :raw, :retrieved_at,
+                        :observed_at, :evidence, :req_key, 'verified'
+                    )
+                    """
+                ),
+                {
+                    "sid": UUID("90000000-0000-0000-0000-000000000001"),
+                    "vid": SYMBOL_VERSION_ID,
+                    "eid": EXCHANGE_ID,
+                    "sym": SYMBOL,
+                    "md5": (
+                        "a38e91f5386eb1a1d6f898005b1f07efb24b58d411acaf1a064b20e065aca4dd"
+                    ),
+                    "raw": "b" * 64,
+                    "retrieved_at": FIXED_TIME - timedelta(hours=1),
+                    "observed_at": FIXED_TIME,
+                    "evidence": json.dumps({"provider": "test"}),
+                    "req_key": "legacy-key",
+                },
+            )
+        for stmt in _read_migration_statements(
+            "20260810120000_m007_observation_ledger_repair.sql"
+        ):
+            session.execute(text(stmt))
+        session.commit()
+        rows = (
+            session.execute(
+                text(
+                    """
+                    select request_key, disposition
+                    from public.symbol_metadata_observations
+                    where id = :sid
+                    """
+                ),
+                {"sid": UUID("90000000-0000-0000-0000-000000000001")},
+            )
+            .mappings()
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0]["disposition"] == "verified"
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_old_ledger_duplicate_same_second_observations(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Two legacy observations in the same second with identical evidence get
+    unique backfilled keys (one canonical, one suffixed) so the UNIQUE
+    constraint can be added without deleting audit history."""
+    session = build_session_factory(database_engine)()
+    try:
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    drop trigger if exists
+                        symbol_metadata_observations_version_identity_trg
+                        on public.symbol_metadata_observations
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    drop function if exists
+                        public.validate_observation_version_identity()
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    drop function if exists
+                        public.compute_metadata_request_key()
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    drop function if exists public.jsonb_sort_keys()
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    alter table public.symbol_metadata_observations
+                        drop constraint if exists
+                            symbol_metadata_observations_request_key_key
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    alter table public.symbol_metadata_observations
+                        drop column if exists request_key
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    insert into public.symbol_metadata_observations (
+                        id, symbol_version_id, exchange_id, native_symbol,
+                        metadata_hash, raw_metadata_hash, retrieved_at,
+                        observed_at, request_evidence
+                    ) values (
+                        :sid, :vid, :eid, :sym,
+                        :md5, :raw, :retrieved_at,
+                        :observed_at, :evidence
+                    )
+                    on conflict (id) do nothing
+                    """
+                ),
+                {
+                    "sid": UUID("90000000-0000-0000-0000-000000000010"),
+                    "vid": SYMBOL_VERSION_ID,
+                    "eid": EXCHANGE_ID,
+                    "sym": SYMBOL,
+                    "md5": (
+                        "a38e91f5386eb1a1d6f898005b1f07efb24b58d411acaf1a064b20e065aca4dd"
+                    ),
+                    "raw": "b" * 64,
+                    "retrieved_at": FIXED_TIME - timedelta(seconds=1),
+                    "observed_at": FIXED_TIME,
+                    "evidence": json.dumps({"provider": "test"}),
+                },
+            )
+            connection.execute(
+                text(
+                    """
+                    insert into public.symbol_metadata_observations (
+                        id, symbol_version_id, exchange_id, native_symbol,
+                        metadata_hash, raw_metadata_hash, retrieved_at,
+                        observed_at, request_evidence
+                    ) values (
+                        :sid, :vid, :eid, :sym,
+                        :md5, :raw, :retrieved_at,
+                        :observed_at, :evidence
+                    )
+                    on conflict (id) do nothing
+                    """
+                ),
+                {
+                    "sid": UUID("90000000-0000-0000-0000-000000000011"),
+                    "vid": SYMBOL_VERSION_ID,
+                    "eid": EXCHANGE_ID,
+                    "sym": SYMBOL,
+                    "md5": (
+                        "a38e91f5386eb1a1d6f898005b1f07efb24b58d411acaf1a064b20e065aca4dd"
+                    ),
+                    "raw": "b" * 64,
+                    "retrieved_at": FIXED_TIME - timedelta(seconds=1),
+                    "observed_at": FIXED_TIME + timedelta(seconds=1),
+                    "evidence": json.dumps({"provider": "test"}),
+                },
+            )
+        for stmt in _read_migration_statements(
+            "20260810120000_m007_observation_ledger_repair.sql"
+        ):
+            session.execute(text(stmt))
+        session.commit()
+        keys = (
+            session.execute(
+                text(
+                    """
+                    select request_key
+                    from public.symbol_metadata_observations
+                    where id in (:sid1, :sid2)
+                    order by request_key
+                    """
+                ),
+                {
+                    "sid1": UUID("90000000-0000-0000-0000-000000000010"),
+                    "sid2": UUID("90000000-0000-0000-0000-000000000011"),
+                },
+            )
+            .scalars()
+            .all()
+        )
+        assert len(keys) == 2
+        assert keys[0] != keys[1]
+        assert keys[1].endswith(str(UUID("90000000-0000-0000-0000-000000000011")))
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_fabricated_legacy_evidence_marked_unavailable(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Pre-M007 rows whose raw_metadata_hash and retrieved_at were fabricated
+    by the restored 20260809000000 migration are marked legacy_unavailable
+    and their synthetic fields are cleared."""
+    session = build_session_factory(database_engine)()
+    try:
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    insert into public.exchange_symbol_versions (
+                        id, exchange_id, native_symbol, base_asset, quote_asset,
+                        status, price_precision, quantity_precision, tick_size,
+                        step_size, min_quantity, max_quantity, min_notional,
+                        max_notional, metadata_hash, effective_at,
+                        superseded_by, raw_metadata_hash, retrieved_at,
+                        last_verified_at
+                    ) values (
+                        :sid, :eid, 'ETHUSD', 'ETH', 'USD', 'trading',
+                        2, 6, 0.01, 0.000001, 0.000001, 9000.000000, 5, null,
+                        :md5, :effective_at,
+                        null, :md5, :effective_at,
+                        :effective_at
+                    )
+                    on conflict (id) do nothing
+                    """
+                ),
+                {
+                    "sid": UUID("90000000-0000-0000-0000-000000000020"),
+                    "eid": EXCHANGE_ID,
+                    "md5": "f" * 64,
+                    "effective_at": FIXED_TIME - timedelta(days=1),
+                },
+            )
+        for stmt in _read_migration_statements(
+            "20260810120000_m007_observation_ledger_repair.sql"
+        ):
+            session.execute(text(stmt))
+        session.commit()
+        row = (
+            session.execute(
+                text(
+                    """
+                    select source_evidence_state, raw_metadata_hash, retrieved_at
+                    from public.exchange_symbol_versions
+                    where id = :sid
+                    """
+                ),
+                {"sid": UUID("90000000-0000-0000-0000-000000000020")},
+            )
+            .mappings()
+            .one()
+        )
+        assert row["source_evidence_state"] == "legacy_unavailable"
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_equal_timestamp_conflict_rejects_cross_exchange_version(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """An equal_timestamp_conflict observation cannot link to a version owned
+    by a different exchange."""
+    other_exchange_id = UUID("40000000-0000-0000-0000-0000000000EE")
+    session = build_session_factory(database_engine)()
+    try:
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    insert into public.exchanges
+                        (id, code, display_name, data_capability, active)
+                    values (:eid, 'OTHER', 'Other Exchange', 'spot', true)
+                    on conflict (id) do nothing
+                    """
+                ),
+                {"eid": other_exchange_id},
+            )
+            connection.execute(
+                text(
+                    """
+                    insert into public.exchange_symbol_versions (
+                        id, exchange_id, native_symbol, base_asset, quote_asset,
+                        status, price_precision, quantity_precision, tick_size,
+                        step_size, min_quantity, max_quantity, min_notional,
+                        max_notional, metadata_hash, effective_at,
+                        superseded_by, raw_metadata_hash, retrieved_at,
+                        last_verified_at
+                    ) values (
+                        :sid, :eid, 'ETHUSD', 'ETH', 'USD', 'trading',
+                        2, 6, 0.01, 0.000001, 0.000001, 9000.000000, 5, null,
+                        :md5, :effective_at,
+                        null, :raw, :retrieved_at,
+                        :effective_at
+                    )
+                    on conflict (id) do nothing
+                    """
+                ),
+                {
+                    "sid": UUID("90000000-0000-0000-0000-000000000030"),
+                    "eid": other_exchange_id,
+                    "md5": "c" * 64,
+                    "raw": "d" * 64,
+                    "effective_at": FIXED_TIME - timedelta(hours=1),
+                    "retrieved_at": FIXED_TIME - timedelta(hours=1),
+                },
+            )
+        with pytest.raises(ProgrammingError, match="mismatched identity"):
+            session.execute(
+                text(
+                    """
+                    insert into public.symbol_metadata_observations (
+                        request_key, symbol_version_id, exchange_id, native_symbol,
+                        disposition, metadata_hash, raw_metadata_hash, retrieved_at,
+                        observed_at, request_evidence
+                    ) values (
+                        :req_key, :vid, :eid, :sym,
+                        'equal_timestamp_conflict', :md5, :raw, :retrieved_at,
+                        :observed_at, :evidence
+                    )
+                    """
+                ),
+                {
+                    "req_key": "cross-exchange-key",
+                    "vid": UUID("90000000-0000-0000-0000-000000000030"),
+                    "eid": EXCHANGE_ID,
+                    "sym": SYMBOL,
+                    "md5": "c" * 64,
+                    "raw": "d" * 64,
+                    "retrieved_at": FIXED_TIME - timedelta(hours=1),
+                    "observed_at": FIXED_TIME,
+                    "evidence": json.dumps({"provider": "test"}),
+                },
+            )
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_equal_timestamp_conflict_rejects_cross_symbol_version(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """An equal_timestamp_conflict observation cannot link to a version for a
+    different native symbol."""
+    session = build_session_factory(database_engine)()
+    try:
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    insert into public.exchange_symbol_versions (
+                        id, exchange_id, native_symbol, base_asset, quote_asset,
+                        status, price_precision, quantity_precision, tick_size,
+                        step_size, min_quantity, max_quantity, min_notional,
+                        max_notional, metadata_hash, effective_at,
+                        superseded_by, raw_metadata_hash, retrieved_at,
+                        last_verified_at
+                    ) values (
+                        :sid, :eid, 'ETHUSD', 'ETH', 'USD', 'trading',
+                        2, 6, 0.01, 0.000001, 0.000001, 9000.000000, 5, null,
+                        :md5, :effective_at,
+                        null, :raw, :retrieved_at,
+                        :effective_at
+                    )
+                    on conflict (id) do nothing
+                    """
+                ),
+                {
+                    "sid": UUID("90000000-0000-0000-0000-000000000031"),
+                    "eid": EXCHANGE_ID,
+                    "md5": "e" * 64,
+                    "raw": "f" * 64,
+                    "effective_at": FIXED_TIME - timedelta(hours=1),
+                    "retrieved_at": FIXED_TIME - timedelta(hours=1),
+                },
+            )
+        with pytest.raises(ProgrammingError, match="mismatched identity"):
+            session.execute(
+                text(
+                    """
+                    insert into public.symbol_metadata_observations (
+                        request_key, symbol_version_id, exchange_id, native_symbol,
+                        disposition, metadata_hash, raw_metadata_hash, retrieved_at,
+                        observed_at, request_evidence
+                    ) values (
+                        :req_key, :vid, :eid, :sym,
+                        'equal_timestamp_conflict', :md5, :raw, :retrieved_at,
+                        :observed_at, :evidence
+                    )
+                    """
+                ),
+                {
+                    "req_key": "cross-symbol-key",
+                    "vid": UUID("90000000-0000-0000-0000-000000000031"),
+                    "eid": EXCHANGE_ID,
+                    "sym": SYMBOL,
+                    "md5": "e" * 64,
+                    "raw": "f" * 64,
+                    "retrieved_at": FIXED_TIME - timedelta(hours=1),
+                    "observed_at": FIXED_TIME,
+                    "evidence": json.dumps({"provider": "test"}),
+                },
             )
     finally:
         session.close()

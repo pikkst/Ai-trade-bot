@@ -44,9 +44,7 @@ def upgrade() -> None:
     missing_views = [
         view
         for view in _REQUIRED_VIEWS
-        if bind.execute(
-            text("select to_regclass(:view)"), {"view": view}
-        ).scalar_one()
+        if bind.execute(text("select to_regclass(:view)"), {"view": view}).scalar_one()
         is None
     ]
     if missing_tables or missing_views:

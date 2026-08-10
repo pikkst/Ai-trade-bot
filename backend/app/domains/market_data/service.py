@@ -207,9 +207,6 @@ class MarketDataService:
         collided with an existing observation (duplicate replay).
         """
         evidence = request_evidence or {"provider": type(self._provider).__name__}
-        request_key = self._metadata_request_key(
-            symbol, evidence, raw_hash, retrieved_at
-        )
         result = self._session.execute(
             text(
                 """
@@ -218,7 +215,14 @@ class MarketDataService:
                     disposition, metadata_hash, raw_metadata_hash, retrieved_at,
                     observed_at, request_evidence
                 ) values (
-                    :request_key, :symbol_version_id, :exchange_id, :native_symbol,
+                    public.compute_metadata_request_key(
+                        :exchange_id,
+                        :native_symbol,
+                        :raw_hash,
+                        :retrieved_at,
+                        :request_evidence
+                    ),
+                    :symbol_version_id, :exchange_id, :native_symbol,
                     :disposition, :metadata_hash, :raw_hash, :retrieved_at,
                     :observed_at, :request_evidence
                 )
@@ -226,7 +230,6 @@ class MarketDataService:
                 """
             ),
             {
-                "request_key": request_key,
                 "symbol_version_id": symbol_version_id,
                 "exchange_id": self._exchange_id,
                 "native_symbol": symbol.upper(),

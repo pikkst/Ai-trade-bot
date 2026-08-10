@@ -41,6 +41,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Prevent destructive rollback of quality-gate fixes."""
     raise RuntimeError(
-        "M007 quality-gate fixes are additive-only; "
-        "create a forward migration instead"
+        "M007 quality-gate fixes are additive-only; create a forward migration instead"
     )
