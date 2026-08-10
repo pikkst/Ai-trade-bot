@@ -237,6 +237,8 @@ class MockSession:
                 "superseded_by": None,
                 "retrieved_at": FIXED_TIME,
                 "metadata_hash": self.current_metadata_hash or ("a" * 64),
+                "last_verified_at": FIXED_TIME,
+                "source_evidence_state": "observed",
             }
             return result
         if "from public.market_data_ingestions where id" in sql:

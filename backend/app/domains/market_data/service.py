@@ -400,7 +400,7 @@ class MarketDataService:
                         text(
                             """
                             update public.exchange_symbol_versions
-                            set last_verified_at = :now
+                            set last_verified_at = greatest(last_verified_at, :now)
                             where id = :id
                             """
                         ),
@@ -527,7 +527,7 @@ class MarketDataService:
                     text(
                         """
                         update public.exchange_symbol_versions
-                        set last_verified_at = :now
+                        set last_verified_at = greatest(last_verified_at, :now)
                         where id = :id
                         """
                     ),
@@ -553,7 +553,7 @@ class MarketDataService:
                 text(
                     """
                     select native_symbol, exchange_id, superseded_by,
-                           retrieved_at, last_verified_at
+                           retrieved_at, last_verified_at, source_evidence_state
                     from public.exchange_symbol_versions
                     where id = :symbol_version_id
                     """
@@ -589,9 +589,13 @@ class MarketDataService:
                 self._symbol_version_id = canonical_id
             return
         last_verified_at = row.get("last_verified_at") or row.get("retrieved_at")
-        if last_verified_at is None or (
-            self._clock.now() - last_verified_at
-            > timedelta(hours=self._metadata_max_age_hours)
+        if (
+            row.get("source_evidence_state") != "observed"
+            or last_verified_at is None
+            or (
+                self._clock.now() - last_verified_at
+                > timedelta(hours=self._metadata_max_age_hours)
+            )
         ):
             self._session.commit()
             canonical_id = await self.refresh_symbol_metadata(symbol)

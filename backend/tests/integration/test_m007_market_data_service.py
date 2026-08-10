@@ -137,6 +137,17 @@ def _read_migration_statements(filename: str) -> list[str]:
     return statements
 
 
+def _read_all_m007_migration_statements() -> list[str]:
+    """Read both M007 migration files in order and return all statements."""
+    statements: list[str] = []
+    for filename in (
+        "20260810120000_m007_observation_ledger_repair.sql",
+        "20260810200000_m007_observation_ledger_canonicalization.sql",
+    ):
+        statements.extend(_read_migration_statements(filename))
+    return statements
+
+
 @pytest.fixture
 def clean_m007_data(database_engine: Engine) -> Iterator[None]:
     """Create a dedicated M007 symbol version and remove M007 test data
@@ -157,8 +168,8 @@ def clean_m007_data(database_engine: Engine) -> Iterator[None]:
 
 
 def _ensure_m007_migration_columns(engine: Engine) -> None:
-    """Apply the M007 observation-ledger repair migration if the columns
-    are missing.
+    """Apply the M007 observation-ledger repair and canonicalization migrations
+    if the columns/constraints are missing.
     """
     with engine.begin() as connection:
         row = connection.execute(
@@ -173,18 +184,80 @@ def _ensure_m007_migration_columns(engine: Engine) -> None:
             )
         ).scalar_one()
         if row > 0:
-            return
+            has_unique = connection.execute(
+                text(
+                    """
+                    select count(*) > 0
+                    from pg_constraint
+                    where conrelid = 'public.symbol_metadata_observations'::regclass
+                      and conname = 'symbol_metadata_observations_request_key_key'
+                      and contype = 'u'
+                    """
+                )
+            ).scalar_one()
+            if has_unique:
+                return
 
         repo_root = Path(__file__).resolve().parents[3]
-        migration_path = (
+        repair_path = (
             repo_root
             / "supabase"
             / "migrations"
             / "20260810120000_m007_observation_ledger_repair.sql"
         )
-        sql = migration_path.read_text(encoding="utf-8")
+        sql = repair_path.read_text(encoding="utf-8")
         statements: list[str] = []
         current: list[str] = []
+        in_dollar = False
+        i = 0
+        while i < len(sql):
+            char = sql[i]
+            if char == "$" and not in_dollar and sql[i : i + 2] == "$$":
+                in_dollar = True
+                current.append("$$")
+                i += 2
+                continue
+            if char == "$" and in_dollar and sql[i : i + 2] == "$$":
+                in_dollar = False
+                current.append("$$")
+                i += 2
+                continue
+            current.append(char)
+            if char == ";" and not in_dollar:
+                stmt = "".join(current).strip()
+                if stmt:
+                    non_comment_lines = [
+                        line
+                        for line in stmt.splitlines()
+                        if not line.strip().startswith("--")
+                    ]
+                    if non_comment_lines:
+                        statements.append(stmt)
+                current = []
+            i += 1
+        if current:
+            stmt = "".join(current).strip()
+            if stmt:
+                non_comment_lines = [
+                    line
+                    for line in stmt.splitlines()
+                    if not line.strip().startswith("--")
+                ]
+                if non_comment_lines:
+                    statements.append(stmt)
+
+        for stmt in statements:
+            connection.execute(text(stmt))
+
+        canonical_path = (
+            repo_root
+            / "supabase"
+            / "migrations"
+            / "20260810200000_m007_observation_ledger_canonicalization.sql"
+        )
+        sql = canonical_path.read_text(encoding="utf-8")
+        statements = []
+        current = []
         in_dollar = False
         i = 0
         while i < len(sql):
@@ -3738,6 +3811,14 @@ async def test_pre_m007_multiple_effective_versions_upgrade_safely(
                 "20260809220000_m007_symbol_metadata_versioning_upgrade_safety.sql"
             ):
                 connection.execute(text(stmt))
+            for stmt in _read_migration_statements(
+                "20260810120000_m007_observation_ledger_repair.sql"
+            ):
+                connection.execute(text(stmt))
+            for stmt in _read_migration_statements(
+                "20260810200000_m007_observation_ledger_canonicalization.sql"
+            ):
+                connection.execute(text(stmt))
 
         rows = (
             session.execute(
@@ -4629,6 +4710,10 @@ async def test_upgrade_from_46ded15_schema_converges_safely(
             "20260810120000_m007_observation_ledger_repair.sql"
         ):
             session.execute(text(stmt))
+        for stmt in _read_migration_statements(
+            "20260810200000_m007_observation_ledger_canonicalization.sql"
+        ):
+            session.execute(text(stmt))
         session.commit()
         rows = (
             session.execute(
@@ -4771,6 +4856,10 @@ async def test_old_ledger_duplicate_same_second_observations(
             "20260810120000_m007_observation_ledger_repair.sql"
         ):
             session.execute(text(stmt))
+        for stmt in _read_migration_statements(
+            "20260810200000_m007_observation_ledger_canonicalization.sql"
+        ):
+            session.execute(text(stmt))
         session.commit()
         keys = (
             session.execute(
@@ -4836,6 +4925,10 @@ async def test_fabricated_legacy_evidence_marked_unavailable(
             )
         for stmt in _read_migration_statements(
             "20260810120000_m007_observation_ledger_repair.sql"
+        ):
+            session.execute(text(stmt))
+        for stmt in _read_migration_statements(
+            "20260810200000_m007_observation_ledger_canonicalization.sql"
         ):
             session.execute(text(stmt))
         session.commit()

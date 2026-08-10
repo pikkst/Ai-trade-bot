@@ -137,7 +137,7 @@ def test_supabase_migrations_seed_and_alembic_head(database_engine: Engine) -> N
             connection.execute(
                 text("select version_num from private.alembic_version")
             ).scalar_one()
-            == "20260810120000"
+            == "20260810200000"
         )
 
 
