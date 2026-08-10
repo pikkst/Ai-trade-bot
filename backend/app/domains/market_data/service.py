@@ -238,7 +238,7 @@ class MarketDataService:
                 "request_evidence": json.dumps(evidence),
             },
         )
-        return bool(result.rowcount)
+        return bool(result.rowcount)  # type: ignore[attr-defined]
 
     def _resolve_observation_version(
         self,
