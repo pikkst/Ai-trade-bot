@@ -1215,9 +1215,10 @@ async def test_repair_gaps_parent_lineage_approves_full_range(
 ) -> None:
     """A repaired range must be approvable from a single parent ingestion.
 
-    Seed 10:00 and 12:00 so 11:00 is missing, repair the gap, then create a
-    snapshot for [10:00, 13:00) using the parent ingestion. Replay must yield
-    the same snapshot identity.
+    Seed 10:00 and 12:00 through legitimate backfill ingestions (not direct
+    table writes), detect the 11:00 gap, repair it, then create a snapshot
+    for [10:00, 13:00) using the parent ingestion. Replay must yield the
+    same persisted snapshot identity.
     """
     provider = FakeBinanceProvider(
         config=FakeBinanceConfig(
@@ -1231,32 +1232,17 @@ async def test_repair_gaps_parent_lineage_approves_full_range(
         session.execute(
             text(
                 """
-                insert into public.candles (
-                    symbol_version_id, interval_code, open_time, close_time,
-                    open_price, high_price, low_price, close_price,
-                    base_volume, quote_volume, trade_count, finalized, content_hash
-                ) values
-                (
-                    :sid, '1h', :t10, :t11,
-                    100, 105, 95, 102, 1.5, 1500, 100, true, :h10
-                ),
-                (
-                    :sid, '1h', :t12, :t13,
-                    100, 105, 95, 102, 1.5, 1500, 100, true, :h12
+                insert into public.workspaces (
+                    id, name, base_currency, lifecycle_state,
+                    created_at, updated_at, version
+                ) values (
+                    :wid, 'm007-parent-lineage', 'EUR', 'active',
+                    timezone('utc', now()), timezone('utc', now()), 1
                 )
-                on conflict (symbol_version_id, interval_code, open_time)
-                where superseded_by is null do nothing
+                on conflict (id) do nothing
                 """
             ),
-            {
-                "sid": SYMBOL_VERSION_ID,
-                "t10": FIXED_TIME - timedelta(hours=2),
-                "t11": FIXED_TIME - timedelta(hours=1),
-                "t12": FIXED_TIME,
-                "t13": FIXED_TIME + timedelta(hours=1),
-                "h10": "a" * 64,
-                "h12": "b" * 64,
-            },
+            {"wid": WORKSPACE_ID},
         )
         session.commit()
         service = MarketDataService(
@@ -1268,6 +1254,25 @@ async def test_repair_gaps_parent_lineage_approves_full_range(
             interval=CandleInterval.ONE_HOUR,
             clock=FixedClock(FIXED_TIME),
         )
+        # Backfill 10:00-11:00 through legitimate ingestion.
+        result1 = await service.backfill(
+            symbol=SYMBOL,
+            start_time=FIXED_TIME - timedelta(hours=2),
+            end_time=FIXED_TIME - timedelta(hours=1),
+            idempotency_key="test-parent-lineage-10",
+        )
+        session.commit()
+        assert result1.status == IngestionStatus.COMPLETED
+        # Backfill 12:00-13:00 through legitimate ingestion.
+        result2 = await service.backfill(
+            symbol=SYMBOL,
+            start_time=FIXED_TIME,
+            end_time=FIXED_TIME + timedelta(hours=1),
+            idempotency_key="test-parent-lineage-12",
+        )
+        session.commit()
+        assert result2.status == IngestionStatus.COMPLETED
+
         gap_report = await service.detect_gaps(
             symbol_version_id=SYMBOL_VERSION_ID,
             interval_code="1h",
@@ -1313,8 +1318,8 @@ async def test_repair_gaps_parent_lineage_approves_full_range(
         assert parent_ingestion["status"] == "completed"
         assert parent_ingestion["page_hashes"] is not None
 
-        # The parent page_hashes must cover all three candles (pre-existing
-        # 10:00/12:00 plus repaired 11:00).
+        # The parent page_hashes must cover all three candles (10:00, 11:00,
+        # 12:00) from prior ingestions plus repair child evidence.
         pairs = (
             json.loads(parent_ingestion["page_hashes"])
             if isinstance(parent_ingestion["page_hashes"], str)
@@ -1326,6 +1331,225 @@ async def test_repair_gaps_parent_lineage_approves_full_range(
             FIXED_TIME - timedelta(hours=1),
             FIXED_TIME,
         ]
+
+        # Terminal completion-gate proof: create an approved snapshot from
+        # the full contiguous range using the parent lineage, then replay
+        # and assert the same persisted identity.
+        candidate_candles = (
+            session.execute(
+                text(
+                    """
+                select id, open_time
+                from public.candles
+                where symbol_version_id = :sid
+                  and interval_code = '1h'
+                  and open_time >= :start and open_time < :end
+                  and finalized = true
+                  and superseded_by is null
+                order by open_time
+                """
+                ),
+                {
+                    "sid": SYMBOL_VERSION_ID,
+                    "start": FIXED_TIME - timedelta(hours=2),
+                    "end": FIXED_TIME + timedelta(hours=1),
+                },
+            )
+            .mappings()
+            .all()
+        )
+        candle_ids = [row["id"] for row in candidate_candles]
+        assert len(candle_ids) == 3
+
+        snapshot = service.create_snapshot(
+            analysis_time=FIXED_TIME + timedelta(hours=1),
+            candle_ids=candle_ids,
+            quality_outcome="approved",
+            freshness_outcome="fresh",
+            ingestion_id=parent_ingestion["id"],
+        )
+        session.commit()
+        assert snapshot.candle_count == 3
+
+        replayed = service.create_snapshot(
+            analysis_time=FIXED_TIME + timedelta(hours=1),
+            candle_ids=candle_ids,
+            quality_outcome="approved",
+            freshness_outcome="fresh",
+            ingestion_id=parent_ingestion["id"],
+        )
+        session.commit()
+        assert replayed.snapshot_hash == snapshot.snapshot_hash
+        assert replayed.snapshot_id == snapshot.snapshot_id
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_repair_gaps_rejects_unvalidated_candle_lineage(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """A direct table write must not become accepted lineage via repair.
+
+    Seed 10:00 directly into candles (bypassing ingestion), then backfill
+    12:00 through legitimate ingestion. The gap [10:00, 13:00) has 11:00
+    missing. After repair, the parent lineage must not contain 10:00 from
+    the unvalidated table write, so the full range cannot be approved.
+    """
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        session.execute(
+            text(
+                """
+                insert into public.workspaces (
+                    id, name, base_currency, lifecycle_state,
+                    created_at, updated_at, version
+                ) values (
+                    :wid, 'm007-unvalidated-lineage', 'EUR', 'active',
+                    timezone('utc', now()), timezone('utc', now()), 1
+                )
+                on conflict (id) do nothing
+                """
+            ),
+            {"wid": WORKSPACE_ID},
+        )
+        session.commit()
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        # Seed 10:00 directly into candles - bypasses ingestion validation.
+        session.execute(
+            text(
+                """
+                insert into public.candles (
+                    symbol_version_id, interval_code, open_time, close_time,
+                    open_price, high_price, low_price, close_price,
+                    base_volume, quote_volume, trade_count, finalized, content_hash
+                ) values (
+                    :sid, '1h', :t10, :t11,
+                    100, 105, 95, 102, 1.5, 1500, 100, true, :h10
+                )
+                on conflict (symbol_version_id, interval_code, open_time)
+                where superseded_by is null do nothing
+                """
+            ),
+            {
+                "sid": SYMBOL_VERSION_ID,
+                "t10": FIXED_TIME - timedelta(hours=2),
+                "t11": FIXED_TIME - timedelta(hours=1),
+                "h10": "a" * 64,
+            },
+        )
+        session.commit()
+        # Backfill 12:00 through legitimate ingestion.
+        result = await service.backfill(
+            symbol=SYMBOL,
+            start_time=FIXED_TIME,
+            end_time=FIXED_TIME + timedelta(hours=1),
+            idempotency_key="test-unvalidated-lineage-12",
+        )
+        session.commit()
+        assert result.status == IngestionStatus.COMPLETED
+
+        gap_report = await service.detect_gaps(
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval_code="1h",
+            expected_start=FIXED_TIME - timedelta(hours=2),
+            expected_end=FIXED_TIME + timedelta(hours=1),
+        )
+        assert gap_report.missing_count == 1
+        assert gap_report.missing_ranges == (
+            (FIXED_TIME - timedelta(hours=1), FIXED_TIME),
+        )
+        result = await service.repair_gaps(
+            symbol=SYMBOL,
+            gap_report=gap_report,
+            idempotency_key="test-repair-unvalidated",
+        )
+        session.commit()
+        assert result.status == IngestionStatus.COMPLETED
+
+        # The parent lineage must not contain 10:00 because it was never
+        # validated by an ingestion.
+        parent_ingestion = (
+            session.execute(
+                text(
+                    """
+                select id, page_hashes
+                from public.market_data_ingestions
+                where symbol_version_id = :sid
+                  and interval_code = '1h'
+                  and ingestion_type = 'gap_repair'
+                  and requested_start_time = :start
+                  and requested_end_time = :end
+                """
+                ),
+                {
+                    "sid": SYMBOL_VERSION_ID,
+                    "start": FIXED_TIME - timedelta(hours=2),
+                    "end": FIXED_TIME + timedelta(hours=1),
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+        assert parent_ingestion is not None
+        pairs = (
+            json.loads(parent_ingestion["page_hashes"])
+            if isinstance(parent_ingestion["page_hashes"], str)
+            else list(parent_ingestion["page_hashes"])
+        )
+        accepted_times = [datetime.fromisoformat(p[0]) for p in pairs]
+        assert FIXED_TIME - timedelta(hours=2) not in accepted_times
+        assert FIXED_TIME - timedelta(hours=1) in accepted_times
+        assert FIXED_TIME in accepted_times
+
+        # The full range cannot be approved because 10:00 has no accepted
+        # lineage evidence.
+        candidate_candles = (
+            session.execute(
+                text(
+                    """
+                select id
+                from public.candles
+                where symbol_version_id = :sid
+                  and interval_code = '1h'
+                  and open_time >= :start and open_time < :end
+                  and finalized = true
+                  and superseded_by is null
+                order by open_time
+                """
+                ),
+                {
+                    "sid": SYMBOL_VERSION_ID,
+                    "start": FIXED_TIME - timedelta(hours=2),
+                    "end": FIXED_TIME + timedelta(hours=1),
+                },
+            )
+            .scalars()
+            .all()
+        )
+        with pytest.raises(ValueError, match="is not present in ingestion"):
+            service.create_snapshot(
+                analysis_time=FIXED_TIME + timedelta(hours=1),
+                candle_ids=list(candidate_candles),
+                quality_outcome="approved",
+                freshness_outcome="fresh",
+                ingestion_id=parent_ingestion["id"],
+            )
     finally:
         session.close()
 

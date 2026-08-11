@@ -1499,9 +1499,44 @@ class MarketDataService:
                 ingestion_id=None,
             )
             # Build a parent ingestion lineage covering the full repaired
-            # range so the approval path can prove exact membership from a
-            # single completed ingestion instead of scattered child repairs.
+            # range from prior completed ingestion evidence plus the new
+            # repair child evidence. Never fold unvalidated candle-table rows
+            # into accepted lineage: presence in public.candles is not
+            # provenance.
             parent_accepted: dict[datetime, str] = {}
+            prior_ingestions = (
+                self._session.execute(
+                    text(
+                        """
+                        select page_hashes
+                        from public.market_data_ingestions
+                        where symbol_version_id = :sid
+                          and interval_code = :interval
+                          and status = 'completed'
+                          and requested_start_time < :end
+                          and requested_end_time > :start
+                        """
+                    ),
+                    {
+                        "sid": self._symbol_version_id,
+                        "interval": self._interval.value,
+                        "start": gap_report.expected_start,
+                        "end": gap_report.expected_end,
+                    },
+                )
+                .scalars()
+                .all()
+            )
+            for page_hashes in prior_ingestions:
+                if not page_hashes:
+                    continue
+                pairs = (
+                    json.loads(page_hashes)
+                    if isinstance(page_hashes, str)
+                    else list(page_hashes)
+                )
+                for pair in pairs:
+                    parent_accepted[datetime.fromisoformat(pair[0])] = pair[1]
             for range_start, range_end in gap_report.missing_ranges:
                 child_page_hashes = self._session.execute(
                     text(
@@ -1530,31 +1565,6 @@ class MarketDataService:
                     )
                     for pair in pairs:
                         parent_accepted[datetime.fromisoformat(pair[0])] = pair[1]
-            existing_candles = (
-                self._session.execute(
-                    text(
-                        """
-                    select open_time, content_hash
-                    from public.candles
-                    where symbol_version_id = :sid
-                      and interval_code = :interval
-                      and open_time >= :start and open_time < :end
-                      and finalized = true
-                      and superseded_by is null
-                    """
-                    ),
-                    {
-                        "sid": self._symbol_version_id,
-                        "interval": self._interval.value,
-                        "start": gap_report.expected_start,
-                        "end": gap_report.expected_end,
-                    },
-                )
-                .mappings()
-                .all()
-            )
-            for row in existing_candles:
-                parent_accepted[row["open_time"]] = row["content_hash"]
             parent_ingestion_id = self._get_or_create_ingestion(
                 ingestion_type=IngestionType.GAP_REPAIR,
                 start_time=gap_report.expected_start,
