@@ -1499,11 +1499,37 @@ class MarketDataService:
                 ingestion_id=None,
             )
             # Build a parent ingestion lineage covering the full repaired
-            # range from prior completed ingestion evidence plus the new
-            # repair child evidence. Never fold unvalidated candle-table rows
-            # into accepted lineage: presence in public.candles is not
-            # provenance.
-            parent_accepted: dict[datetime, str] = {}
+            # range from completed ingestion evidence only. For each active
+            # finalized candle in the range, if at least one completed
+            # ingestion proves its exact (open_time, content_hash), require
+            # that all overlapping ingestions agree. Fail closed on
+            # conflicting evidence rather than choosing by row order. Candles
+            # without any ingestion evidence are skipped; they are not part
+            # of the proven parent lineage.
+            current_candles = (
+                self._session.execute(
+                    text(
+                        """
+                        select open_time, content_hash
+                        from public.candles
+                        where symbol_version_id = :sid
+                          and interval_code = :interval
+                          and open_time >= :start and open_time < :end
+                          and finalized = true
+                          and superseded_by is null
+                        order by open_time
+                        """
+                    ),
+                    {
+                        "sid": self._symbol_version_id,
+                        "interval": self._interval.value,
+                        "start": gap_report.expected_start,
+                        "end": gap_report.expected_end,
+                    },
+                )
+                .mappings()
+                .all()
+            )
             prior_ingestions = (
                 self._session.execute(
                     text(
@@ -1515,6 +1541,7 @@ class MarketDataService:
                           and status = 'completed'
                           and requested_start_time < :end
                           and requested_end_time > :start
+                        order by requested_start_time, id
                         """
                     ),
                     {
@@ -1527,6 +1554,7 @@ class MarketDataService:
                 .scalars()
                 .all()
             )
+            evidence_by_time: dict[datetime, set[str]] = {}
             for page_hashes in prior_ingestions:
                 if not page_hashes:
                     continue
@@ -1536,35 +1564,33 @@ class MarketDataService:
                     else list(page_hashes)
                 )
                 for pair in pairs:
-                    parent_accepted[datetime.fromisoformat(pair[0])] = pair[1]
-            for range_start, range_end in gap_report.missing_ranges:
-                child_page_hashes = self._session.execute(
-                    text(
-                        """
-                        select page_hashes
-                        from public.market_data_ingestions
-                        where symbol_version_id = :sid
-                          and interval_code = :interval
-                          and ingestion_type = 'gap_repair'
-                          and requested_start_time = :start
-                          and requested_end_time = :end
-                        """
-                    ),
-                    {
-                        "sid": self._symbol_version_id,
-                        "interval": self._interval.value,
-                        "start": range_start,
-                        "end": range_end,
-                    },
-                ).scalar_one_or_none()
-                if child_page_hashes:
-                    pairs = (
-                        json.loads(child_page_hashes)
-                        if isinstance(child_page_hashes, str)
-                        else list(child_page_hashes)
+                    open_time = datetime.fromisoformat(pair[0])
+                    if (
+                        open_time < gap_report.expected_start
+                        or open_time >= gap_report.expected_end
+                    ):
+                        continue
+                    evidence_by_time.setdefault(open_time, set()).add(pair[1])
+            parent_accepted: dict[datetime, str] = {}
+            for row in current_candles:
+                open_time = row["open_time"]
+                current_hash = row["content_hash"]
+                hashes = evidence_by_time.get(open_time)
+                if not hashes:
+                    continue
+                if len(hashes) > 1:
+                    raise ValueError(
+                        f"conflicting ingestion evidence for candle at "
+                        f"{open_time.isoformat()}: {sorted(hashes)}"
                     )
-                    for pair in pairs:
-                        parent_accepted[datetime.fromisoformat(pair[0])] = pair[1]
+                proven_hash = next(iter(hashes))
+                if proven_hash != current_hash:
+                    raise ValueError(
+                        f"candle at {open_time.isoformat()} has hash "
+                        f"{current_hash} but ingestion evidence proves "
+                        f"{proven_hash}"
+                    )
+                parent_accepted[open_time] = proven_hash
             parent_ingestion_id = self._get_or_create_ingestion(
                 ingestion_type=IngestionType.GAP_REPAIR,
                 start_time=gap_report.expected_start,

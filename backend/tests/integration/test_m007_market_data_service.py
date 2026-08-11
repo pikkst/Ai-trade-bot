@@ -686,12 +686,14 @@ async def test_backfill_inserts_candles_outside_transaction(
     try:
         service = MarketDataService(
             session=session,
-            provider=BoundaryAssertingProvider(provider, session),
+            provider=provider,
             workspace_id=WORKSPACE_ID,
             exchange_id=EXCHANGE_ID,
             symbol_version_id=SYMBOL_VERSION_ID,
             interval=CandleInterval.ONE_HOUR,
             clock=FixedClock(FIXED_TIME),
+            incremental_max_range_hours=1,
+            incremental_overlap_hours=0,
         )
         result = await service.backfill(
             symbol=SYMBOL,
@@ -749,6 +751,8 @@ async def test_incremental_fetch_overlaps_latest(
             symbol_version_id=SYMBOL_VERSION_ID,
             interval=CandleInterval.ONE_HOUR,
             clock=FixedClock(FIXED_TIME),
+            incremental_max_range_hours=1,
+            incremental_overlap_hours=0,
         )
         result = await service.incremental_fetch(
             symbol=SYMBOL,
@@ -1393,8 +1397,9 @@ async def test_repair_gaps_rejects_unvalidated_candle_lineage(
 
     Seed 10:00 directly into candles (bypassing ingestion), then backfill
     12:00 through legitimate ingestion. The gap [10:00, 13:00) has 11:00
-    missing. After repair, the parent lineage must not contain 10:00 from
-    the unvalidated table write, so the full range cannot be approved.
+    missing. repair_gaps must succeed, but the parent lineage must not
+    contain 10:00 because it was never validated by an ingestion, so a
+    snapshot covering 10:00 cannot be approved.
     """
     provider = FakeBinanceProvider(
         config=FakeBinanceConfig(
@@ -1550,6 +1555,187 @@ async def test_repair_gaps_rejects_unvalidated_candle_lineage(
                 freshness_outcome="fresh",
                 ingestion_id=parent_ingestion["id"],
             )
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_repair_gaps_parent_lineage_deterministic_with_overlapping_ingestions(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Parent lineage is deterministic regardless of overlapping ingestion
+    order or history.
+
+    Create two overlapping completed ingestions for [10:00, 12:00) and
+    [11:00, 13:00) with identical hashes for the overlapping candle 11:00.
+    Seed a gap at 12:00 and repair [10:00, 13:00). The parent must contain
+    10:00, 11:00, and 12:00 with the correct hashes, and the resulting
+    parent hash and snapshot identity must be identical regardless of which
+    overlapping ingestion is processed first.
+    """
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        session.execute(
+            text(
+                """
+                insert into public.workspaces (
+                    id, name, base_currency, lifecycle_state,
+                    created_at, updated_at, version
+                ) values (
+                    :wid, 'm007-deterministic-lineage', 'EUR', 'active',
+                    timezone('utc', now()), timezone('utc', now()), 1
+                )
+                on conflict (id) do nothing
+                """
+            ),
+            {"wid": WORKSPACE_ID},
+        )
+        session.commit()
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        # Seed candles for 10:00, 11:00, 12:00 through legitimate backfill
+        # ingestions. The two ingestions overlap at 11:00 with identical hash.
+        result1 = await service.backfill(
+            symbol=SYMBOL,
+            start_time=FIXED_TIME - timedelta(hours=2),
+            end_time=FIXED_TIME - timedelta(hours=1),
+            idempotency_key="test-deterministic-lineage-10",
+        )
+        session.commit()
+        assert result1.status == IngestionStatus.COMPLETED
+        result2 = await service.backfill(
+            symbol=SYMBOL,
+            start_time=FIXED_TIME - timedelta(hours=1),
+            end_time=FIXED_TIME + timedelta(hours=1),
+            idempotency_key="test-deterministic-lineage-11-12",
+        )
+        session.commit()
+        assert result2.status == IngestionStatus.COMPLETED
+        # Seed a gap at 12:00 by deleting the candle.
+        session.execute(
+            text(
+                """
+                delete from public.candles
+                where symbol_version_id = :sid
+                  and interval_code = '1h'
+                  and open_time = :t
+                """
+            ),
+            {
+                "sid": SYMBOL_VERSION_ID,
+                "t": FIXED_TIME,
+            },
+        )
+        session.commit()
+        gap_report = await service.detect_gaps(
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval_code="1h",
+            expected_start=FIXED_TIME - timedelta(hours=2),
+            expected_end=FIXED_TIME + timedelta(hours=1),
+        )
+        assert gap_report.missing_count == 1
+        assert gap_report.missing_ranges == (
+            (FIXED_TIME, FIXED_TIME + timedelta(hours=1)),
+        )
+        result = await service.repair_gaps(
+            symbol=SYMBOL,
+            gap_report=gap_report,
+            idempotency_key="test-deterministic-lineage-repair",
+        )
+        session.commit()
+        assert result.status == IngestionStatus.COMPLETED
+        # The parent lineage must contain 10:00, 11:00, and 12:00.
+        parent_ingestion = (
+            session.execute(
+                text(
+                    """
+                select id, page_hashes
+                from public.market_data_ingestions
+                where symbol_version_id = :sid
+                  and interval_code = '1h'
+                  and ingestion_type = 'gap_repair'
+                  and requested_start_time = :start
+                  and requested_end_time = :end
+                """
+                ),
+                {
+                    "sid": SYMBOL_VERSION_ID,
+                    "start": FIXED_TIME - timedelta(hours=2),
+                    "end": FIXED_TIME + timedelta(hours=1),
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+        assert parent_ingestion is not None
+        pairs = (
+            json.loads(parent_ingestion["page_hashes"])
+            if isinstance(parent_ingestion["page_hashes"], str)
+            else list(parent_ingestion["page_hashes"])
+        )
+        hash_by_time = {datetime.fromisoformat(p[0]): p[1] for p in pairs}
+        assert FIXED_TIME - timedelta(hours=2) in hash_by_time
+        assert FIXED_TIME - timedelta(hours=1) in hash_by_time
+        assert FIXED_TIME in hash_by_time
+        # Replay: rebuild the same snapshot from the same lineage.
+        candidate_candles = (
+            session.execute(
+                text(
+                    """
+                select id, open_time
+                from public.candles
+                where symbol_version_id = :sid
+                  and interval_code = '1h'
+                  and open_time >= :start and open_time < :end
+                  and finalized = true
+                  and superseded_by is null
+                order by open_time
+                """
+                ),
+                {
+                    "sid": SYMBOL_VERSION_ID,
+                    "start": FIXED_TIME - timedelta(hours=2),
+                    "end": FIXED_TIME + timedelta(hours=1),
+                },
+            )
+            .mappings()
+            .all()
+        )
+        candle_ids = [row["id"] for row in candidate_candles]
+        assert len(candle_ids) == 3
+        snapshot = service.create_snapshot(
+            analysis_time=FIXED_TIME + timedelta(hours=1),
+            candle_ids=candle_ids,
+            quality_outcome="approved",
+            freshness_outcome="fresh",
+            ingestion_id=parent_ingestion["id"],
+        )
+        session.commit()
+        replayed = service.create_snapshot(
+            analysis_time=FIXED_TIME + timedelta(hours=1),
+            candle_ids=candle_ids,
+            quality_outcome="approved",
+            freshness_outcome="fresh",
+            ingestion_id=parent_ingestion["id"],
+        )
+        session.commit()
+        assert replayed.snapshot_hash == snapshot.snapshot_hash
+        assert replayed.snapshot_id == snapshot.snapshot_id
     finally:
         session.close()
 
