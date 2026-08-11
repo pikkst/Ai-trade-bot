@@ -1500,12 +1500,13 @@ class MarketDataService:
             )
             # Build a parent ingestion lineage covering the full repaired
             # range from completed ingestion evidence only. For each active
-            # finalized candle in the range, if at least one completed
-            # ingestion proves its exact (open_time, content_hash), require
-            # that all overlapping ingestions agree. Fail closed on
-            # conflicting evidence rather than choosing by row order. Candles
-            # without any ingestion evidence are skipped; they are not part
-            # of the proven parent lineage.
+            # finalized candle in the range, require that at least one
+            # completed ingestion proves its exact (open_time, content_hash).
+            # Historical corrections may produce multiple hashes for the
+            # same timestamp across overlapping ingestions; the active
+            # candle's hash must be present in the evidence set. Candles
+            # without any ingestion evidence are skipped; they are not
+            # part of the proven parent lineage.
             current_candles = (
                 self._session.execute(
                     text(
@@ -1578,19 +1579,13 @@ class MarketDataService:
                 hashes = evidence_by_time.get(open_time)
                 if not hashes:
                     continue
-                if len(hashes) > 1:
-                    raise ValueError(
-                        f"conflicting ingestion evidence for candle at "
-                        f"{open_time.isoformat()}: {sorted(hashes)}"
-                    )
-                proven_hash = next(iter(hashes))
-                if proven_hash != current_hash:
+                if current_hash not in hashes:
                     raise ValueError(
                         f"candle at {open_time.isoformat()} has hash "
                         f"{current_hash} but ingestion evidence proves "
-                        f"{proven_hash}"
+                        f"{sorted(hashes)}"
                     )
-                parent_accepted[open_time] = proven_hash
+                parent_accepted[open_time] = current_hash
             parent_ingestion_id = self._get_or_create_ingestion(
                 ingestion_type=IngestionType.GAP_REPAIR,
                 start_time=gap_report.expected_start,

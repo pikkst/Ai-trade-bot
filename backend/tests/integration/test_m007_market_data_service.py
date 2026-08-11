@@ -1560,19 +1560,20 @@ async def test_repair_gaps_rejects_unvalidated_candle_lineage(
 
 
 @pytest.mark.asyncio
-@pytest.mark.asyncio
 async def test_repair_gaps_parent_lineage_deterministic_with_overlapping_ingestions(
     database_engine: Engine, clean_m007_data: None
 ) -> None:
-    """Parent lineage is deterministic regardless of overlapping ingestion
-    order or history.
+    """Parent lineage accepts the active corrected hash when overlapping
+    ingestions contain historical correction evidence.
 
-    Create two overlapping completed ingestions for [10:00, 12:00) and
-    [11:00, 13:00) with identical hashes for the overlapping candle 11:00.
-    Seed a gap at 12:00 and repair [10:00, 13:00). The parent must contain
-    10:00, 11:00, and 12:00 with the correct hashes, and the resulting
-    parent hash and snapshot identity must be identical regardless of which
-    overlapping ingestion is processed first.
+    Backfill [10:00, 12:00) to establish H1(10:00) and H1'(11:00). Replace
+    11:00 with H2 via direct table write and a direct ingestion proving H2.
+    Run incremental_fetch [11:00, 12:00); the provider returns H1', so the
+    service corrects H2 -> H1'. Backfill [12:00, 13:00) then delete 12:00
+    to create a gap. Repair [10:00, 13:00) must accept 10:00 (H1) and 11:00
+    (H1') from the overlapping ingestion evidence despite the historical H2
+    ingestion, repair 12:00, and allow full-range snapshot approval and
+    deterministic replay.
     """
     provider = FakeBinanceProvider(
         config=FakeBinanceConfig(
@@ -1608,25 +1609,90 @@ async def test_repair_gaps_parent_lineage_deterministic_with_overlapping_ingesti
             interval=CandleInterval.ONE_HOUR,
             clock=FixedClock(FIXED_TIME),
         )
-        # Seed candles for 10:00, 11:00, 12:00 through legitimate backfill
-        # ingestions. The two ingestions overlap at 11:00 with identical hash.
+        # Step 1: backfill [10:00, 12:00) -> 10:00 (H1), 11:00 (H1')
         result1 = await service.backfill(
             symbol=SYMBOL,
             start_time=FIXED_TIME - timedelta(hours=2),
-            end_time=FIXED_TIME - timedelta(hours=1),
-            idempotency_key="test-deterministic-lineage-10",
+            end_time=FIXED_TIME,
+            idempotency_key="test-deterministic-lineage-10-11",
         )
         session.commit()
         assert result1.status == IngestionStatus.COMPLETED
-        result2 = await service.backfill(
-            symbol=SYMBOL,
-            start_time=FIXED_TIME - timedelta(hours=1),
-            end_time=FIXED_TIME + timedelta(hours=1),
-            idempotency_key="test-deterministic-lineage-11-12",
+        # Step 2: replace 11:00 with H2 and create a direct ingestion
+        # proving H2, simulating a prior correction.
+        session.execute(
+            text(
+                """
+                delete from public.candles
+                where symbol_version_id = :sid
+                  and interval_code = '1h'
+                  and open_time = :t
+                """
+            ),
+            {
+                "sid": SYMBOL_VERSION_ID,
+                "t": FIXED_TIME - timedelta(hours=1),
+            },
+        )
+        session.execute(
+            text(
+                """
+                insert into public.candles (
+                    symbol_version_id, interval_code, open_time, close_time,
+                    open_price, high_price, low_price, close_price,
+                    base_volume, quote_volume, trade_count, finalized, content_hash
+                ) values (
+                    :sid, '1h', :t, :t_close,
+                    100, 105, 95, 102, 1.5, 1500, 100, true, :h
+                )
+                on conflict (symbol_version_id, interval_code, open_time)
+                where superseded_by is null do nothing
+                """
+            ),
+            {
+                "sid": SYMBOL_VERSION_ID,
+                "t": FIXED_TIME - timedelta(hours=1),
+                "t_close": FIXED_TIME,
+                "h": "c" * 64,
+            },
         )
         session.commit()
-        assert result2.status == IngestionStatus.COMPLETED
-        # Seed a gap at 12:00 by deleting the candle.
+        seed_direct_ingestion(
+            session,
+            SYMBOL_VERSION_ID,
+            FIXED_TIME - timedelta(hours=1),
+            FIXED_TIME,
+            [[(FIXED_TIME - timedelta(hours=1)).isoformat(), "c" * 64]],
+        )
+        session.commit()
+        # Step 3: incremental_fetch [11:00, 12:00) triggers correction
+        # H2 -> H1' because the fake provider returns H1' for 11:00.
+        service_narrow = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+            incremental_max_range_hours=1,
+            incremental_overlap_hours=0,
+        )
+        result2 = await service_narrow.incremental_fetch(
+            symbol=SYMBOL,
+            idempotency_key="test-deterministic-lineage-correction",
+        )
+        session.commit()
+        assert result2.corrected_count >= 1
+        # Step 4: backfill [12:00, 13:00) then delete 12:00 to create gap.
+        result3 = await service.backfill(
+            symbol=SYMBOL,
+            start_time=FIXED_TIME,
+            end_time=FIXED_TIME + timedelta(hours=1),
+            idempotency_key="test-deterministic-lineage-12",
+        )
+        session.commit()
+        assert result3.status == IngestionStatus.COMPLETED
         session.execute(
             text(
                 """
@@ -1642,6 +1708,7 @@ async def test_repair_gaps_parent_lineage_deterministic_with_overlapping_ingesti
             },
         )
         session.commit()
+        # Step 5: detect and repair gap [12:00, 13:00).
         gap_report = await service.detect_gaps(
             symbol_version_id=SYMBOL_VERSION_ID,
             interval_code="1h",
@@ -1659,7 +1726,7 @@ async def test_repair_gaps_parent_lineage_deterministic_with_overlapping_ingesti
         )
         session.commit()
         assert result.status == IngestionStatus.COMPLETED
-        # The parent lineage must contain 10:00, 11:00, and 12:00.
+        # Step 6: verify parent lineage contains 10:00, 11:00, 12:00.
         parent_ingestion = (
             session.execute(
                 text(
@@ -1692,7 +1759,7 @@ async def test_repair_gaps_parent_lineage_deterministic_with_overlapping_ingesti
         assert FIXED_TIME - timedelta(hours=2) in hash_by_time
         assert FIXED_TIME - timedelta(hours=1) in hash_by_time
         assert FIXED_TIME in hash_by_time
-        # Replay: rebuild the same snapshot from the same lineage.
+        # Step 7: replay snapshot and assert same identity.
         candidate_candles = (
             session.execute(
                 text(
@@ -1930,6 +1997,22 @@ async def test_correction_invalidates_dependent_snapshot(
         session.execute(
             text(
                 """
+                insert into public.workspaces (
+                    id, name, base_currency, lifecycle_state,
+                    created_at, updated_at, version
+                ) values (
+                    :wid, 'm007-snapshot-tests', 'EUR', 'active',
+                    timezone('utc', now()), timezone('utc', now()), 1
+                )
+                on conflict (id) do nothing
+                """
+            ),
+            {"wid": WORKSPACE_ID},
+        )
+        session.commit()
+        session.execute(
+            text(
+                """
                 insert into public.candles (
                     symbol_version_id, interval_code, open_time, close_time,
                     open_price, high_price, low_price, close_price,
@@ -2014,6 +2097,22 @@ def test_snapshot_idempotent_replay_same_identity(
     )
     session = build_session_factory(database_engine)()
     try:
+        session.execute(
+            text(
+                """
+                insert into public.workspaces (
+                    id, name, base_currency, lifecycle_state,
+                    created_at, updated_at, version
+                ) values (
+                    :wid, 'm007-snapshot-tests', 'EUR', 'active',
+                    timezone('utc', now()), timezone('utc', now()), 1
+                )
+                on conflict (id) do nothing
+                """
+            ),
+            {"wid": WORKSPACE_ID},
+        )
+        session.commit()
         session.execute(
             text(
                 """
@@ -2382,12 +2481,28 @@ async def test_drift_failure_then_healthy_then_fresh_snapshot(
         config=FakeBinanceConfig(
             scenario=FakeBinanceScenario.SUCCESS,
             fixed_clock_time=FIXED_TIME,
-            server_time_offset_seconds=30,
             fixture_version="2026-08-08-m007-v1",
+            server_time_offset_seconds=200,
         )
     )
     session = build_session_factory(database_engine)()
     try:
+        session.execute(
+            text(
+                """
+                insert into public.workspaces (
+                    id, name, base_currency, lifecycle_state,
+                    created_at, updated_at, version
+                ) values (
+                    :wid, 'm007-snapshot-tests', 'EUR', 'active',
+                    timezone('utc', now()), timezone('utc', now()), 1
+                )
+                on conflict (id) do nothing
+                """
+            ),
+            {"wid": WORKSPACE_ID},
+        )
+        session.commit()
         service = MarketDataService(
             session=session,
             provider=drift_provider,
@@ -3034,6 +3149,22 @@ async def test_invalid_candle_scoped_snapshot_fails_only_at_t(
     unrelated ranges remain approvable."""
     session = build_session_factory(database_engine)()
     try:
+        session.execute(
+            text(
+                """
+                insert into public.workspaces (
+                    id, name, base_currency, lifecycle_state,
+                    created_at, updated_at, version
+                ) values (
+                    :wid, 'm007-snapshot-tests', 'EUR', 'active',
+                    timezone('utc', now()), timezone('utc', now()), 1
+                )
+                on conflict (id) do nothing
+                """
+            ),
+            {"wid": WORKSPACE_ID},
+        )
+        session.commit()
         # Seed two valid candles: 10:00 and 11:00 (close 12:00 for freshness).
         t10 = FIXED_TIME - timedelta(hours=2)
         t11 = FIXED_TIME - timedelta(hours=1)
@@ -3801,6 +3932,22 @@ async def test_quality_gate_half_open_boundary_and_candle_scoped(
     membership for candle-scoped blockers."""
     session = build_session_factory(database_engine)()
     try:
+        session.execute(
+            text(
+                """
+                insert into public.workspaces (
+                    id, name, base_currency, lifecycle_state,
+                    created_at, updated_at, version
+                ) values (
+                    :wid, 'm007-snapshot-tests', 'EUR', 'active',
+                    timezone('utc', now()), timezone('utc', now()), 1
+                )
+                on conflict (id) do nothing
+                """
+            ),
+            {"wid": WORKSPACE_ID},
+        )
+        session.commit()
         t10 = FIXED_TIME - timedelta(hours=2)
         t11 = FIXED_TIME - timedelta(hours=1)
         for idx, candle_time in enumerate((t10, t11)):
@@ -4132,6 +4279,22 @@ async def test_invalid_evidence_recovers_when_valid_candle_arrives(
     candle at T, so snapshots covering T can be approved."""
     session = build_session_factory(database_engine)()
     try:
+        session.execute(
+            text(
+                """
+                insert into public.workspaces (
+                    id, name, base_currency, lifecycle_state,
+                    created_at, updated_at, version
+                ) values (
+                    :wid, 'm007-snapshot-tests', 'EUR', 'active',
+                    timezone('utc', now()), timezone('utc', now()), 1
+                )
+                on conflict (id) do nothing
+                """
+            ),
+            {"wid": WORKSPACE_ID},
+        )
+        session.commit()
         t10 = FIXED_TIME - timedelta(hours=1)
         # Insert a valid candle at 10:00 with an invalid_value blocker over
         # [10:00, 11:00) (half-open), simulating a prior invalid attempt.
