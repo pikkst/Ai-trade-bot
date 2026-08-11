@@ -5,10 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import math
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal, InvalidOperation, getcontext
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation, getcontext
 from typing import Any
 from uuid import UUID
 
@@ -39,6 +38,12 @@ _MIN_HISTORY_FOR_RSI = 14
 _MIN_HISTORY_FOR_ATR = 14
 _MIN_HISTORY_FOR_VOLATILITY = 21
 _MIN_HISTORY_FOR_VOLUME_RELATIVE = 20
+_STORAGE_PRECISION = Decimal("0.000000000000000001")
+_EMPTY_OUTPUT_HASH = hashlib.sha256(b"").hexdigest()
+
+
+def _quantize(value: Decimal) -> Decimal:
+    return value.quantize(_STORAGE_PRECISION, rounding=ROUND_HALF_EVEN)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +94,7 @@ class FeatureService:
         assert_network_call_allowed()
         snapshot = self._load_snapshot()
         candles = self._load_snapshot_candles(snapshot)
+        self._validate_snapshot_membership(snapshot, candles)
         feature_set = self._load_feature_set_version()
         candle_count = len(candles)
         if candle_count < feature_set["required_history"]:
@@ -219,6 +225,22 @@ class FeatureService:
             )
             for row in rows
         ]
+
+    def _validate_snapshot_membership(
+        self, snapshot: dict[str, Any], candles: list[CandleData]
+    ) -> None:
+        expected_count = int(snapshot["candle_count"] or 0)
+        if len(candles) != expected_count:
+            raise ValueError(
+                f"snapshot {self._snapshot_id} membership count mismatch: "
+                f"expected {expected_count}, found {len(candles)}"
+            )
+        for c in candles:
+            if c.close_time > snapshot["analysis_time"]:
+                raise ValueError(
+                    f"snapshot {self._snapshot_id} contains future candle "
+                    f"{c.open_time.isoformat()}"
+                )
 
     def _load_feature_set_version(self) -> dict[str, Any]:
         row = (
@@ -366,6 +388,12 @@ class FeatureService:
             "snapshot_hash": snapshot["snapshot_hash"],
             "feature_set_version_id": str(feature_set["id"]),
             "feature_set_semantic_version": feature_set["semantic_version"],
+            "feature_set_configuration_hash": feature_set["configuration_hash"],
+            "feature_set_implementation_reference": feature_set[
+                "implementation_reference"
+            ],
+            "feature_set_required_history": feature_set["required_history"],
+            "feature_set_warm_up_policy": feature_set["warm_up_policy"],
             "schema_version": self._schema_version,
             "candle_count": len(candles),
             "candle_hashes": candle_hashes,
@@ -376,11 +404,12 @@ class FeatureService:
     def _compute_output_hash(self, values: list[FeatureValue]) -> str:
         value_hashes = []
         for v in values:
+            numeric_value_str = (
+                str(_quantize(v.numeric_value)) if v.numeric_value is not None else None
+            )
             payload = {
                 "feature_code": v.feature_code,
-                "numeric_value": str(v.numeric_value)
-                if v.numeric_value is not None
-                else None,
+                "numeric_value": numeric_value_str,
                 "string_value": v.string_value,
                 "boolean_value": v.boolean_value,
                 "unit": v.unit,
@@ -414,7 +443,7 @@ class FeatureService:
             feature_set=feature_set,
             idempotency_key=idempotency_key,
             input_hash=input_hash,
-            output_hash="",
+            output_hash=_EMPTY_OUTPUT_HASH,
             started_at=started_at,
             completed_at=completed_at,
             warnings=[reason],
@@ -440,7 +469,7 @@ class FeatureService:
             feature_set=feature_set,
             idempotency_key=idempotency_key,
             input_hash=input_hash,
-            output_hash="",
+            output_hash=_EMPTY_OUTPUT_HASH,
             started_at=started_at,
             completed_at=completed_at,
             warnings=warnings,
@@ -577,6 +606,58 @@ class FeatureService:
         )
         self._session.execute(text(sql), params)
 
+    def invalidate_calculations_for_snapshot(
+        self,
+        snapshot_id: UUID,
+        reason: str,
+        replacement_calculation_id: UUID | None = None,
+    ) -> None:
+        row = (
+            self._session.execute(
+                text(
+                    """
+                    select id from public.feature_calculations
+                    where snapshot_id = :snapshot_id
+                      and status = 'completed'
+                    order by created_at desc
+                    limit 1
+                    """
+                ),
+                {"snapshot_id": snapshot_id},
+            )
+            .scalars()
+            .one_or_none()
+        )
+        if row is None:
+            return
+        calculation_id = row
+        self._session.execute(
+            text(
+                """
+                insert into public.feature_calculation_invalidations (
+                    calculation_id, reason, replacement_calculation_id
+                ) values (
+                    :calculation_id, :reason, :replacement_calculation_id
+                )
+                """
+            ),
+            {
+                "calculation_id": calculation_id,
+                "reason": reason,
+                "replacement_calculation_id": replacement_calculation_id,
+            },
+        )
+        self._session.execute(
+            text(
+                """
+                update public.feature_calculations
+                set status = 'invalid_source'
+                where id = :calculation_id
+                """
+            ),
+            {"calculation_id": calculation_id},
+        )
+
     def _make_value(
         self,
         feature_code: FeatureCode,
@@ -588,10 +669,11 @@ class FeatureService:
         unit: str = "",
         null_reason: str | None = None,
     ) -> FeatureValue:
+        quantized = _quantize(numeric_value) if numeric_value is not None else None
         return FeatureValue(
             calculation_id=UUID(int=0),
             feature_code=feature_code.value,
-            numeric_value=numeric_value,
+            numeric_value=quantized,
             string_value=string_value,
             boolean_value=boolean_value,
             unit=unit,
@@ -633,7 +715,8 @@ class FeatureService:
                 null_reason = _WARM_UP_NULL_REASON
             else:
                 try:
-                    log_val = Decimal(str(math.log(float(curr_close / prev_close))))
+                    ratio = curr_close / prev_close
+                    log_val = _quantize(ratio.ln())
                     null_reason = None
                 except (InvalidOperation, ValueError):
                     log_val = None
@@ -968,7 +1051,7 @@ class FeatureService:
             mean = sum(window, start=Decimal("0")) / Decimal(period)
             variance = sum((r - mean) ** 2 for r in window) / Decimal(period)
             std = variance.sqrt()
-            annualized = std * Decimal(str(math.sqrt(252.0 * 24)))
+            annualized = _quantize(std * Decimal(252 * 24).sqrt())
             values.append(
                 self._make_value(
                     FeatureCode.VOLATILITY_ROLLING_20,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -24,11 +25,14 @@ FEATURE_SET_ID = UUID("50000000-0000-0000-0000-000000000001")
 
 
 def _make_candle(
-    open_time: datetime, close: Decimal, volume: Decimal = Decimal("1")
+    open_time: datetime,
+    close: Decimal,
+    volume: Decimal = Decimal("1"),
+    close_time: datetime | None = None,
 ) -> CandleData:
     return CandleData(
         open_time=open_time,
-        close_time=open_time + timedelta(hours=1),
+        close_time=close_time if close_time is not None else open_time,
         open=close,
         high=close,
         low=close,
@@ -204,6 +208,30 @@ class MockSession:
                     }
                 )
             return result
+        if "update public.feature_calculations" in sql:
+            for calc in self.calculations.values():
+                if calc["id"] == params.get("calculation_id"):
+                    if "status = 'invalid_source'" in sql:
+                        calc["status"] = "invalid_source"
+                    elif "status" in params:
+                        calc["status"] = params["status"]
+                    break
+            result.rowcount = 1
+            return result
+        if (
+            "from public.feature_calculations" in sql
+            and "snapshot_id" in sql
+            and "status = 'completed'" in sql
+        ):
+            for calc in self.calculations.values():
+                if (
+                    calc["snapshot_id"] == params.get("snapshot_id")
+                    and calc["status"] == "completed"
+                ):
+                    result._one_or_none_value = calc["id"]
+                    return result
+            result._one_or_none_value = None
+            return result
         if "from public.feature_calculations" in sql and "input_hash" in sql:
             for calc in self.calculations.values():
                 if (
@@ -221,13 +249,14 @@ class MockSession:
 
 def _setup_session(candles: list[CandleData]) -> MockSession:
     session = MockSession()
+    analysis_time = candles[-1].close_time if candles else FIXED_TIME
     session.snapshots[SNAPSHOT_ID] = {
         "id": SNAPSHOT_ID,
         "workspace_id": WORKSPACE_ID,
         "exchange_id": UUID("40000000-0000-0000-0000-000000000001"),
         "symbol_version_id": UUID("41000000-0000-0000-0000-000000000001"),
         "interval_code": "1h",
-        "analysis_time": FIXED_TIME,
+        "analysis_time": analysis_time,
         "first_event_time": candles[0].open_time if candles else None,
         "last_event_time": candles[-1].open_time if candles else None,
         "candle_count": len(candles),
@@ -288,9 +317,9 @@ def test_reference_simple_returns() -> None:
     ]
     assert len(returns) == 4
     assert returns[0].numeric_value == Decimal("0.01")
-    assert returns[1].numeric_value == Decimal("0.009900990099009900990099009901")
-    assert returns[2].numeric_value == Decimal("0.009803921568627450980392156863")
-    assert returns[3].numeric_value == Decimal("0.009708737864077669902912621359")
+    assert returns[1].numeric_value == Decimal("0.009900990099009901")
+    assert returns[2].numeric_value == Decimal("0.009803921568627451")
+    assert returns[3].numeric_value == Decimal("0.009708737864077670")
 
 
 def test_reference_log_returns() -> None:
@@ -301,10 +330,10 @@ def test_reference_log_returns() -> None:
         v for v in result.values if v.feature_code == FeatureCode.RETURNS_LOG.value
     ]
     assert len(returns) == 4
-    assert returns[0].numeric_value == Decimal("0.009950330853168092")
-    assert returns[1].numeric_value == Decimal("0.00985229644301164")
-    assert returns[2].numeric_value == Decimal("0.009756174945364656")
-    assert returns[3].numeric_value == Decimal("0.00966191091173689")
+    assert returns[0].numeric_value == Decimal("0.009950330853168083")
+    assert returns[1].numeric_value == Decimal("0.009852296443011630")
+    assert returns[2].numeric_value == Decimal("0.009756174945364690")
+    assert returns[3].numeric_value == Decimal("0.009661910911736894")
 
 
 def test_reference_sma() -> None:
@@ -375,8 +404,8 @@ def test_reference_volatility() -> None:
     assert len(vol_values) == 25
     for i in range(20):
         assert vol_values[i].null_reason == _get_warm_up_null_reason(), f"index {i}"
-    assert vol_values[20].numeric_value == Decimal("0.03762894668299975416829185114")
-    assert vol_values[24].numeric_value == Decimal("0.03500858361849181602138789614")
+    assert vol_values[20].numeric_value == Decimal("0.037628946682999756")
+    assert vol_values[24].numeric_value == Decimal("0.035008583618491817")
 
 
 def test_reference_volume_relative() -> None:
@@ -694,6 +723,111 @@ def test_volume_relative_zero_sma() -> None:
     for i in range(19, 25):
         assert vol_values[i].null_reason == _get_warm_up_null_reason(), f"index {i}"
         assert vol_values[i].numeric_value is None
+
+
+def test_membership_count_mismatch() -> None:
+    candles = _make_candles(5, base=Decimal("100"), volume=Decimal("1"))
+    session = _setup_session(candles)
+    session.snapshots[SNAPSHOT_ID]["candle_count"] = 99
+    with pytest.raises(ValueError, match="membership count mismatch"):
+        _compute_service(session)
+
+
+def test_membership_future_candle() -> None:
+    candles = _make_candles(5, base=Decimal("100"), volume=Decimal("1"))
+    session = _setup_session(candles)
+    session.snapshots[SNAPSHOT_ID]["analysis_time"] = candles[-1].open_time - timedelta(
+        seconds=1
+    )
+    with pytest.raises(ValueError, match="future candle"):
+        _compute_service(session)
+
+
+def test_empty_output_hash_is_canonical() -> None:
+    candles = _make_candles(5, base=Decimal("100"), volume=Decimal("1"))
+    session = _setup_session(candles)
+    session.feature_sets[FEATURE_SET_ID]["required_history"] = 100
+    result = _compute_service(session)
+    assert result.calculation.status == FeatureStatus.INSUFFICIENT_HISTORY.value
+    assert len(result.calculation.output_hash) == 64
+    assert result.calculation.output_hash == hashlib.sha256(b"").hexdigest()
+
+
+def test_error_output_hash_is_canonical() -> None:
+    candles = _make_candles(5, base=Decimal("100"), volume=Decimal("1"))
+    session = _setup_session(candles)
+    service = FeatureService(
+        session=session,
+        snapshot_id=SNAPSHOT_ID,
+        feature_set_version_id=FEATURE_SET_ID,
+        workspace_id=WORKSPACE_ID,
+        clock=FixedClock(FIXED_TIME),
+    )
+    original_compute = service._compute_returns
+    service._compute_returns = lambda candles, warnings: (_ for _ in ()).throw(
+        RuntimeError("boom")
+    )
+    result = service.compute_features()
+    assert result.calculation.status == FeatureStatus.CALCULATION_ERROR.value
+    assert len(result.calculation.output_hash) == 64
+    assert result.calculation.output_hash == hashlib.sha256(b"").hexdigest()
+    service._compute_returns = original_compute
+
+
+def test_output_hash_round_trip_from_stored_precision() -> None:
+    candles = _make_candles(30, base=Decimal("100"), volume=Decimal("5"))
+    session = _setup_session(candles)
+    result = _compute_service(session)
+    stored_values = session.values.get(result.calculation.id, [])
+    assert len(stored_values) > 0
+    for stored in stored_values:
+        if stored["numeric_value"] is not None:
+            assert isinstance(stored["numeric_value"], Decimal)
+
+
+def test_input_hash_includes_full_feature_set_config() -> None:
+    candles = _make_candles(30, base=Decimal("100"), volume=Decimal("5"))
+    session_a = _setup_session(candles)
+    session_b = _setup_session(candles)
+    session_b.feature_sets[FEATURE_SET_ID]["configuration_hash"] = "c" * 64
+    result_a = _compute_service(session_a)
+    result_b = _compute_service(session_b)
+    assert result_a.calculation.input_hash != result_b.calculation.input_hash
+
+
+def test_correction_invalidation_lineage_full_sequence() -> None:
+    candles = _make_candles(30, base=Decimal("100"), volume=Decimal("5"))
+    session = _setup_session(candles)
+    result = _compute_service(session)
+    assert result.calculation.status == FeatureStatus.COMPLETED.value
+    service = FeatureService(
+        session=session,
+        snapshot_id=SNAPSHOT_ID,
+        feature_set_version_id=FEATURE_SET_ID,
+        workspace_id=WORKSPACE_ID,
+        clock=FixedClock(FIXED_TIME),
+    )
+    service.invalidate_calculations_for_snapshot(
+        SNAPSHOT_ID,
+        reason="candle_correction",
+        replacement_calculation_id=None,
+    )
+    reloaded = service._find_existing_calculation(result.calculation.idempotency_key)
+    assert reloaded is not None
+    assert reloaded.status == FeatureStatus.INVALID_SOURCE.value
+
+
+def test_warm_up_rows_allow_all_null_with_reason() -> None:
+    candles = _make_candles(5, base=Decimal("100"), volume=Decimal("1"))
+    session = _setup_session(candles)
+    result = _compute_service(session)
+    warm_up = [v for v in result.values if v.null_reason == _get_warm_up_null_reason()]
+    assert len(warm_up) > 0
+    for v in warm_up:
+        assert v.numeric_value is None
+        assert v.string_value is None
+        assert v.boolean_value is None
+        assert v.null_reason == _get_warm_up_null_reason()
 
 
 def test_get_warm_up_null_reason() -> None:
