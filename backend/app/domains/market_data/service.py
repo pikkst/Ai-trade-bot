@@ -1305,18 +1305,81 @@ class MarketDataService:
         idempotency_key: str,
     ) -> IngestionResult:
         assert_network_call_allowed()
-        await self._validate_symbol_binding(symbol)
+        # Historical binding for gap repair: resolve the version effective at
+        # the report's expected start, not the current live version. A gap
+        # detected for V1 must be repaired against V1 even if V2 has since
+        # superseded it.
+        effective_id = self._resolve_effective_symbol_version(
+            symbol, gap_report.expected_start
+        )
+        if effective_id is None:
+            raise ValueError(
+                f"no symbol metadata version is effective at or before "
+                f"gap repair start {gap_report.expected_start.isoformat()} for "
+                f"{symbol.upper()} on exchange {self._exchange_id}"
+            )
+        version_row = (
+            self._session.execute(
+                text(
+                    """
+                    select native_symbol, exchange_id, effective_at
+                    from public.exchange_symbol_versions
+                    where id = :id
+                    """
+                ),
+                {"id": effective_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if version_row is None:
+            raise ValueError(f"effective symbol version {effective_id} does not exist")
+        if cast(UUID, version_row["exchange_id"]) != self._exchange_id:
+            raise ValueError(
+                f"gap report version {effective_id} is owned by exchange "
+                f"{version_row['exchange_id']}, not configured exchange "
+                f"{self._exchange_id}"
+            )
+        if cast(str, version_row["native_symbol"]).upper() != symbol.upper():
+            raise ValueError(
+                f"gap report version {effective_id} native symbol "
+                f"{version_row['native_symbol']} does not match requested "
+                f"symbol {symbol.upper()}"
+            )
+        if effective_id != gap_report.symbol_version_id:
+            raise ValueError(
+                f"gap report symbol_version_id {gap_report.symbol_version_id} "
+                f"does not match effective version {effective_id} at repair "
+                f"start {gap_report.expected_start.isoformat()}"
+            )
+        next_effective = self._session.execute(
+            text(
+                """
+                select min(effective_at)
+                from public.exchange_symbol_versions
+                where exchange_id = :exchange_id
+                  and native_symbol = :native_symbol
+                  and effective_at > :effective_at
+                """
+            ),
+            {
+                "exchange_id": self._exchange_id,
+                "native_symbol": symbol.upper(),
+                "effective_at": version_row["effective_at"],
+            },
+        ).scalar_one()
+        if next_effective is not None and gap_report.expected_end > next_effective:
+            raise ValueError(
+                "gap repair range crosses a symbol metadata version boundary "
+                f"at {next_effective.isoformat()}; partition the range"
+            )
+        self._symbol_version_id = effective_id
         # Validate the complete caller-supplied report contract BEFORE any
         # short-circuit or provider request: a foreign or internally
         # inconsistent GapReport must never drive this service's fetches or be
         # certified COMPLETED against the service's configured identity.
         self._validate_gap_report(gap_report)
         if gap_report.missing_count == 0:
-            # A zero-gap report must never be certified without proving the
-            # dataset: GapReport is a public dataclass, so re-derive the gap
-            # state against persisted candle coverage over the same range.
-            # A forged/empty dataset therefore fails instead of producing an
-            # empty successful repair.
             verification = await self.detect_gaps(
                 symbol_version_id=self._symbol_version_id,
                 interval_code=self._interval.value,
@@ -1328,6 +1391,51 @@ class MarketDataService:
                     "GapReport claims zero gaps but persisted evidence "
                     "still reports missing candles"
                 )
+            parent_ingestion_id = self._get_or_create_ingestion(
+                ingestion_type=IngestionType.GAP_REPAIR,
+                start_time=gap_report.expected_start,
+                end_time=gap_report.expected_end,
+                idempotency_key=idempotency_key,
+            )
+            existing_parent = (
+                self._session.execute(
+                    text(
+                        """
+                    select status, content_hash
+                    from public.market_data_ingestions
+                    where id = :id
+                    """
+                    ),
+                    {"id": parent_ingestion_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if existing_parent and existing_parent["status"] == "completed":
+                parent_content_hash = existing_parent["content_hash"]
+            else:
+                parent_content_hash = self._compute_ingestion_hash(
+                    gap_report.expected_start,
+                    gap_report.expected_end,
+                )
+                self._update_ingestion(
+                    ingestion_id=parent_ingestion_id,
+                    status=IngestionStatus.COMPLETED,
+                    inserted=0,
+                    duplicates=0,
+                    invalid=0,
+                    corrected=0,
+                    request_count=0,
+                    retry_count=0,
+                    provider_latency_ms=None,
+                    safe_error=None,
+                    content_hash=parent_content_hash,
+                    actual_start_time=gap_report.expected_start,
+                    actual_end_time=gap_report.expected_end,
+                    checkpoint=gap_report.expected_end,
+                    accepted_by_time={},
+                )
+            self._session.commit()
             return IngestionResult(
                 ingestion_type=IngestionType.GAP_REPAIR,
                 status=IngestionStatus.COMPLETED,
@@ -1340,9 +1448,7 @@ class MarketDataService:
                 request_count=0,
                 provider_latency_ms=None,
                 safe_error=None,
-                content_hash=self._compute_ingestion_hash(
-                    gap_report.expected_start, gap_report.expected_end
-                ),
+                content_hash=parent_content_hash,
                 idempotency_key=idempotency_key,
                 actual_start_time=gap_report.expected_start,
                 actual_end_time=gap_report.expected_end,
@@ -1392,6 +1498,119 @@ class MarketDataService:
                 range_end=gap_report.expected_end,
                 ingestion_id=None,
             )
+            # Build a parent ingestion lineage covering the full repaired
+            # range so the approval path can prove exact membership from a
+            # single completed ingestion instead of scattered child repairs.
+            parent_accepted: dict[datetime, str] = {}
+            for range_start, range_end in gap_report.missing_ranges:
+                child_page_hashes = self._session.execute(
+                    text(
+                        """
+                        select page_hashes
+                        from public.market_data_ingestions
+                        where symbol_version_id = :sid
+                          and interval_code = :interval
+                          and ingestion_type = 'gap_repair'
+                          and requested_start_time = :start
+                          and requested_end_time = :end
+                        """
+                    ),
+                    {
+                        "sid": self._symbol_version_id,
+                        "interval": self._interval.value,
+                        "start": range_start,
+                        "end": range_end,
+                    },
+                ).scalar_one_or_none()
+                if child_page_hashes:
+                    pairs = (
+                        json.loads(child_page_hashes)
+                        if isinstance(child_page_hashes, str)
+                        else list(child_page_hashes)
+                    )
+                    for pair in pairs:
+                        parent_accepted[datetime.fromisoformat(pair[0])] = pair[1]
+            existing_candles = (
+                self._session.execute(
+                    text(
+                        """
+                    select open_time, content_hash
+                    from public.candles
+                    where symbol_version_id = :sid
+                      and interval_code = :interval
+                      and open_time >= :start and open_time < :end
+                      and finalized = true
+                      and superseded_by is null
+                    """
+                    ),
+                    {
+                        "sid": self._symbol_version_id,
+                        "interval": self._interval.value,
+                        "start": gap_report.expected_start,
+                        "end": gap_report.expected_end,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+            for row in existing_candles:
+                parent_accepted[row["open_time"]] = row["content_hash"]
+            parent_ingestion_id = self._get_or_create_ingestion(
+                ingestion_type=IngestionType.GAP_REPAIR,
+                start_time=gap_report.expected_start,
+                end_time=gap_report.expected_end,
+                idempotency_key=idempotency_key,
+            )
+            existing_parent = (
+                self._session.execute(
+                    text(
+                        """
+                    select status, content_hash
+                    from public.market_data_ingestions
+                    where id = :id
+                    """
+                    ),
+                    {"id": parent_ingestion_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if existing_parent and existing_parent["status"] == "completed":
+                parent_content_hash = existing_parent["content_hash"]
+            else:
+                parent_content_hash = self._compute_ingestion_hash(
+                    gap_report.expected_start,
+                    gap_report.expected_end,
+                    parent_accepted,
+                )
+                self._persist_page_evidence(
+                    ingestion_id=parent_ingestion_id,
+                    checkpoint=gap_report.expected_end,
+                    inserted=total_inserted,
+                    duplicates=total_duplicates,
+                    invalid=total_invalid,
+                    corrected=total_corrected,
+                    request_count=total_request_count,
+                    retry_count=total_retry_count,
+                    accepted_by_time=parent_accepted,
+                )
+                self._update_ingestion(
+                    ingestion_id=parent_ingestion_id,
+                    status=IngestionStatus.COMPLETED,
+                    inserted=total_inserted,
+                    duplicates=total_duplicates,
+                    invalid=total_invalid,
+                    corrected=total_corrected,
+                    request_count=total_request_count,
+                    retry_count=total_retry_count,
+                    provider_latency_ms=provider_latency_ms,
+                    safe_error=None,
+                    content_hash=parent_content_hash,
+                    actual_start_time=gap_report.expected_start,
+                    actual_end_time=gap_report.expected_end,
+                    checkpoint=gap_report.expected_end,
+                    accepted_by_time=parent_accepted,
+                )
             self._session.commit()
         return IngestionResult(
             ingestion_type=IngestionType.GAP_REPAIR,
@@ -1728,7 +1947,7 @@ class MarketDataService:
             return "incomplete"
         if len(membership_times) > 1:
             for earlier, later in zip(
-                membership_times, membership_times[1:], strict=True
+                membership_times, membership_times[1:], strict=False
             ):
                 if (later - earlier).total_seconds() != self._interval_seconds:
                     return "incomplete"

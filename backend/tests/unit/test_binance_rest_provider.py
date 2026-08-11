@@ -274,3 +274,267 @@ async def test_retry_count_sums_across_sequential_calls() -> None:
         assert provider.retry_count >= first_count + 1
     finally:
         await provider.close()
+
+
+def _kline_row(open_time: datetime, close_time: datetime) -> list[Any]:
+    return [
+        int(open_time.timestamp() * 1000),
+        "100.00",
+        "105.00",
+        "95.00",
+        "102.00",
+        "1.5",
+        int(close_time.timestamp() * 1000),
+        "1500.0",
+        100,
+        "0.75",
+        "1125.0",
+        "0",
+    ]
+
+
+def _kline_response(rows: list[list[Any]]) -> httpx.Response:
+    return httpx.Response(
+        status_code=200,
+        json=rows,
+        request=httpx.Request("GET", "/api/v3/klines"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_kline_429_retried_then_succeeds() -> None:
+    provider, request_mock = _build_provider(
+        [
+            httpx.Response(
+                status_code=429,
+                headers={"Retry-After": "1"},
+                request=httpx.Request("GET", "/api/v3/klines"),
+            ),
+            _kline_response(
+                [
+                    _kline_row(
+                        FIXED_TIME - timedelta(hours=1),
+                        FIXED_TIME,
+                    )
+                ]
+            ),
+        ]
+    )
+    try:
+        candles = await provider.get_finalized_candles(
+            symbol="BTCEUR",
+            interval=__import__(
+                "app.infrastructure.exchange.binance.protocol",
+                fromlist=["CandleInterval"],
+            ).CandleInterval.ONE_HOUR,
+            start_time=FIXED_TIME - timedelta(hours=1),
+            end_time=FIXED_TIME,
+        )
+    finally:
+        await provider.close()
+    assert request_mock.await_count == 2
+    assert provider.retry_count >= 1
+    assert len(candles) == 1
+    assert candles[0].time == FIXED_TIME - timedelta(hours=1)
+
+
+@pytest.mark.asyncio
+async def test_kline_429_retry_after_honored() -> None:
+    provider, request_mock = _build_provider(
+        [
+            httpx.Response(
+                status_code=429,
+                headers={"Retry-After": "5"},
+                request=httpx.Request("GET", "/api/v3/klines"),
+            ),
+            _kline_response(
+                [
+                    _kline_row(
+                        FIXED_TIME - timedelta(hours=1),
+                        FIXED_TIME,
+                    )
+                ]
+            ),
+        ]
+    )
+    try:
+        candles = await provider.get_finalized_candles(
+            symbol="BTCEUR",
+            interval=__import__(
+                "app.infrastructure.exchange.binance.protocol",
+                fromlist=["CandleInterval"],
+            ).CandleInterval.ONE_HOUR,
+            start_time=FIXED_TIME - timedelta(hours=1),
+            end_time=FIXED_TIME,
+        )
+    finally:
+        await provider.close()
+    assert request_mock.await_count == 2
+    assert provider.retry_count >= 1
+    assert provider.last_retry_wait_ms is not None
+    assert provider.last_retry_wait_ms >= 5000
+    assert len(candles) == 1
+
+
+@pytest.mark.asyncio
+async def test_kline_429_exhausted_retries() -> None:
+    provider, request_mock = _build_provider(
+        [
+            httpx.Response(
+                status_code=429,
+                request=httpx.Request("GET", "/api/v3/klines"),
+            ),
+            httpx.Response(
+                status_code=429,
+                request=httpx.Request("GET", "/api/v3/klines"),
+            ),
+            httpx.Response(
+                status_code=429,
+                request=httpx.Request("GET", "/api/v3/klines"),
+            ),
+        ]
+    )
+    try:
+        from app.infrastructure.exchange.binance.protocol import (
+            BinanceRateLimitError,
+        )
+
+        with pytest.raises(BinanceRateLimitError):
+            await provider.get_finalized_candles(
+                symbol="BTCEUR",
+                interval=__import__(
+                    "app.infrastructure.exchange.binance.protocol",
+                    fromlist=["CandleInterval"],
+                ).CandleInterval.ONE_HOUR,
+                start_time=FIXED_TIME - timedelta(hours=1),
+                end_time=FIXED_TIME,
+            )
+    finally:
+        await provider.close()
+    assert request_mock.await_count == 3
+    assert provider.retry_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_kline_timeout_retried_then_succeeds() -> None:
+    provider, request_mock = _build_provider(
+        [
+            httpx.Response(
+                status_code=200,
+                request=httpx.Request("GET", "/api/v3/klines"),
+            ),
+        ]
+    )
+    request_mock.side_effect = [
+        httpx.TimeoutException("timeout"),
+        httpx.Response(
+            status_code=200,
+            json=[
+                _kline_row(
+                    FIXED_TIME - timedelta(hours=1),
+                    FIXED_TIME,
+                )
+            ],
+            request=httpx.Request("GET", "/api/v3/klines"),
+        ),
+    ]
+    try:
+        candles = await provider.get_finalized_candles(
+            symbol="BTCEUR",
+            interval=__import__(
+                "app.infrastructure.exchange.binance.protocol",
+                fromlist=["CandleInterval"],
+            ).CandleInterval.ONE_HOUR,
+            start_time=FIXED_TIME - timedelta(hours=1),
+            end_time=FIXED_TIME,
+        )
+    finally:
+        await provider.close()
+    assert request_mock.await_count == 2
+    assert provider.retry_count >= 1
+    assert len(candles) == 1
+
+
+@pytest.mark.asyncio
+async def test_kline_timeout_exhausted_fails() -> None:
+    provider, request_mock = _build_provider(
+        [
+            httpx.Response(
+                status_code=200,
+                request=httpx.Request("GET", "/api/v3/klines"),
+            ),
+        ]
+    )
+    request_mock.side_effect = [
+        httpx.TimeoutException("timeout"),
+        httpx.TimeoutException("timeout"),
+        httpx.TimeoutException("timeout"),
+    ]
+    try:
+        from app.infrastructure.exchange.binance.protocol import (
+            BinanceTimeoutError,
+        )
+
+        with pytest.raises(BinanceTimeoutError):
+            await provider.get_finalized_candles(
+                symbol="BTCEUR",
+                interval=__import__(
+                    "app.infrastructure.exchange.binance.protocol",
+                    fromlist=["CandleInterval"],
+                ).CandleInterval.ONE_HOUR,
+                start_time=FIXED_TIME - timedelta(hours=1),
+                end_time=FIXED_TIME,
+            )
+    finally:
+        await provider.close()
+    assert request_mock.await_count == 3
+    assert provider.retry_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_kline_pagination_no_gap_no_duplicate() -> None:
+    # Two pages of 1000 candles each with exact 1h boundary; page-2 starts
+    # at last.close_time + 1h and must not duplicate or skip.
+    page1 = [
+        _kline_row(
+            FIXED_TIME - timedelta(hours=2000 - i),
+            FIXED_TIME - timedelta(hours=1999 - i),
+        )
+        for i in range(1000)
+    ]
+    page2 = [
+        _kline_row(
+            FIXED_TIME - timedelta(hours=1000 - i),
+            FIXED_TIME - timedelta(hours=999 - i),
+        )
+        for i in range(1000)
+    ]
+    provider = BinanceRestProvider(
+        clock=FixedClock(FIXED_TIME),
+        max_retries=3,
+    )
+    request_mock = AsyncMock(
+        side_effect=[
+            _kline_response(page1),
+            _kline_response(page2),
+        ]
+    )
+    provider._client.request = request_mock  # type: ignore[method-assign]
+    try:
+        candles = await provider.get_finalized_candles(
+            symbol="BTCEUR",
+            interval=__import__(
+                "app.infrastructure.exchange.binance.protocol",
+                fromlist=["CandleInterval"],
+            ).CandleInterval.ONE_HOUR,
+            start_time=FIXED_TIME - timedelta(hours=2000),
+            end_time=FIXED_TIME,
+        )
+    finally:
+        await provider.close()
+    assert request_mock.await_count == 2
+    assert len(candles) == 2000
+    times = [c.time for c in candles]
+    assert times[0] == FIXED_TIME - timedelta(hours=2000)
+    assert times[-1] == FIXED_TIME - timedelta(hours=1)
+    assert len(set(times)) == 2000

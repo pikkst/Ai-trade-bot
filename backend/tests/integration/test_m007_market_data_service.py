@@ -1014,6 +1014,323 @@ async def test_repair_gap_repairs_actual_missing_range(
 
 
 @pytest.mark.asyncio
+async def test_repair_gaps_historical_version_binding(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """Gap repair targets the historical version effective at the report's
+    expected start, not the current live version.
+
+    V1 is effective at t-4h, V2 supersedes V1 at t-2h. A gap detected for V1
+    at [t-3h, t-2h) must be repaired against V1 even though V2 is now current.
+    """
+    from decimal import Decimal
+
+    def metadata_at(raw: str, retrieved: datetime, tick: str) -> SymbolMetadata:
+        return SymbolMetadata(
+            symbol="BTCEUR",
+            base_asset="BTC",
+            quote_asset="EUR",
+            status=SymbolStatus.TRADING,
+            price_precision=2,
+            quantity_precision=6,
+            min_quantity=Decimal("0.00001"),
+            max_quantity=Decimal("9000.00000"),
+            min_notional=Decimal("10.00"),
+            max_notional=None,
+            tick_size=Decimal(tick),
+            step_size=Decimal("0.000001"),
+            raw_metadata_hash=raw,
+            retrieved_at=retrieved,
+        )
+
+    session = build_session_factory(database_engine)()
+    try:
+        provider_v1 = FakeBinanceProvider(
+            config=FakeBinanceConfig(
+                scenario=FakeBinanceScenario.SUCCESS,
+                fixed_clock_time=FIXED_TIME,
+                fixture_version="2026-08-08-m007-v1",
+            )
+        )
+        provider_v1._symbol_metadata["BTCEUR"] = metadata_at(
+            raw="a" * 64,
+            retrieved=FIXED_TIME - timedelta(hours=4),
+            tick="0.02",
+        )
+        service_v1 = MarketDataService(
+            session=session,
+            provider=provider_v1,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        v1_id = await service_v1.refresh_symbol_metadata(SYMBOL)
+        session.commit()
+
+        provider_v2 = FakeBinanceProvider(
+            config=FakeBinanceConfig(
+                scenario=FakeBinanceScenario.SUCCESS,
+                fixed_clock_time=FIXED_TIME,
+                fixture_version="2026-08-08-m007-v1",
+            )
+        )
+        provider_v2._symbol_metadata["BTCEUR"] = metadata_at(
+            raw="b" * 64,
+            retrieved=FIXED_TIME - timedelta(hours=2),
+            tick="0.03",
+        )
+        service_v2 = MarketDataService(
+            session=session,
+            provider=provider_v2,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=v1_id,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        v2_id = await service_v2.refresh_symbol_metadata(SYMBOL)
+        session.commit()
+        assert v2_id != v1_id
+
+        # Seed V1 candles at t-4h and t-2h so the gap [t-3h, t-2h) is
+        # detected for V1.
+        session.execute(
+            text(
+                """
+                insert into public.candles (
+                    symbol_version_id, interval_code, open_time, close_time,
+                    open_price, high_price, low_price, close_price,
+                    base_volume, quote_volume, trade_count, finalized, content_hash
+                ) values
+                (
+                    :sid, '1h', :t4, :t3,
+                    100, 105, 95, 102, 1.5, 1500, 100, true, :h4
+                ),
+                (
+                    :sid, '1h', :t2, :t1,
+                    100, 105, 95, 102, 1.5, 1500, 100, true, :h2
+                )
+                on conflict (symbol_version_id, interval_code, open_time)
+                where superseded_by is null do nothing
+                """
+            ),
+            {
+                "sid": v1_id,
+                "t4": FIXED_TIME - timedelta(hours=4),
+                "t3": FIXED_TIME - timedelta(hours=3),
+                "h4": "c" * 64,
+                "t2": FIXED_TIME - timedelta(hours=2),
+                "t1": FIXED_TIME - timedelta(hours=1),
+                "h2": "d" * 64,
+            },
+        )
+        session.commit()
+
+        # Detect gap for V1 range [t-3h, t-2h).
+        service = MarketDataService(
+            session=session,
+            provider=provider_v1,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=v1_id,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        gap_report = await service.detect_gaps(
+            symbol_version_id=v1_id,
+            interval_code="1h",
+            expected_start=FIXED_TIME - timedelta(hours=3),
+            expected_end=FIXED_TIME - timedelta(hours=2),
+        )
+        assert gap_report.missing_count == 1
+        assert gap_report.symbol_version_id == v1_id
+
+        # Repair must succeed against V1, not rotate to V2.
+        result = await service.repair_gaps(
+            symbol=SYMBOL,
+            gap_report=gap_report,
+            idempotency_key="test-repair-v1-after-v2",
+        )
+        session.commit()
+        assert result.status == IngestionStatus.COMPLETED
+        assert result.content_hash is not None
+
+        # The repaired candle must be attributed to V1.
+        v1_candles = session.execute(
+            text(
+                """
+                select count(*) from public.candles
+                where symbol_version_id = :sid
+                  and open_time >= :start and open_time < :end
+                """
+            ),
+            {
+                "sid": v1_id,
+                "start": FIXED_TIME - timedelta(hours=3),
+                "end": FIXED_TIME - timedelta(hours=2),
+            },
+        ).scalar_one()
+        assert v1_candles == 1
+
+        # V2 must not receive any candles from the V1 repair.
+        v2_candles = session.execute(
+            text(
+                """
+                select count(*) from public.candles
+                where symbol_version_id = :sid
+                """
+            ),
+            {"sid": v2_id},
+        ).scalar_one()
+        assert v2_candles == 0
+
+        # A gap report for V2 that crosses into V1 territory must be rejected.
+        v2_gap = GapReport(
+            symbol_version_id=v2_id,
+            interval_code="1h",
+            interval_seconds=3600,
+            expected_start=FIXED_TIME - timedelta(hours=3),
+            expected_end=FIXED_TIME - timedelta(hours=2),
+            missing_count=1,
+            missing_ranges=(
+                (FIXED_TIME - timedelta(hours=3), FIXED_TIME - timedelta(hours=2)),
+            ),
+            severity="error",
+        )
+        with pytest.raises(ValueError):
+            await service.repair_gaps(
+                symbol=SYMBOL,
+                gap_report=v2_gap,
+                idempotency_key="test-repair-v2-on-v1-range",
+            )
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_repair_gaps_parent_lineage_approves_full_range(
+    database_engine: Engine, clean_m007_data: None
+) -> None:
+    """A repaired range must be approvable from a single parent ingestion.
+
+    Seed 10:00 and 12:00 so 11:00 is missing, repair the gap, then create a
+    snapshot for [10:00, 13:00) using the parent ingestion. Replay must yield
+    the same snapshot identity.
+    """
+    provider = FakeBinanceProvider(
+        config=FakeBinanceConfig(
+            scenario=FakeBinanceScenario.SUCCESS,
+            fixed_clock_time=FIXED_TIME,
+            fixture_version="2026-08-08-m007-v1",
+        )
+    )
+    session = build_session_factory(database_engine)()
+    try:
+        session.execute(
+            text(
+                """
+                insert into public.candles (
+                    symbol_version_id, interval_code, open_time, close_time,
+                    open_price, high_price, low_price, close_price,
+                    base_volume, quote_volume, trade_count, finalized, content_hash
+                ) values
+                (
+                    :sid, '1h', :t10, :t11,
+                    100, 105, 95, 102, 1.5, 1500, 100, true, :h10
+                ),
+                (
+                    :sid, '1h', :t12, :t13,
+                    100, 105, 95, 102, 1.5, 1500, 100, true, :h12
+                )
+                on conflict (symbol_version_id, interval_code, open_time)
+                where superseded_by is null do nothing
+                """
+            ),
+            {
+                "sid": SYMBOL_VERSION_ID,
+                "t10": FIXED_TIME - timedelta(hours=2),
+                "t11": FIXED_TIME - timedelta(hours=1),
+                "t12": FIXED_TIME,
+                "t13": FIXED_TIME + timedelta(hours=1),
+                "h10": "a" * 64,
+                "h12": "b" * 64,
+            },
+        )
+        session.commit()
+        service = MarketDataService(
+            session=session,
+            provider=provider,
+            workspace_id=WORKSPACE_ID,
+            exchange_id=EXCHANGE_ID,
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval=CandleInterval.ONE_HOUR,
+            clock=FixedClock(FIXED_TIME),
+        )
+        gap_report = await service.detect_gaps(
+            symbol_version_id=SYMBOL_VERSION_ID,
+            interval_code="1h",
+            expected_start=FIXED_TIME - timedelta(hours=2),
+            expected_end=FIXED_TIME + timedelta(hours=1),
+        )
+        assert gap_report.missing_count == 1
+        assert gap_report.missing_ranges == (
+            (FIXED_TIME - timedelta(hours=1), FIXED_TIME),
+        )
+        result = await service.repair_gaps(
+            symbol=SYMBOL,
+            gap_report=gap_report,
+            idempotency_key="test-repair-parent-lineage",
+        )
+        session.commit()
+        assert result.status == IngestionStatus.COMPLETED
+
+        # The parent ingestion for the full range must exist and be completed.
+        parent_ingestion = (
+            session.execute(
+                text(
+                    """
+                select id, status, page_hashes
+                from public.market_data_ingestions
+                where symbol_version_id = :sid
+                  and interval_code = '1h'
+                  and ingestion_type = 'gap_repair'
+                  and requested_start_time = :start
+                  and requested_end_time = :end
+                """
+                ),
+                {
+                    "sid": SYMBOL_VERSION_ID,
+                    "start": FIXED_TIME - timedelta(hours=2),
+                    "end": FIXED_TIME + timedelta(hours=1),
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+        assert parent_ingestion is not None
+        assert parent_ingestion["status"] == "completed"
+        assert parent_ingestion["page_hashes"] is not None
+
+        # The parent page_hashes must cover all three candles (pre-existing
+        # 10:00/12:00 plus repaired 11:00).
+        pairs = (
+            json.loads(parent_ingestion["page_hashes"])
+            if isinstance(parent_ingestion["page_hashes"], str)
+            else list(parent_ingestion["page_hashes"])
+        )
+        accepted_times = sorted(datetime.fromisoformat(p[0]) for p in pairs)
+        assert accepted_times == [
+            FIXED_TIME - timedelta(hours=2),
+            FIXED_TIME - timedelta(hours=1),
+            FIXED_TIME,
+        ]
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
 async def test_partial_page_fails_closed_with_checkpoint(
     database_engine: Engine, clean_m007_data: None
 ) -> None:
