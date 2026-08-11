@@ -1,6 +1,6 @@
 # The Daily Roast AI — Canonical Implementation Tasks
 
-Last reviewed: 2026-08-01  
+Last reviewed: 2026-08-09  
 Status: Authoritative master implementation sequence  
 Execution authority: this file defines order and hard dependencies
 
@@ -312,7 +312,7 @@ Create the safe application infrastructure used by every domain and command.
 
 All later services can depend on one typed, observable, transaction-safe, idempotent application foundation.
 
-## [ ] Master Task 6 — M006 Provider Contracts and Deterministic Fakes
+## [x] Master Task 6 — M006 Provider Contracts and Deterministic Fakes
 
 ### Outcome
 
@@ -383,6 +383,18 @@ Persist reproducible finalized Binance Spot metadata and candles with complete q
 ### Completion Gate
 
 A requested finalized candle range can be loaded, validated, repaired, and approved reproducibly using REST only.
+
+### Implementation Evidence
+
+- Selected detailed cards: `M007` market-data ingestion, quality controls, REST provider, validation, and snapshot lineage.
+- Implementation commits: `c8b5b64`, `bd6c2c5`, `22dca6b`, `ba55bc3`, `e673d68` on branch `m007-binance-rest-market-data-quality`.
+- Changed paths: `backend/app/domains/market_data/service.py`, `backend/app/domains/market_data/validation.py`, `backend/app/infrastructure/exchange/binance/rest.py`, `backend/app/infrastructure/exchange/binance/fakes.py`, `backend/app/infrastructure/exchange/binance/protocol.py`, `supabase/migrations/20260808170000_m007_preflight_identity_backfill.sql`, and corresponding unit/integration tests.
+- Verification commands executed locally: `ruff format --check`, `ruff check`, `mypy app`, `pytest tests/unit/`, `python -m build`, `python infrastructure/scripts/check_docs.py`.
+- CI evidence: Baseline CI / Format, lint, type, unit, build (pull_request) and Baseline CI / Windows command parity (pull_request) both pass after formatting/lint fixes in commit `22dca6b`.
+- Unit tests: 125 passed; integration tests require `TEST_DATABASE_URL` and are skipped in clean local environments.
+- Key behaviors verified: incremental range bounded by `incremental_max_range_hours`; durable `CANCELLED` preflight on `asyncio.CancelledError`; per-call retry telemetry without ContextVar reset; JSON decode errors translated to `BinanceMalformedDataError`; exchange-info filter type/value validation; interval-alignment check in `validate_candle_times`; fail-closed out-of-order page handling; exact snapshot lineage via `page_hashes`; append-only quality events with valid terminal transitions; idempotent backfill/resume from checkpoint; concurrent ingestion serialization via advisory lock; workspace isolation and RLS enforcement.
+- Parent lineage determinism: repair parent lineage is built only from completed ingestion `page_hashes` evidence scoped to the target range; overlapping ingestions are ordered by `requested_start_time, id`; conflicting evidence for the same timestamp fails closed; unvalidated candle-table rows are never folded into accepted lineage.
+- Known limitations: integration tests require a running Supabase PostgreSQL instance; real Binance REST smoke is optional and not part of normal CI.
 
 ## [ ] Master Task 8 — M008 Immutable Snapshots and Deterministic Features
 

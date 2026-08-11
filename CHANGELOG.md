@@ -4,6 +4,61 @@ All notable project changes are documented here.
 
 ## Unreleased
 
+### M007 — Binance REST Market-Data Ingestion and Quality Controls — 2026-08-08
+
+#### Added
+
+- Additive Supabase/Alembic migration `20260808150000_m007_quality_state_governance` adding the `clock_drift_recovered` terminal vocabulary and scoping authenticated snapshot reads to workspace membership.
+- Additive Supabase/Alembic migration `20260808160000_m007_terminal_resolution_idempotency` adding the structured `supersedes_event_id` column and a partial unique index `(supersedes_event_id, event_type)` so a blocker can never be superseded twice by the same terminal type.
+- Additive Supabase/Alembic migration `20260808170000_m007_preflight_identity_backfill` adding the dedicated `preflight_failure` ingestion type, non-destructively backfilling `supersedes_event_id` from legacy JSON details (only the canonical earliest terminal per blocker/type receives the structured parent; all historical rows are preserved as append-only evidence), and enforcing valid terminal transitions with a database trigger that coalesces unknown parent types to false (fail closed).
+
+#### Fixed
+
+- A failed incremental preflight now records its own attempt identity (dedicated `preflight_failure` ingestion type and derived delivery key) so it can never collide with, or rewrite, a canonical completed ingestion row; `_update_ingestion` also refuses to mutate completed evidence (immutability guard).
+- Same-page batch ambiguity is rejected BEFORE correction/duplicate acceptance: an open time appearing twice with different content within one provider page fails closed even when one version matches (or could correct) an existing database candle.
+- Gap ranges use one half-open convention `[start, end)` end-to-end: `detect_gaps` enumerates open times `< expected_end`, missing ranges are emitted half-open, `repair_gaps` feeds them directly into the half-open ingestion contract, and inverted/zero/non-aligned bounds are rejected.
+- `repair_gaps` validates the complete caller-supplied `GapReport` contract (symbol identity, interval, interval_seconds, ordered/aligned bounds, and missing_count agreeing with range widths) before any short-circuit or provider work.
+- Symbol binding now also binds the configured exchange: the resolved symbol version must match both `symbol_version_id` and `exchange_id`, so provider data can never be attributed to a foreign exchange's symbol version.
+- Ingestion work for a market+interval is serialized by a single advisory lock (exchange + symbol version + interval), so overlapping ranges with different types contend and cannot race writes/counters/corrections.
+- Terminal transitions are explicit and fail closed: an allowed-transition map drives both the resolver and the snapshot gate (no tautological `ELSE`), and a database trigger rejects any terminal child whose parent blocker cannot legally resolve as that terminal type.
+- Same-page ambiguity is detected across the whole validated page BEFORE any write: a conflict anywhere in the page fails the ingestion closed, so an earlier unambiguous-looking row cannot mutate canonical candle/correction/snapshot state that later gets rejected.
+- The snapshot quality gate uses half-open overlap for range-scoped blockers (candidate span `[first_time, last_time + interval)`) and exact membership for candle-scoped blockers, so boundary-adjacent and unrelated-candle evidence never blocks a fresh snapshot.
+- `GapReport` missing ranges must be a canonical strictly ascending, disjoint sequence; duplicated, overlapping, or reversed ranges are rejected so the aggregate repair hash is deterministic for a given logical missing set.
+- The snapshot content hash now binds the quality/freshness policy versions and the snapshot schema version, so the same membership/time under a different policy version cannot collide on `snapshot_hash`.
+- Transient Binance 5xx responses are retried via a dedicated `BinanceServerError` type (kept separate from non-retriable `BinanceProviderUnavailableError`), and malformed server-time responses fail deterministically through `BinanceMalformedDataError`.
+- Backfill rejects non-aligned boundaries instead of silently widening `[start, end)`, so no evidence is ever fetched or persisted outside the caller's requested bounds.
+- Invalid candle evidence is recovered by a later valid candle at the same open time using the same half-open `[T, T+interval)` range, so a valid replacement resolves the prior blocker and snapshots covering T become approvable.
+- `repair_gaps` re-derives gap state against persisted candle coverage before certifying a zero-gap report COMPLETED, so a caller-forged empty/incomplete dataset can never appear as an empty successful repair.
+- `GapReport` missing ranges must be non-adjacent (strictly ascending with a gap between disjoint ranges), so a single contiguous hole cannot be split into segmentation-dependent child hashes.
+- Cancellation during ingestion (`asyncio.CancelledError`) is caught separately, persists a durable CANCELLED terminal state with checkpoint/request/retry evidence, and re-raises, instead of leaving the attempt in `running`.
+- Snapshot ingestion lineage is validated against the service scope and must be a COMPLETED ingestion whose requested range covers the membership; `ingestion_id` is bound into the canonical snapshot hash so corrected provenance can never silently reuse the wrong snapshot.
+- Derived child idempotency keys (preflight failures and gap repairs) use a bounded fixed-prefix-plus-hash scheme, so near-maximum-length parent keys never violate the 200-char database contract or mask the underlying failure.
+- Binance server-time timestamps outside the supported UTC range fail through `BinanceMalformedDataError` (no leaked `OverflowError`), and exchange-info responses validate the top-level schema plus required identity/filter fields (symbol, baseAsset, quoteAsset, tickSize, stepSize, minQty, maxQty, minNotional) instead of fabricating defaults.
+- Provider retry telemetry is task-scoped (ContextVar), so a provider shared across concurrent requests never leaks one request's retries into another's counters.
+
+- Incremental fetch ranges are now aligned to finalized interval boundaries using trusted exchange time: a 1h fetch at a non-hour wall clock never expects a not-yet-finalized candle, and the start is floored to an interval.
+- `detect_gaps` now requires explicit `expected_start`/`expected_end` boundaries; completeness is never inferred from whatever data exists, so an empty requested range and a missing leading candle are reported as gaps.
+- The advisory-lock identity now matches the database ingestion identity (exchange, symbol version, interval, requested range, ingestion type — not the caller delivery key), so two workers requesting the same canonical range/type with different idempotency keys contend on the same lock.
+- Clock-drift failures are scoped to the attempted range, and a later healthy server-time check appends `clock_drift_recovered` terminal evidence so one transient drift incident cannot block future fresh snapshots forever.
+- The ingestion content hash is now derived from canonical accepted-content pairs ordered by open time (not page segmentation or operational counters), so an interrupted+resumed run and an uninterrupted run over the same logical range produce the identical hash.
+- Quality evidence resolution is now append-only: repairing a gap or applying a correction inserts a terminal `gap_repaired`/`correction_applied` event linked to the original range/candle instead of rewriting prior evidence, and effective snapshot-gate state is derived from the event chain.
+- Retry/attempt metadata for provider page calls is captured in `try/finally`, so exhausted-timeout and rate-limit failures persist the real counters instead of pre-call values.
+- Snapshot creation is atomic: `INSERT ... ON CONFLICT (snapshot_hash) DO NOTHING RETURNING` with a follow-up lookup removes the check-then-insert race, and membership inserts are idempotent.
+- Bandit B608 suppression is localized to the audited parameterized SQL builders: precisely placed `# nosec B608` comments on the exact flagged lines, and the `_resolve_quality_events` query was refactored to `event_type = any(:event_types)` so no dynamic placeholder list is assembled at all.
+- The incremental preflight server-time provider call now runs with no active SQLAlchemy transaction (the symbol-binding read is committed first), and its failure persists a durable FAILED ingestion attempt with the real request/retry counters; a successful preflight's telemetry is carried into the resulting ingestion.
+- Backfill rejects zero-length and inverted ranges and normalizes non-aligned boundaries to interval-aligned UTC boundaries so the expected open-time sequence is deterministic.
+- Terminal quality resolution is correlated to the exact blocker via the structured `supersedes_event_id` column with valid transitions enforced (gap→gap_repaired, drift→clock_drift_recovered, correction→correction_applied); a wrong-category terminal event can no longer clear an unrelated blocker.
+- Invalid candle evidence is scoped to the exact failed open-time/range so one malformed historical candle cannot block unrelated future snapshots; a valid candle at the same open time appends terminal resolution.
+- A same-page inconsistent duplicate now fails the ingestion closed (scoped error event + FAILED status) instead of completing successfully, and `duplicate_conflict` is an explicit snapshot-gate blocker.
+- The canonical ingestion content hash is built only at the exact acceptance points (inserted row, consistent duplicate, applied correction), so rejected content can never participate in the content identity.
+- The advisory-lock release unlocks only the exact ingestion key after rolling back the aborted transaction, never unrelated session-level locks on the same pooled connection.
+- The aggregate gap-repair hash is derived from the ordered child ingestion content hashes plus stable range metadata, so identical repairs replay to the same hash and different repairs over the same range differ.
+
+#### Safety
+
+- Authenticated users may only read snapshots of workspaces they belong to; cross-workspace snapshot and membership rows are invisible, verified by a negative RLS test.
+- `app_workflow` no longer holds UPDATE on `data_quality_events`, enforcing append-only quality evidence.
+
 ### M003 — Local Supabase, Auth, Migrations, and RLS — 2026-08-01
 
 #### Added

@@ -157,8 +157,11 @@ pyproject-hooks==1.2.0
     #   pip-tools
 pytest==9.1.1
     # via
+    #   pytest-asyncio
     #   pytest-cov
     #   the-daily-roast-ai (pyproject.toml)
+pytest-asyncio==1.4.0
+    # via the-daily-roast-ai (pyproject.toml)
 pytest-cov==7.1.0
     # via the-daily-roast-ai (pyproject.toml)
 python-dotenv==1.2.2
@@ -210,6 +213,7 @@ typing-extensions==4.16.0
     #   psycopg
     #   pydantic
     #   pydantic-core
+    #   pytest-asyncio
     #   sqlalchemy
     #   starlette
     #   typing-inspection

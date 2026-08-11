@@ -33,6 +33,7 @@ class FakeBinanceScenario(str, Enum):
     UNAVAILABLE = "unavailable"
     STALE = "stale"
     GAP = "gap"
+    DUPLICATE_CONFLICT = "duplicate_conflict"
     INVALID_SYMBOL = "invalid_symbol"
 
 
@@ -78,11 +79,24 @@ class FakeBinanceProvider:
                 min_quantity=Decimal("0.00001"),
                 max_quantity=Decimal("9000.00000"),
                 min_notional=Decimal("10.00"),
+                max_notional=None,
                 tick_size=Decimal("0.01"),
                 step_size=Decimal("0.000001"),
+                raw_metadata_hash="a" * 64,
+                retrieved_at=datetime(2026, 8, 1, 0, 0, 0, tzinfo=timezone.utc),
+                request_evidence={
+                    "provider": "fake_binance",
+                    "endpoint": "get_symbol_metadata",
+                    "symbol": "BTCEUR",
+                    "force_refresh": True,
+                    "fixture_version": config.fixture_version,
+                    "scenario": config.scenario.value,
+                },
             )
         }
         self._base_time = datetime(2026, 8, 1, 0, 0, 0, tzinfo=timezone.utc)
+        self.retry_count = 0
+        self.last_retry_wait_ms: int | None = None
 
     def _now(self) -> datetime:
         if self._clock is not None:
@@ -109,7 +123,9 @@ class FakeBinanceProvider:
         drift_ms = int((server_time - local_time).total_seconds() * 1000)
         return ExchangeTime(server_time=server_time, clock_drift_ms=drift_ms)
 
-    async def get_symbol_metadata(self, symbol: str) -> SymbolMetadata:
+    async def get_symbol_metadata(
+        self, symbol: str, *, force_refresh: bool = False
+    ) -> SymbolMetadata:
         self._check_scenario()
         metadata = self._symbol_metadata.get(symbol.upper())
         if metadata is None:
@@ -122,6 +138,7 @@ class FakeBinanceProvider:
         interval: CandleInterval,
         start_time: datetime,
         end_time: datetime,
+        server_time: datetime | None = None,
     ) -> list[Candle]:
         self._check_scenario()
         if self.config.scenario == FakeBinanceScenario.MALFORMED:
@@ -135,6 +152,9 @@ class FakeBinanceProvider:
         if start_time > self._base_time:
             current = start_time
 
+        # Price is a deterministic function of absolute open time so a resumed
+        # fetch at a later checkpoint produces identical candles to a run that
+        # started earlier over the same interval.
         interval_minutes = {
             CandleInterval.ONE_MINUTE: 1,
             CandleInterval.FIVE_MINUTES: 5,
@@ -143,8 +163,9 @@ class FakeBinanceProvider:
             CandleInterval.FOUR_HOURS: 240,
             CandleInterval.ONE_DAY: 1440,
         }[interval]
+        base_epoch = int(self._base_time.timestamp())
+        step_seconds = interval_minutes * 60
 
-        price = Decimal("50000.00")
         while current + timedelta(minutes=interval_minutes) <= end_time:
             if (
                 self.config.gap_start is not None
@@ -154,8 +175,9 @@ class FakeBinanceProvider:
                 current += timedelta(minutes=interval_minutes)
                 continue
 
-            open_price = price
-            close_price = price + Decimal("100.00")
+            steps = (int(current.timestamp()) - base_epoch) // step_seconds
+            open_price = Decimal("50000.00") + Decimal(steps) * Decimal("100.00")
+            close_price = open_price + Decimal("100.00")
             high_price = max(open_price, close_price) + Decimal("50.00")
             low_price = min(open_price, close_price) - Decimal("50.00")
             volume = Decimal("1.5")
@@ -163,14 +185,16 @@ class FakeBinanceProvider:
             candles.append(
                 Candle(
                     time=current,
+                    close_time=current + timedelta(minutes=interval_minutes),
                     open=open_price,
                     high=high_price,
                     low=low_price,
                     close=close_price,
                     volume=volume,
+                    quote_volume=volume * close_price,
+                    trade_count=100,
                 )
             )
-            price = close_price
             current += timedelta(minutes=interval_minutes)
 
         if not candles:
@@ -178,6 +202,26 @@ class FakeBinanceProvider:
 
         if self.config.scenario == FakeBinanceScenario.GAP and len(candles) > 2:
             candles = candles[: len(candles) // 2]
+
+        if self.config.scenario == FakeBinanceScenario.DUPLICATE_CONFLICT:
+            # Emit two different candles at the same open time so the page
+            # contains an inconsistent duplicate (M007 invalid evidence).
+            conflicting = candles[0]
+            candles = [
+                conflicting,
+                Candle(
+                    time=conflicting.time,
+                    close_time=conflicting.close_time,
+                    open=conflicting.open + Decimal("1.00"),
+                    high=conflicting.high + Decimal("1.00"),
+                    low=conflicting.low,
+                    close=conflicting.close + Decimal("1.00"),
+                    volume=conflicting.volume,
+                    quote_volume=conflicting.quote_volume,
+                    trade_count=conflicting.trade_count,
+                ),
+                *candles[1:],
+            ]
 
         return candles
 

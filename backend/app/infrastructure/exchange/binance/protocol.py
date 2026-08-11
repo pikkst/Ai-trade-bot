@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class SymbolStatus(str, Enum):
@@ -31,16 +31,39 @@ class CandleInterval(str, Enum):
 @dataclass(frozen=True, slots=True)
 class Candle:
     time: datetime
+    close_time: datetime
     open: Decimal
     high: Decimal
     low: Decimal
     close: Decimal
     volume: Decimal
+    quote_volume: Decimal
+    trade_count: int
 
     def as_sequence(
         self,
-    ) -> tuple[datetime, Decimal, Decimal, Decimal, Decimal, Decimal]:
-        return (self.time, self.open, self.high, self.low, self.close, self.volume)
+    ) -> tuple[
+        datetime,
+        datetime,
+        Decimal,
+        Decimal,
+        Decimal,
+        Decimal,
+        Decimal,
+        Decimal,
+        int,
+    ]:
+        return (
+            self.time,
+            self.close_time,
+            self.open,
+            self.high,
+            self.low,
+            self.close,
+            self.volume,
+            self.quote_volume,
+            self.trade_count,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,8 +77,12 @@ class SymbolMetadata:
     min_quantity: Decimal
     max_quantity: Decimal
     min_notional: Decimal
+    max_notional: Decimal | None
     tick_size: Decimal
     step_size: Decimal
+    raw_metadata_hash: str
+    retrieved_at: datetime
+    request_evidence: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +122,12 @@ class BinanceRateLimitError(BinanceProviderError):
     code = "binance_rate_limit"
 
 
+class BinanceServerError(BinanceProviderError):
+    """A transient Binance server-side 5xx failure (retriable)."""
+
+    code = "binance_server_error"
+
+
 class BinanceMalformedDataError(BinanceProviderError):
     code = "binance_malformed_data"
 
@@ -122,7 +155,9 @@ class BinanceExchangeError(BinanceProviderError):
 class MarketDataProvider(Protocol):
     async def get_server_time(self) -> ExchangeTime: ...
 
-    async def get_symbol_metadata(self, symbol: str) -> SymbolMetadata: ...
+    async def get_symbol_metadata(
+        self, symbol: str, *, force_refresh: bool = False
+    ) -> SymbolMetadata: ...
 
     async def get_finalized_candles(
         self,
@@ -130,6 +165,7 @@ class MarketDataProvider(Protocol):
         interval: CandleInterval,
         start_time: datetime,
         end_time: datetime,
+        server_time: datetime | None = None,
     ) -> list[Candle]: ...
 
     async def get_rate_limit_state(self) -> RateLimitState: ...

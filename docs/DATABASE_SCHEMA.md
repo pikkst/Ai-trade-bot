@@ -225,7 +225,7 @@ Constraint: unique exchange/native symbol/effective version.
 
 ### `market_data_ingestions`
 
-REST request/page identity, provider request metadata, bounded range, checkpoint, status, inserted/duplicate/invalid counts, retries, timing, safe error, cycle/job references.
+REST request/page identity, provider request metadata, bounded range, checkpoint, status, inserted/duplicate/invalid/corrected counts, ordered page content hashes, retries, timing, safe error, cycle/job references. Cumulative counters and page hashes are committed atomically with each page checkpoint so a restarted run resumes with the same evidence.
 
 ### `candles`
 
@@ -239,21 +239,23 @@ Fields:
 - trade count;
 - finalized flag;
 - ingestion/source reference;
-- content hash.
+- content hash;
+- superseded-by candle reference (immutable correction chain).
 
 Constraints:
 
-- unique symbol/interval/open time/version policy;
+- one active (non-superseded) candle per symbol/interval/open time;
 - positive prices;
 - high >= open/close/low;
 - low <= open/close/high;
 - non-negative volumes/counts;
 - close after open;
-- finalized required for normal downstream use.
+- finalized required for normal downstream use;
+- a corrected candle is preserved immutably and linked to its replacement.
 
 ### `data_quality_events`
 
-Append-only event type, severity, affected candle/range/dataset, details, detection, resolution, replacement, invalidation, reviewer, and timestamps.
+Append-only event type (canonical QualityState vocabulary), severity, affected candle/range/dataset, details, detection, resolution, replacement, invalidation, reviewer, and timestamps. Resolution updates require app_workflow UPDATE; authenticated may read via the security-invoker read view over a SELECT policy on the base table.
 
 ### `candle_corrections`
 
@@ -262,6 +264,8 @@ Original, replacement, source evidence, reason, effective time, dependent-artifa
 ### `market_snapshots`
 
 Workspace, market, interval, analysis time, first/last candle, count, quality/freshness, snapshot hash, creator/cycle/job, state, invalidation/supersession.
+
+Constraints: unique snapshot hash (idempotent replay of identical canonical input); active snapshots must be quality-approved and fresh to be readable downstream.
 
 ### `market_snapshot_candles`
 
