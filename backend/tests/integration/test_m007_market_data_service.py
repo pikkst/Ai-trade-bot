@@ -2021,7 +2021,7 @@ async def test_same_page_conflict_with_existing_db_candle_fails_closed(
         session.commit()
         provider = FakeBinanceProvider(
             config=FakeBinanceConfig(
-                scenario=FakeBinanceScenario.SUCCESS,
+                scenario=FakeBinanceScenario.DUPLICATE_CONFLICT,
                 fixed_clock_time=FIXED_TIME,
                 fixture_version="2026-08-08-m007-v1",
             )
@@ -2047,7 +2047,7 @@ async def test_same_page_conflict_with_existing_db_candle_fails_closed(
                 "symbol": "BTCEUR",
                 "force_refresh": True,
                 "fixture_version": "2026-08-08-m007-v1",
-                "scenario": FakeBinanceScenario.SUCCESS.value,
+                "scenario": FakeBinanceScenario.DUPLICATE_CONFLICT.value,
             },
         )
         service = MarketDataService(
@@ -4096,7 +4096,7 @@ async def test_normalized_hash_decoupled_from_raw_hash(
             provider=BoundaryAssertingProvider(
                 FakeBinanceProvider(
                     config=FakeBinanceConfig(
-                        scenario=FakeBinanceScenario.SUCCESS,
+                        scenario=FakeBinanceScenario.DUPLICATE_CONFLICT,
                         fixed_clock_time=FIXED_TIME,
                         fixture_version="2026-08-08-m007-v1",
                     )
