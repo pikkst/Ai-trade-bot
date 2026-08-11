@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-import math
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -14,13 +11,10 @@ import pytest
 
 from app.core.clock import FixedClock
 from app.domains.features.models import (
-    FeatureCalculation,
     FeatureCode,
-    FeatureSetVersion,
     FeatureStatus,
-    FeatureValue,
 )
-from app.domains.features.service import CandleData, FeatureService, FeatureResult
+from app.domains.features.service import CandleData, FeatureResult, FeatureService
 from app.domains.market_data.models import QualityState
 
 FIXED_TIME = datetime(2026, 8, 8, 12, 0, 0, tzinfo=timezone.utc)
@@ -29,7 +23,9 @@ SNAPSHOT_ID = UUID("30000000-0000-0000-0000-000000000001")
 FEATURE_SET_ID = UUID("50000000-0000-0000-0000-000000000001")
 
 
-def _make_candle(open_time: datetime, close: Decimal, volume: Decimal = Decimal("1")) -> CandleData:
+def _make_candle(
+    open_time: datetime, close: Decimal, volume: Decimal = Decimal("1")
+) -> CandleData:
     return CandleData(
         open_time=open_time,
         close_time=open_time + timedelta(hours=1),
@@ -43,7 +39,9 @@ def _make_candle(open_time: datetime, close: Decimal, volume: Decimal = Decimal(
     )
 
 
-def _make_candles(count: int, base: Decimal = Decimal("100"), volume: Decimal = Decimal("1")) -> list[CandleData]:
+def _make_candles(
+    count: int, base: Decimal = Decimal("100"), volume: Decimal = Decimal("1")
+) -> list[CandleData]:
     return [
         _make_candle(
             FIXED_TIME - timedelta(hours=count - i),
@@ -54,7 +52,9 @@ def _make_candles(count: int, base: Decimal = Decimal("100"), volume: Decimal = 
     ]
 
 
-def _make_candles_alternating_volume(count: int, base: Decimal = Decimal("100")) -> list[CandleData]:
+def _make_candles_alternating_volume(
+    count: int, base: Decimal = Decimal("100")
+) -> list[CandleData]:
     return [
         _make_candle(
             FIXED_TIME - timedelta(hours=count - i),
@@ -111,7 +111,9 @@ class MockSession:
     def rollback(self) -> None:
         return
 
-    def execute(self, statement: Any, params: dict[str, Any] | None = None) -> MockResult:
+    def execute(
+        self, statement: Any, params: dict[str, Any] | None = None
+    ) -> MockResult:
         if params is None:
             params = {}
         sql = " ".join(str(statement).lower().split())
@@ -119,18 +121,26 @@ class MockSession:
         if "from public.market_snapshots" in sql:
             result._one_or_none_value = self.snapshots.get(params.get("snapshot_id"))
             return result
-        if "from public.market_snapshot_candles" in sql and "join public.candles" in sql:
+        if (
+            "from public.market_snapshot_candles" in sql
+            and "join public.candles" in sql
+        ):
             snapshot = self.snapshots.get(params.get("snapshot_id"), {})
             result._scalars_value = snapshot.get("candles", [])
             return result
         if "from public.feature_set_versions" in sql:
-            result._one_or_none_value = self.feature_sets.get(params.get("feature_set_version_id"))
+            result._one_or_none_value = self.feature_sets.get(
+                params.get("feature_set_version_id")
+            )
             return result
         if "insert into public.feature_calculations" in sql:
             for calc in self.calculations.values():
-                if (calc["snapshot_id"] == params["snapshot_id"]
-                        and calc["feature_set_version_id"] == params["feature_set_version_id"]
-                        and calc["input_hash"] == params["input_hash"]):
+                if (
+                    calc["snapshot_id"] == params["snapshot_id"]
+                    and calc["feature_set_version_id"]
+                    == params["feature_set_version_id"]
+                    and calc["input_hash"] == params["input_hash"]
+                ):
                     result._one_or_none_value = calc
                     return result
             if self.simulate_conflict:
@@ -169,27 +179,39 @@ class MockSession:
             return result
         if "insert into public.feature_values" in sql:
             calc_id = params.get("calculation_id")
-            feature_code = params.get("v0_feature_code")
             if calc_id not in self.values:
                 self.values[calc_id] = []
-            for idx in range(len([k for k in params if k.startswith("v") and k.endswith("_feature_code")])):
+            for idx in range(
+                len(
+                    [
+                        k
+                        for k in params
+                        if k.startswith("v") and k.endswith("_feature_code")
+                    ]
+                )
+            ):
                 prefix = f"v{idx}"
-                self.values[calc_id].append({
-                    "feature_code": params.get(f"{prefix}_feature_code"),
-                    "numeric_value": params.get(f"{prefix}_numeric_value"),
-                    "string_value": params.get(f"{prefix}_string_value"),
-                    "boolean_value": params.get(f"{prefix}_boolean_value"),
-                    "unit": params.get(f"{prefix}_unit"),
-                    "sequence": params.get(f"{prefix}_sequence"),
-                    "timestamp": params.get(f"{prefix}_timestamp"),
-                    "null_reason": params.get(f"{prefix}_null_reason"),
-                })
+                self.values[calc_id].append(
+                    {
+                        "feature_code": params.get(f"{prefix}_feature_code"),
+                        "numeric_value": params.get(f"{prefix}_numeric_value"),
+                        "string_value": params.get(f"{prefix}_string_value"),
+                        "boolean_value": params.get(f"{prefix}_boolean_value"),
+                        "unit": params.get(f"{prefix}_unit"),
+                        "sequence": params.get(f"{prefix}_sequence"),
+                        "timestamp": params.get(f"{prefix}_timestamp"),
+                        "null_reason": params.get(f"{prefix}_null_reason"),
+                    }
+                )
             return result
         if "from public.feature_calculations" in sql and "input_hash" in sql:
             for calc in self.calculations.values():
-                if (calc["snapshot_id"] == params.get("snapshot_id")
-                        and calc["feature_set_version_id"] == params.get("feature_set_version_id")
-                        and calc["input_hash"] == params.get("input_hash")):
+                if (
+                    calc["snapshot_id"] == params.get("snapshot_id")
+                    and calc["feature_set_version_id"]
+                    == params.get("feature_set_version_id")
+                    and calc["input_hash"] == params.get("input_hash")
+                ):
                     result._one_or_none_value = calc
                     return result
             result._one_or_none_value = None
@@ -261,7 +283,9 @@ def test_reference_simple_returns() -> None:
     session = _setup_session(candles)
     result = _compute_service(session)
     assert result.calculation.status == FeatureStatus.COMPLETED.value
-    returns = [v for v in result.values if v.feature_code == FeatureCode.RETURNS_SIMPLE.value]
+    returns = [
+        v for v in result.values if v.feature_code == FeatureCode.RETURNS_SIMPLE.value
+    ]
     assert len(returns) == 4
     assert returns[0].numeric_value == Decimal("0.01")
     assert returns[1].numeric_value == Decimal("0.009900990099009900990099009901")
@@ -273,7 +297,9 @@ def test_reference_log_returns() -> None:
     candles = _make_candles(5, base=Decimal("100"), volume=Decimal("1"))
     session = _setup_session(candles)
     result = _compute_service(session)
-    returns = [v for v in result.values if v.feature_code == FeatureCode.RETURNS_LOG.value]
+    returns = [
+        v for v in result.values if v.feature_code == FeatureCode.RETURNS_LOG.value
+    ]
     assert len(returns) == 4
     assert returns[0].numeric_value == Decimal("0.009950330853168092")
     assert returns[1].numeric_value == Decimal("0.00985229644301164")
@@ -285,7 +311,9 @@ def test_reference_sma() -> None:
     candles = _make_candles(25, base=Decimal("100"), volume=Decimal("1"))
     session = _setup_session(candles)
     result = _compute_service(session)
-    sma_values = [v for v in result.values if v.feature_code == FeatureCode.SMA_20.value]
+    sma_values = [
+        v for v in result.values if v.feature_code == FeatureCode.SMA_20.value
+    ]
     assert len(sma_values) == 25
     for i in range(19):
         assert sma_values[i].null_reason == _get_warm_up_null_reason(), f"index {i}"
@@ -297,7 +325,9 @@ def test_reference_ema() -> None:
     candles = _make_candles(25, base=Decimal("100"), volume=Decimal("1"))
     session = _setup_session(candles)
     result = _compute_service(session)
-    ema_values = [v for v in result.values if v.feature_code == FeatureCode.EMA_20.value]
+    ema_values = [
+        v for v in result.values if v.feature_code == FeatureCode.EMA_20.value
+    ]
     assert len(ema_values) == 25
     for i in range(19):
         assert ema_values[i].null_reason == _get_warm_up_null_reason(), f"index {i}"
@@ -309,7 +339,9 @@ def test_reference_rsi() -> None:
     candles = _make_candles(20, base=Decimal("100"), volume=Decimal("1"))
     session = _setup_session(candles)
     result = _compute_service(session)
-    rsi_values = [v for v in result.values if v.feature_code == FeatureCode.RSI_14.value]
+    rsi_values = [
+        v for v in result.values if v.feature_code == FeatureCode.RSI_14.value
+    ]
     assert len(rsi_values) == 20
     for i in range(14):
         assert rsi_values[i].null_reason == _get_warm_up_null_reason(), f"index {i}"
@@ -321,7 +353,9 @@ def test_reference_atr() -> None:
     candles = _make_candles(20, base=Decimal("100"), volume=Decimal("1"))
     session = _setup_session(candles)
     result = _compute_service(session)
-    atr_values = [v for v in result.values if v.feature_code == FeatureCode.ATR_14.value]
+    atr_values = [
+        v for v in result.values if v.feature_code == FeatureCode.ATR_14.value
+    ]
     assert len(atr_values) == 20
     for i in range(14):
         assert atr_values[i].null_reason == _get_warm_up_null_reason(), f"index {i}"
@@ -333,7 +367,11 @@ def test_reference_volatility() -> None:
     candles = _make_candles(25, base=Decimal("100"), volume=Decimal("1"))
     session = _setup_session(candles)
     result = _compute_service(session)
-    vol_values = [v for v in result.values if v.feature_code == FeatureCode.VOLATILITY_ROLLING_20.value]
+    vol_values = [
+        v
+        for v in result.values
+        if v.feature_code == FeatureCode.VOLATILITY_ROLLING_20.value
+    ]
     assert len(vol_values) == 25
     for i in range(20):
         assert vol_values[i].null_reason == _get_warm_up_null_reason(), f"index {i}"
@@ -345,7 +383,11 @@ def test_reference_volume_relative() -> None:
     candles = _make_candles(25, base=Decimal("100"), volume=Decimal("10"))
     session = _setup_session(candles)
     result = _compute_service(session)
-    vol_values = [v for v in result.values if v.feature_code == FeatureCode.VOLUME_RELATIVE_20.value]
+    vol_values = [
+        v
+        for v in result.values
+        if v.feature_code == FeatureCode.VOLUME_RELATIVE_20.value
+    ]
     assert len(vol_values) == 25
     for i in range(19):
         assert vol_values[i].null_reason == _get_warm_up_null_reason(), f"index {i}"
@@ -419,7 +461,9 @@ def test_no_look_ahead_assertion() -> None:
     candles = _make_candles(30, base=Decimal("100"), volume=Decimal("5"))
     session = _setup_session(candles)
     result = _compute_service(session)
-    sma_values = [v for v in result.values if v.feature_code == FeatureCode.SMA_20.value]
+    sma_values = [
+        v for v in result.values if v.feature_code == FeatureCode.SMA_20.value
+    ]
     for i, value in enumerate(sma_values):
         if value.numeric_value is not None:
             expected = sum(candles[j].close for j in range(i - 19, i + 1)) / Decimal(20)
@@ -430,7 +474,9 @@ def test_warm_up_null_reason_explicit() -> None:
     candles = _make_candles(5, base=Decimal("100"), volume=Decimal("1"))
     session = _setup_session(candles)
     result = _compute_service(session)
-    sma_values = [v for v in result.values if v.feature_code == FeatureCode.SMA_20.value]
+    sma_values = [
+        v for v in result.values if v.feature_code == FeatureCode.SMA_20.value
+    ]
     assert sma_values[0].null_reason == _get_warm_up_null_reason()
     assert sma_values[0].numeric_value is None
 
@@ -467,7 +513,9 @@ def test_correction_invalidation_lineage_blocked() -> None:
 def test_feature_set_workspace_mismatch_rejected() -> None:
     candles = _make_candles(5, base=Decimal("100"), volume=Decimal("1"))
     session = _setup_session(candles)
-    session.feature_sets[FEATURE_SET_ID]["workspace_id"] = UUID("99999999-0000-0000-0000-000000000000")
+    session.feature_sets[FEATURE_SET_ID]["workspace_id"] = UUID(
+        "99999999-0000-0000-0000-000000000000"
+    )
     with pytest.raises(ValueError, match="workspace"):
         _compute_service(session)
 
@@ -480,7 +528,9 @@ def test_division_by_zero_in_returns() -> None:
     ]
     session = _setup_session(candles)
     result = _compute_service(session)
-    returns = [v for v in result.values if v.feature_code == FeatureCode.RETURNS_SIMPLE.value]
+    returns = [
+        v for v in result.values if v.feature_code == FeatureCode.RETURNS_SIMPLE.value
+    ]
     assert len(returns) == 2
     assert returns[0].numeric_value == Decimal("-1")
     assert returns[1].null_reason == _get_warm_up_null_reason()
@@ -521,7 +571,9 @@ def test_record_error_path() -> None:
         clock=FixedClock(FIXED_TIME),
     )
     original_compute = service._compute_returns
-    service._compute_returns = lambda candles, warnings: (_ for _ in ()).throw(RuntimeError("boom"))
+    service._compute_returns = lambda candles, warnings: (_ for _ in ()).throw(
+        RuntimeError("boom")
+    )
     result = service.compute_features()
     assert result.calculation.status == FeatureStatus.CALCULATION_ERROR.value
     assert result.calculation.error_message == "boom"
@@ -559,7 +611,9 @@ def test_log_returns_invalid_operation() -> None:
     ]
     session = _setup_session(candles)
     result = _compute_service(session)
-    log_returns = [v for v in result.values if v.feature_code == FeatureCode.RETURNS_LOG.value]
+    log_returns = [
+        v for v in result.values if v.feature_code == FeatureCode.RETURNS_LOG.value
+    ]
     assert len(log_returns) == 2
     assert log_returns[0].null_reason == _get_warm_up_null_reason()
     assert log_returns[1].null_reason == _get_warm_up_null_reason()
@@ -569,7 +623,9 @@ def test_ema_50_computed_when_sufficient_history() -> None:
     candles = _make_candles(55, base=Decimal("100"), volume=Decimal("1"))
     session = _setup_session(candles)
     result = _compute_service(session)
-    ema_50_values = [v for v in result.values if v.feature_code == FeatureCode.EMA_50.value]
+    ema_50_values = [
+        v for v in result.values if v.feature_code == FeatureCode.EMA_50.value
+    ]
     assert len(ema_50_values) == 55
     for i in range(49):
         assert ema_50_values[i].null_reason == _get_warm_up_null_reason(), f"index {i}"
@@ -579,12 +635,18 @@ def test_ema_50_computed_when_sufficient_history() -> None:
 
 def test_rsi_avg_loss_nonzero() -> None:
     candles = [
-        _make_candle(FIXED_TIME - timedelta(hours=20 + 1 - i), Decimal("100") if i % 2 == 0 else Decimal("99"), Decimal("1"))
+        _make_candle(
+            FIXED_TIME - timedelta(hours=20 + 1 - i),
+            Decimal("100") if i % 2 == 0 else Decimal("99"),
+            Decimal("1"),
+        )
         for i in range(20 + 1)
     ]
     session = _setup_session(candles)
     result = _compute_service(session)
-    rsi_values = [v for v in result.values if v.feature_code == FeatureCode.RSI_14.value]
+    rsi_values = [
+        v for v in result.values if v.feature_code == FeatureCode.RSI_14.value
+    ]
     assert len(rsi_values) == 21
     for i in range(14):
         assert rsi_values[i].null_reason == _get_warm_up_null_reason(), f"index {i}"
@@ -594,12 +656,20 @@ def test_rsi_avg_loss_nonzero() -> None:
 
 def test_volatility_zero_price() -> None:
     candles = [
-        _make_candle(FIXED_TIME - timedelta(hours=25 - i), Decimal("100") if i != 10 else Decimal("0"), Decimal("1"))
+        _make_candle(
+            FIXED_TIME - timedelta(hours=25 - i),
+            Decimal("100") if i != 10 else Decimal("0"),
+            Decimal("1"),
+        )
         for i in range(25)
     ]
     session = _setup_session(candles)
     result = _compute_service(session)
-    vol_values = [v for v in result.values if v.feature_code == FeatureCode.VOLATILITY_ROLLING_20.value]
+    vol_values = [
+        v
+        for v in result.values
+        if v.feature_code == FeatureCode.VOLATILITY_ROLLING_20.value
+    ]
     assert len(vol_values) == 25
     for i in range(20):
         assert vol_values[i].null_reason == _get_warm_up_null_reason(), f"index {i}"
@@ -613,7 +683,11 @@ def test_volume_relative_zero_sma() -> None:
     ]
     session = _setup_session(candles)
     result = _compute_service(session)
-    vol_values = [v for v in result.values if v.feature_code == FeatureCode.VOLUME_RELATIVE_20.value]
+    vol_values = [
+        v
+        for v in result.values
+        if v.feature_code == FeatureCode.VOLUME_RELATIVE_20.value
+    ]
     assert len(vol_values) == 25
     for i in range(19):
         assert vol_values[i].null_reason == _get_warm_up_null_reason(), f"index {i}"

@@ -7,7 +7,7 @@ from app.domains.features.models import (
     FeatureStatus,
     FeatureValue,
 )
-from app.domains.features.service import FeatureService, FeatureResult
+from app.domains.features.service import FeatureResult, FeatureService
 
 __all__ = [
     "FeatureCalculation",
