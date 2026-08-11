@@ -241,6 +241,10 @@ class FeatureService:
                     f"snapshot {self._snapshot_id} contains future candle "
                     f"{c.open_time.isoformat()}"
                 )
+        self._session.execute(
+            text("select public.validate_snapshot_membership(:snapshot_id)"),
+            {"snapshot_id": self._snapshot_id},
+        )
 
     def _load_feature_set_version(self) -> dict[str, Any]:
         row = (
@@ -297,12 +301,12 @@ class FeatureService:
             self._session.execute(
                 text(
                     """
-                    select id, snapshot_id, feature_set_version_id, status,
-                           input_hash, output_hash, calculation_started_at,
-                           calculation_completed_at, warnings, error_message,
-                           creator_cycle_id
-                    from public.feature_calculations
-                    where idempotency_key = :idempotency_key
+                    select fc.id, fc.snapshot_id, fc.feature_set_version_id, fc.status,
+                           fc.input_hash, fc.output_hash, fc.calculation_started_at,
+                           fc.calculation_completed_at, fc.warnings, fc.error_message,
+                           fc.creator_cycle_id
+                    from public.consumable_feature_calculations fc
+                    where fc.idempotency_key = :idempotency_key
                     limit 1
                     """
                 ),
@@ -612,51 +616,38 @@ class FeatureService:
         reason: str,
         replacement_calculation_id: UUID | None = None,
     ) -> None:
-        row = (
+        rows = (
             self._session.execute(
                 text(
                     """
                     select id from public.feature_calculations
                     where snapshot_id = :snapshot_id
                       and status = 'completed'
-                    order by created_at desc
-                    limit 1
+                    order by created_at asc
                     """
                 ),
                 {"snapshot_id": snapshot_id},
             )
             .scalars()
-            .one_or_none()
+            .all()
         )
-        if row is None:
-            return
-        calculation_id = row
-        self._session.execute(
-            text(
-                """
-                insert into public.feature_calculation_invalidations (
-                    calculation_id, reason, replacement_calculation_id
-                ) values (
-                    :calculation_id, :reason, :replacement_calculation_id
-                )
-                """
-            ),
-            {
-                "calculation_id": calculation_id,
-                "reason": reason,
-                "replacement_calculation_id": replacement_calculation_id,
-            },
-        )
-        self._session.execute(
-            text(
-                """
-                update public.feature_calculations
-                set status = 'invalid_source'
-                where id = :calculation_id
-                """
-            ),
-            {"calculation_id": calculation_id},
-        )
+        for calculation_id in rows:
+            self._session.execute(
+                text(
+                    """
+                    insert into public.feature_calculation_invalidations (
+                        calculation_id, reason, replacement_calculation_id
+                    ) values (
+                        :calculation_id, :reason, :replacement_calculation_id
+                    )
+                    """
+                ),
+                {
+                    "calculation_id": calculation_id,
+                    "reason": reason,
+                    "replacement_calculation_id": replacement_calculation_id,
+                },
+            )
 
     def _make_value(
         self,

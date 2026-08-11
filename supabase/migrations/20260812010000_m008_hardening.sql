@@ -17,22 +17,17 @@ alter table public.feature_values
         (numeric_value is null and string_value is null and boolean_value is not null and null_reason is null)
     );
 
--- 2. output_hash: allow NULL for non-completed statuses, require 64 chars for completed.
+-- 2. output_hash: require 64-char canonical hash for every status.
 alter table public.feature_calculations drop constraint if exists feature_calculations_output_hash_check;
 
 alter table public.feature_calculations
-    add constraint feature_calculations_output_hash_check check (
-        (status = 'completed' and length(output_hash) = 64)
-        or
-        (status != 'completed' and output_hash is null)
-    );
+    add constraint feature_calculations_output_hash_check check (length(output_hash) = 64);
 
 -- 3. Snapshot membership validation function.
 --    Ensures every member candle is finalized, unsuperseded, belongs to the
 --    snapshot's symbol/interval, is closed by analysis_time, and count matches.
 create or replace function public.validate_snapshot_membership(
-    p_snapshot_id uuid,
-    p_analysis_time timestamptz
+    p_snapshot_id uuid
 )
 returns void
 language plpgsql
@@ -41,16 +36,12 @@ declare
     v_count int;
     v_expected int;
     v_invalid_count int;
+    v_symbol_version_id uuid;
+    v_interval_code text;
+    v_analysis_time timestamptz;
 begin
-    select count(*) into v_count
-    from public.market_snapshot_candles msc
-    join public.candles c on c.id = msc.candle_id
-    where msc.snapshot_id = p_snapshot_id
-      and c.finalized = true
-      and c.superseded_by is null
-      and c.close_time <= p_analysis_time;
-
-    select candle_count into v_expected
+    select workspace_id, symbol_version_id, interval_code, analysis_time, candle_count
+    into v_symbol_version_id, v_interval_code, v_analysis_time, v_expected
     from public.market_snapshots
     where id = p_snapshot_id;
 
@@ -58,8 +49,18 @@ begin
         raise exception 'snapshot % does not exist', p_snapshot_id;
     end if;
 
+    select count(*) into v_count
+    from public.market_snapshot_candles msc
+    join public.candles c on c.id = msc.candle_id
+    where msc.snapshot_id = p_snapshot_id
+      and c.symbol_version_id = v_symbol_version_id
+      and c.interval_code = v_interval_code
+      and c.finalized = true
+      and c.superseded_by is null
+      and c.close_time <= v_analysis_time;
+
     if v_count != v_expected then
-        raise exception 'snapshot % membership invalid: expected % candles, found % valid finalized unsuperseded members',
+        raise exception 'snapshot % membership invalid: expected % candles, found % valid finalized unsuperseded members for symbol/interval',
             p_snapshot_id, v_expected, v_count;
     end if;
 
@@ -67,10 +68,14 @@ begin
     from public.market_snapshot_candles msc
     join public.candles c on c.id = msc.candle_id
     where msc.snapshot_id = p_snapshot_id
-      and (c.finalized = false or c.superseded_by is not null or c.close_time > p_analysis_time);
+      and (c.symbol_version_id != v_symbol_version_id
+           or c.interval_code != v_interval_code
+           or c.finalized = false
+           or c.superseded_by is not null
+           or c.close_time > v_analysis_time);
 
     if v_invalid_count > 0 then
-        raise exception 'snapshot % has % invalid member candles (unfinalized, superseded, or future)',
+        raise exception 'snapshot % has % invalid member candles (wrong symbol/interval, unfinalized, superseded, or future)',
             p_snapshot_id, v_invalid_count;
     end if;
 end;
@@ -137,3 +142,13 @@ grant usage on schema public to app_workflow, app_migration;
 grant select, insert on public.feature_calculation_invalidations to app_workflow;
 grant all privileges on all tables in schema public to app_migration;
 grant all privileges on all sequences in schema public to app_migration;
+
+-- 6. Read gate: exclude invalidated calculations from normal consumption.
+create or replace view public.consumable_feature_calculations as
+select fc.*
+from public.feature_calculations fc
+where not exists (
+    select 1
+    from public.feature_calculation_invalidations fci
+    where fci.calculation_id = fc.id
+);

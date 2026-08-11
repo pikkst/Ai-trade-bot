@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -106,6 +107,7 @@ class MockSession:
         self.feature_sets: dict[UUID, dict[str, Any]] = {}
         self.calculations: dict[UUID, dict[str, Any]] = {}
         self.values: dict[UUID, list[dict[str, Any]]] = {}
+        self.invalidations: list[dict[str, Any]] = []
         self.next_calc_id = uuid4()
         self.simulate_conflict = False
 
@@ -208,29 +210,30 @@ class MockSession:
                     }
                 )
             return result
-        if "update public.feature_calculations" in sql:
-            for calc in self.calculations.values():
-                if calc["id"] == params.get("calculation_id"):
-                    if "status = 'invalid_source'" in sql:
-                        calc["status"] = "invalid_source"
-                    elif "status" in params:
-                        calc["status"] = params["status"]
-                    break
-            result.rowcount = 1
+        if "insert into public.feature_calculation_invalidations" in sql:
+            self.invalidations.append(
+                {
+                    "calculation_id": params.get("calculation_id"),
+                    "reason": params.get("reason"),
+                    "replacement_calculation_id": params.get(
+                        "replacement_calculation_id"
+                    ),
+                }
+            )
             return result
         if (
             "from public.feature_calculations" in sql
             and "snapshot_id" in sql
             and "status = 'completed'" in sql
         ):
+            rows = []
             for calc in self.calculations.values():
                 if (
                     calc["snapshot_id"] == params.get("snapshot_id")
                     and calc["status"] == "completed"
                 ):
-                    result._one_or_none_value = calc["id"]
-                    return result
-            result._one_or_none_value = None
+                    rows.append(calc["id"])
+            result._scalars_value = rows
             return result
         if "from public.feature_calculations" in sql and "input_hash" in sql:
             for calc in self.calculations.values():
@@ -780,9 +783,32 @@ def test_output_hash_round_trip_from_stored_precision() -> None:
     result = _compute_service(session)
     stored_values = session.values.get(result.calculation.id, [])
     assert len(stored_values) > 0
+    recomputed_hashes = []
     for stored in stored_values:
-        if stored["numeric_value"] is not None:
-            assert isinstance(stored["numeric_value"], Decimal)
+        payload = {
+            "feature_code": stored["feature_code"],
+            "numeric_value": str(stored["numeric_value"])
+            if stored["numeric_value"] is not None
+            else None,
+            "string_value": stored["string_value"],
+            "boolean_value": stored["boolean_value"],
+            "unit": stored["unit"],
+            "sequence": stored["sequence"],
+            "timestamp": stored["timestamp"].isoformat()
+            if stored["timestamp"]
+            else None,
+            "null_reason": stored["null_reason"],
+        }
+        serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        recomputed_hashes.append(hashlib.sha256(serialized.encode("utf-8")).hexdigest())
+    output_payload = {
+        "schema_version": "1.0",
+        "value_count": len(stored_values),
+        "value_hashes": recomputed_hashes,
+    }
+    serialized = json.dumps(output_payload, sort_keys=True, separators=(",", ":"))
+    recomputed_output_hash = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    assert result.calculation.output_hash == recomputed_output_hash
 
 
 def test_input_hash_includes_full_feature_set_config() -> None:
@@ -813,8 +839,10 @@ def test_correction_invalidation_lineage_full_sequence() -> None:
         replacement_calculation_id=None,
     )
     reloaded = service._find_existing_calculation(result.calculation.idempotency_key)
-    assert reloaded is not None
-    assert reloaded.status == FeatureStatus.INVALID_SOURCE.value
+    assert reloaded is None
+    assert len(session.invalidations) == 1
+    assert session.invalidations[0]["reason"] == "candle_correction"
+    assert session.invalidations[0]["calculation_id"] == result.calculation.id
 
 
 def test_warm_up_rows_allow_all_null_with_reason() -> None:
