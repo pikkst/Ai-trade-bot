@@ -3252,6 +3252,17 @@ class MarketDataService:
             .scalars()
             .all()
         )
+        for snapshot_id in invalidated_snapshots:
+            self._session.execute(
+                text(
+                    """
+                    select public.invalidate_feature_calculations_for_snapshot(
+                        :snapshot_id, :reason
+                    )
+                    """
+                ),
+                {"snapshot_id": snapshot_id, "reason": "candle_correction"},
+            )
         # Append terminal correction_applied evidence for this candle so
         # snapshots built from the replacement are not blocked forever
         # (append-only resolution).

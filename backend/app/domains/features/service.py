@@ -616,38 +616,16 @@ class FeatureService:
         reason: str,
         replacement_calculation_id: UUID | None = None,
     ) -> None:
-        rows = (
-            self._session.execute(
-                text(
-                    """
-                    select id from public.feature_calculations
-                    where snapshot_id = :snapshot_id
-                      and status = 'completed'
-                    order by created_at asc
-                    """
-                ),
-                {"snapshot_id": snapshot_id},
-            )
-            .scalars()
-            .all()
+        self._session.execute(
+            text(
+                """
+                select public.invalidate_feature_calculations_for_snapshot(
+                    :snapshot_id, :reason
+                )
+                """
+            ),
+            {"snapshot_id": snapshot_id, "reason": reason},
         )
-        for calculation_id in rows:
-            self._session.execute(
-                text(
-                    """
-                    insert into public.feature_calculation_invalidations (
-                        calculation_id, reason, replacement_calculation_id
-                    ) values (
-                        :calculation_id, :reason, :replacement_calculation_id
-                    )
-                    """
-                ),
-                {
-                    "calculation_id": calculation_id,
-                    "reason": reason,
-                    "replacement_calculation_id": replacement_calculation_id,
-                },
-            )
 
     def _make_value(
         self,

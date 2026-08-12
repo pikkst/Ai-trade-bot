@@ -210,6 +210,26 @@ class MockSession:
                     }
                 )
             return result
+        if "select public.invalidate_feature_calculations_for_snapshot" in sql:
+            snapshot_id = params.get("snapshot_id")
+            reason = params.get("reason")
+            for calc in self.calculations.values():
+                if (
+                    calc["snapshot_id"] == snapshot_id
+                    and calc["status"] == "completed"
+                    and not any(
+                        inv["calculation_id"] == calc["id"]
+                        for inv in self.invalidations
+                    )
+                ):
+                    self.invalidations.append(
+                        {
+                            "calculation_id": calc["id"],
+                            "reason": reason,
+                            "replacement_calculation_id": None,
+                        }
+                    )
+            return result
         if "insert into public.feature_calculation_invalidations" in sql:
             self.invalidations.append(
                 {
@@ -234,6 +254,18 @@ class MockSession:
                 ):
                     rows.append(calc["id"])
             result._scalars_value = rows
+            return result
+        if "from public.consumable_feature_calculations" in sql:
+            for calc in self.calculations.values():
+                if calc.get("idempotency_key") == params.get("idempotency_key"):
+                    if calc["id"] not in [
+                        inv["calculation_id"] for inv in self.invalidations
+                    ]:
+                        result._one_or_none_value = calc
+                    else:
+                        result._one_or_none_value = None
+                    return result
+            result._one_or_none_value = None
             return result
         if "from public.feature_calculations" in sql and "input_hash" in sql:
             for calc in self.calculations.values():

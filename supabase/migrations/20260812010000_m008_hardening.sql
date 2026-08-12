@@ -36,12 +36,13 @@ declare
     v_count int;
     v_expected int;
     v_invalid_count int;
+    v_workspace_id uuid;
     v_symbol_version_id uuid;
     v_interval_code text;
     v_analysis_time timestamptz;
 begin
     select workspace_id, symbol_version_id, interval_code, analysis_time, candle_count
-    into v_symbol_version_id, v_interval_code, v_analysis_time, v_expected
+    into v_workspace_id, v_symbol_version_id, v_interval_code, v_analysis_time, v_expected
     from public.market_snapshots
     where id = p_snapshot_id;
 
@@ -131,6 +132,8 @@ create table if not exists public.feature_calculation_invalidations (
 create index if not exists feature_calculation_invalidations_calc_idx
     on public.feature_calculation_invalidations (calculation_id);
 
+alter table public.feature_calculation_invalidations add constraint feature_calculation_invalidations_calc_unique unique (calculation_id);
+
 alter table public.feature_calculation_invalidations enable row level security;
 alter table public.feature_calculation_invalidations force row level security;
 
@@ -140,6 +143,7 @@ create policy workflow_feature_calculation_invalidations_all on public.feature_c
 revoke all on public.feature_calculation_invalidations from public, anon, authenticated;
 grant usage on schema public to app_workflow, app_migration;
 grant select, insert on public.feature_calculation_invalidations to app_workflow;
+grant select on public.consumable_feature_calculations to app_workflow;
 grant all privileges on all tables in schema public to app_migration;
 grant all privileges on all sequences in schema public to app_migration;
 
@@ -152,3 +156,24 @@ where not exists (
     from public.feature_calculation_invalidations fci
     where fci.calculation_id = fc.id
 );
+
+-- 7. Idempotent feature invalidation for snapshot corrections.
+create or replace function public.invalidate_feature_calculations_for_snapshot(
+    p_snapshot_id uuid,
+    p_reason text
+)
+returns void
+language plpgsql
+as $$
+begin
+    insert into public.feature_calculation_invalidations (calculation_id, reason)
+    select fc.id, p_reason
+    from public.feature_calculations fc
+    where fc.snapshot_id = p_snapshot_id
+      and fc.status = 'completed'
+      and not exists (
+          select 1 from public.feature_calculation_invalidations fci
+          where fci.calculation_id = fc.id
+      );
+end;
+$$;
