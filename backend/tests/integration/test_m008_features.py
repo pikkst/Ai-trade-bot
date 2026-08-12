@@ -497,18 +497,18 @@ def test_feature_set_version_immutability(
         conn.execute(
             text(
                 """
-                    insert into public.feature_set_versions (
-                        id, workspace_id, name, semantic_version,
-                        implementation_reference, configuration_hash,
-                        required_history, warm_up_policy, status,
-                        created_by, created_at
-                    ) values (
-                        :id, :workspace_id, :name, :semantic_version,
-                        :implementation_reference, :configuration_hash,
-                        :required_history, :warm_up_policy, :status,
-                        :created_by, :created_at
-                    )
-                    """
+                insert into public.feature_set_versions (
+                    id, workspace_id, name, semantic_version,
+                    implementation_reference, configuration_hash,
+                    required_history, warm_up_policy, status,
+                    created_by, created_at
+                ) values (
+                    :id, :workspace_id, :name, :semantic_version,
+                    :implementation_reference, :configuration_hash,
+                    :required_history, :warm_up_policy, :status,
+                    :created_by, :created_at
+                )
+                """
             ),
             {
                 "id": FEATURE_SET_ID,
@@ -524,10 +524,12 @@ def test_feature_set_version_immutability(
                 "created_at": FIXED_TIME,
             },
         )
-        with pytest.raises(Exception, match="cannot update feature_set_version"):
-            conn.execute(
-                text(
-                    "update public.feature_set_versions set name = 'new' where id = :id"
-                ),
-                {"id": FEATURE_SET_ID},
-            )
+    with (
+        pytest.raises(Exception, match="cannot update feature_set_version"),
+        database_engine.connect() as conn2,
+        conn2.begin(),
+    ):
+        conn2.execute(
+            text("update public.feature_set_versions set name = 'new' where id = :id"),
+            {"id": FEATURE_SET_ID},
+        )
