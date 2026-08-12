@@ -396,7 +396,7 @@ A requested finalized candle range can be loaded, validated, repaired, and appro
 - Parent lineage determinism: repair parent lineage is built only from completed ingestion `page_hashes` evidence scoped to the target range; overlapping ingestions are ordered by `requested_start_time, id`; conflicting evidence for the same timestamp fails closed; unvalidated candle-table rows are never folded into accepted lineage.
 - Known limitations: integration tests require a running Supabase PostgreSQL instance; real Binance REST smoke is optional and not part of normal CI.
 
-## [ ] Master Task 8 — M008 Immutable Snapshots and Deterministic Features
+## [i] Master Task 8 — M008 Immutable Snapshots and Deterministic Features
 
 ### Outcome
 
@@ -430,6 +430,17 @@ Create immutable snapshot and feature evidence that every later analysis can rep
 ### Completion Gate
 
 Identical approved candles and feature versions produce identical immutable snapshot and feature outputs.
+
+### Evidence
+
+- Implementation branch: `m008-immutable-snapshots-deterministic-features`
+- Pull request: https://github.com/pikkst/Ai-trade-bot/pull/13
+- Migrations: `supabase/migrations/20260812000000_m008_features.sql`, `supabase/migrations/20260812010000_m008_hardening.sql`
+- Domain: `backend/app/domains/features/` (models, service, `__init__.py`)
+- Tests: `backend/tests/unit/test_m008_features.py` (42 tests), `backend/tests/integration/test_m008_features.py` (6 DB-backed tests, skipped without TEST_DATABASE_URL)
+- Verification commands: `cd backend && python -m pytest tests/unit/ -v` (244 passed), `.\tasks.ps1 quality` (green), `.\tasks.ps1 security-test` (clean)
+- Coverage: 83.72% total, 97% on `app/domains/features/service.py`
+- Known limitations: integration tests require `TEST_DATABASE_URL`; DB-backed tests verify PostgreSQL constraints, membership validation, correction lineage idempotency, and warm-up representation
 
 ## [ ] Master Task 9 — M009 Gemini Adapter, Prompts, Schemas, Validation, and Budgets
 
