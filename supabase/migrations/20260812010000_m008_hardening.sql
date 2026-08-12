@@ -140,13 +140,6 @@ alter table public.feature_calculation_invalidations force row level security;
 create policy workflow_feature_calculation_invalidations_all on public.feature_calculation_invalidations
     for all to app_workflow using (true) with check (true);
 
-revoke all on public.feature_calculation_invalidations from public, anon, authenticated;
-grant usage on schema public to app_workflow, app_migration;
-grant select, insert on public.feature_calculation_invalidations to app_workflow;
-grant select on public.consumable_feature_calculations to app_workflow;
-grant all privileges on all tables in schema public to app_migration;
-grant all privileges on all sequences in schema public to app_migration;
-
 -- 6. Read gate: exclude invalidated calculations from normal consumption.
 create or replace view public.consumable_feature_calculations as
 select fc.*
@@ -177,3 +170,10 @@ begin
       );
 end;
 $$;
+
+revoke all on public.feature_calculation_invalidations from public, anon, authenticated;
+grant usage on schema public to app_workflow, app_migration;
+grant select, insert on public.feature_calculation_invalidations to app_workflow;
+grant select on public.consumable_feature_calculations to app_workflow;
+grant all privileges on all tables in schema public to app_migration;
+grant all privileges on all sequences in schema public to app_migration;
