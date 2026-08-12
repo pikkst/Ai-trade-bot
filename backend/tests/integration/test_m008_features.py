@@ -134,6 +134,7 @@ def _clean_m008_rows(session: Session) -> None:
 def clean_m008_data(db_session: Session) -> Session:
     _clean_m008_rows(db_session)
     yield db_session
+    db_session.rollback()
     _clean_m008_rows(db_session)
 
 
