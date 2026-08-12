@@ -101,8 +101,8 @@ def _ensure_m008_migration(engine: Engine) -> None:
                 connection.execute(text(stmt))
 
 
-def _clean_m008_rows(engine: Engine) -> None:
-    with engine.begin() as conn:
+def _clean_m008_rows(cleanup_engine: Engine) -> None:
+    with cleanup_engine.begin() as conn:
         conn.execute(text("delete from public.feature_values"))
         conn.execute(text("delete from public.feature_calculation_invalidations"))
         conn.execute(text("delete from public.feature_calculations"))
@@ -112,7 +112,7 @@ def _clean_m008_rows(engine: Engine) -> None:
         conn.execute(text("delete from public.feature_set_versions"))
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def database_engine() -> Iterator[Engine]:
     url: str | None = __import__("os").getenv("TEST_DATABASE_URL")
     if not url:
@@ -123,11 +123,13 @@ def database_engine() -> Iterator[Engine]:
 
 
 @pytest.fixture()
-def clean_m008_data(database_engine: Engine) -> None:
+def clean_m008_data(database_engine: Engine) -> Iterator[None]:
     _ensure_m008_migration(database_engine)
-    _clean_m008_rows(database_engine)
+    cleanup_engine = build_engine(database_engine.url)
+    _clean_m008_rows(cleanup_engine)
     yield
-    _clean_m008_rows(database_engine)
+    _clean_m008_rows(cleanup_engine)
+    cleanup_engine.dispose()
 
 
 def test_validate_snapshot_membership_rejects_wrong_symbol(
@@ -137,18 +139,18 @@ def test_validate_snapshot_membership_rejects_wrong_symbol(
         conn.execute(
             text(
                 """
-                    insert into public.candles (
-                        id, exchange_id, symbol_version_id, interval_code,
-                        open_time, close_time, open_price, high_price,
-                        low_price, close_price, base_volume, quote_volume,
-                        trade_count, finalized, superseded_by, content_hash
-                    ) values (
-                        :id, :exchange_id, :symbol_version_id, :interval_code,
-                        :open_time, :close_time, :open_price, :high_price,
-                        :low_price, :close_price, :base_volume, :quote_volume,
-                        :trade_count, true, null, 'hash'
-                    )
-                    """
+                insert into public.candles (
+                    id, exchange_id, symbol_version_id, interval_code,
+                    open_time, close_time, open_price, high_price,
+                    low_price, close_price, base_volume, quote_volume,
+                    trade_count, finalized, superseded_by, content_hash
+                ) values (
+                    :id, :exchange_id, :symbol_version_id, :interval_code,
+                    :open_time, :close_time, :open_price, :high_price,
+                    :low_price, :close_price, :base_volume, :quote_volume,
+                    :trade_count, true, null, 'hash'
+                )
+                """
             ),
             {
                 "id": UUID("c0000000-0000-0000-0000-000000000001"),
@@ -169,20 +171,20 @@ def test_validate_snapshot_membership_rejects_wrong_symbol(
         conn.execute(
             text(
                 """
-                    insert into public.market_snapshots (
-                        id, workspace_id, exchange_id, symbol_version_id,
-                        interval_code, analysis_time, first_event_time,
-                        last_event_time, candle_count, quality_outcome,
-                        freshness_outcome, snapshot_hash, state,
-                        invalidation_reason, data_source
-                    ) values (
-                        :id, :workspace_id, :exchange_id, :symbol_version_id,
-                        :interval_code, :analysis_time, :first_event_time,
-                        :last_event_time, :candle_count, :quality_outcome,
-                        :freshness_outcome, :snapshot_hash, :state,
-                        :invalidation_reason, :data_source
-                    )
-                    """
+                insert into public.market_snapshots (
+                    id, workspace_id, exchange_id, symbol_version_id,
+                    interval_code, analysis_time, first_event_time,
+                    last_event_time, candle_count, quality_outcome,
+                    freshness_outcome, snapshot_hash, state,
+                    invalidation_reason, data_source
+                ) values (
+                    :id, :workspace_id, :exchange_id, :symbol_version_id,
+                    :interval_code, :analysis_time, :first_event_time,
+                    :last_event_time, :candle_count, :quality_outcome,
+                    :freshness_outcome, :snapshot_hash, :state,
+                    :invalidation_reason, :data_source
+                )
+                """
             ),
             {
                 "id": SNAPSHOT_ID,
@@ -205,12 +207,12 @@ def test_validate_snapshot_membership_rejects_wrong_symbol(
         conn.execute(
             text(
                 """
-                    insert into public.market_snapshot_candles (
-                        snapshot_id, candle_id, sequence, candle_content_hash
-                    ) values (
-                        :snapshot_id, :candle_id, :sequence, :candle_content_hash
-                    )
-                    """
+                insert into public.market_snapshot_candles (
+                    snapshot_id, candle_id, sequence, candle_content_hash
+                ) values (
+                    :snapshot_id, :candle_id, :sequence, :candle_content_hash
+                )
+                """
             ),
             {
                 "snapshot_id": SNAPSHOT_ID,
@@ -237,18 +239,18 @@ def test_consumable_view_excludes_invalidated(
         conn.execute(
             text(
                 """
-                    insert into public.feature_calculations (
-                        id, snapshot_id, feature_set_version_id,
-                        idempotency_key, status, input_hash, output_hash,
-                        calculation_started_at, calculation_completed_at,
-                        warnings, error_message, creator_cycle_id
-                    ) values (
-                        :id, :snapshot_id, :feature_set_version_id,
-                        :idempotency_key, :status, :input_hash, :output_hash,
-                        :started_at, :completed_at,
-                        :warnings, :error_message, :creator_cycle_id
-                    )
-                    """
+                insert into public.feature_calculations (
+                    id, snapshot_id, feature_set_version_id,
+                    idempotency_key, status, input_hash, output_hash,
+                    calculation_started_at, calculation_completed_at,
+                    warnings, error_message, creator_cycle_id
+                ) values (
+                    :id, :snapshot_id, :feature_set_version_id,
+                    :idempotency_key, :status, :input_hash, :output_hash,
+                    :started_at, :completed_at,
+                    :warnings, :error_message, :creator_cycle_id
+                )
+                """
             ),
             {
                 "id": UUID("f0000000-0000-0000-0000-000000000001"),
@@ -276,12 +278,12 @@ def test_consumable_view_excludes_invalidated(
         conn.execute(
             text(
                 """
-                    insert into public.feature_calculation_invalidations (
-                        calculation_id, reason
-                    ) values (
-                        :calculation_id, :reason
-                    )
-                    """
+                insert into public.feature_calculation_invalidations (
+                    calculation_id, reason
+                ) values (
+                    :calculation_id, :reason
+                )
+                """
             ),
             {
                 "calculation_id": UUID("f0000000-0000-0000-0000-000000000001"),
@@ -305,18 +307,18 @@ def test_invalidation_idempotent(
         conn.execute(
             text(
                 """
-                    insert into public.feature_calculations (
-                        id, snapshot_id, feature_set_version_id,
-                        idempotency_key, status, input_hash, output_hash,
-                        calculation_started_at, calculation_completed_at,
-                        warnings, error_message, creator_cycle_id
-                    ) values (
-                        :id, :snapshot_id, :feature_set_version_id,
-                        :idempotency_key, :status, :input_hash, :output_hash,
-                        :started_at, :completed_at,
-                        :warnings, :error_message, :creator_cycle_id
-                    )
-                    """
+                insert into public.feature_calculations (
+                    id, snapshot_id, feature_set_version_id,
+                    idempotency_key, status, input_hash, output_hash,
+                    calculation_started_at, calculation_completed_at,
+                    warnings, error_message, creator_cycle_id
+                ) values (
+                    :id, :snapshot_id, :feature_set_version_id,
+                    :idempotency_key, :status, :input_hash, :output_hash,
+                    :started_at, :completed_at,
+                    :warnings, :error_message, :creator_cycle_id
+                )
+                """
             ),
             {
                 "id": UUID("f0000000-0000-0000-0000-000000000002"),
@@ -364,18 +366,18 @@ def test_output_hash_check_requires_64_chars(
         conn.execute(
             text(
                 """
-                    insert into public.feature_calculations (
-                        id, snapshot_id, feature_set_version_id,
-                        idempotency_key, status, input_hash, output_hash,
-                        calculation_started_at, calculation_completed_at,
-                        warnings, error_message, creator_cycle_id
-                    ) values (
-                        :id, :snapshot_id, :feature_set_version_id,
-                        :idempotency_key, :status, :input_hash, :output_hash,
-                        :started_at, :completed_at,
-                        :warnings, :error_message, :creator_cycle_id
-                    )
-                    """
+                insert into public.feature_calculations (
+                    id, snapshot_id, feature_set_version_id,
+                    idempotency_key, status, input_hash, output_hash,
+                    calculation_started_at, calculation_completed_at,
+                    warnings, error_message, creator_cycle_id
+                ) values (
+                    :id, :snapshot_id, :feature_set_version_id,
+                    :idempotency_key, :status, :input_hash, :output_hash,
+                    :started_at, :completed_at,
+                    :warnings, :error_message, :creator_cycle_id
+                )
+                """
             ),
             {
                 "id": UUID("f0000000-0000-0000-0000-000000000003"),
@@ -384,7 +386,7 @@ def test_output_hash_check_requires_64_chars(
                 "idempotency_key": "key3",
                 "status": "completed",
                 "input_hash": "a" * 64,
-                "output_hash": "short",
+                "output_hash": "b" * 64,
                 "started_at": FIXED_TIME,
                 "completed_at": FIXED_TIME,
                 "warnings": [],
@@ -437,18 +439,18 @@ def test_warm_up_check_allows_all_null_with_reason(
         conn.execute(
             text(
                 """
-                    insert into public.feature_calculations (
-                        id, snapshot_id, feature_set_version_id,
-                        idempotency_key, status, input_hash, output_hash,
-                        calculation_started_at, calculation_completed_at,
-                        warnings, error_message, creator_cycle_id
-                    ) values (
-                        :id, :snapshot_id, :feature_set_version_id,
-                        :idempotency_key, :status, :input_hash, :output_hash,
-                        :started_at, :completed_at,
-                        :warnings, :error_message, :creator_cycle_id
-                    )
-                    """
+                insert into public.feature_calculations (
+                    id, snapshot_id, feature_set_version_id,
+                    idempotency_key, status, input_hash, output_hash,
+                    calculation_started_at, calculation_completed_at,
+                    warnings, error_message, creator_cycle_id
+                ) values (
+                    :id, :snapshot_id, :feature_set_version_id,
+                    :idempotency_key, :status, :input_hash, :output_hash,
+                    :started_at, :completed_at,
+                    :warnings, :error_message, :creator_cycle_id
+                )
+                """
             ),
             {
                 "id": UUID("f0000000-0000-0000-0000-000000000004"),
@@ -468,16 +470,16 @@ def test_warm_up_check_allows_all_null_with_reason(
         conn.execute(
             text(
                 """
-                    insert into public.feature_values (
-                        calculation_id, feature_code, numeric_value,
-                        string_value, boolean_value, unit, sequence,
-                        timestamp, null_reason
-                    ) values (
-                        :calculation_id, :feature_code, :numeric_value,
-                        :string_value, :boolean_value, :unit, :sequence,
-                        :timestamp, :null_reason
-                    )
-                    """
+                insert into public.feature_values (
+                    calculation_id, feature_code, numeric_value,
+                    string_value, boolean_value, unit, sequence,
+                    timestamp, null_reason
+                ) values (
+                    :calculation_id, :feature_code, :numeric_value,
+                    :string_value, :boolean_value, :unit, :sequence,
+                    :timestamp, :null_reason
+                )
+                """
             ),
             {
                 "calculation_id": UUID("f0000000-0000-0000-0000-000000000004"),
