@@ -5,9 +5,11 @@ Requires TEST_DATABASE_URL to be set; skipped otherwise.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from typing import Iterator
 from uuid import UUID
 
 import pytest
@@ -109,16 +111,6 @@ def database_engine() -> Engine:
     return build_engine(url)
 
 
-@pytest.fixture()
-def db_session(database_engine: Engine) -> Session:
-    _ensure_m008_migration(database_engine)
-    session_factory = build_session_factory(database_engine)
-    session = session_factory()
-    yield session
-    session.rollback()
-    session.close()
-
-
 def _clean_m008_rows(engine: Engine) -> None:
     with engine.begin() as conn:
         conn.execute(text("delete from public.feature_values"))
@@ -131,12 +123,19 @@ def _clean_m008_rows(engine: Engine) -> None:
 
 
 @pytest.fixture()
-def clean_m008_data(database_engine: Engine, db_session: Session) -> Session:
+def clean_m008_data(database_engine: Engine) -> Iterator[Session]:
+    _ensure_m008_migration(database_engine)
     _clean_m008_rows(database_engine)
-    yield db_session
-    db_session.rollback()
-    db_session.close()
-    _clean_m008_rows(database_engine)
+    session_factory = build_session_factory(database_engine)
+    session = session_factory()
+    session.begin()
+    try:
+        yield session
+    finally:
+        with contextlib.suppress(Exception):
+            session.rollback()
+        session.close()
+        _clean_m008_rows(database_engine)
 
 
 def test_validate_snapshot_membership_rejects_wrong_symbol(
