@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from typing import Iterator
 from uuid import UUID
 
 import pytest
@@ -111,12 +112,14 @@ def _clean_m008_rows(engine: Engine) -> None:
         conn.execute(text("delete from public.feature_set_versions"))
 
 
-@pytest.fixture(scope="session")
-def database_engine() -> Engine:
+@pytest.fixture()
+def database_engine() -> Iterator[Engine]:
     url: str | None = __import__("os").getenv("TEST_DATABASE_URL")
     if not url:
         pytest.skip("TEST_DATABASE_URL is required for M008 integration tests")
-    return build_engine(url)
+    engine = build_engine(url)
+    yield engine
+    engine.dispose()
 
 
 @pytest.fixture()
