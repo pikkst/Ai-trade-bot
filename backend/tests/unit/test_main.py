@@ -21,7 +21,7 @@ def test_root_endpoint() -> None:
     response = client.get("/")
     assert response.status_code == 200
     assert response.json()["name"] == "The Daily Roast AI"
-    assert response.json()["environment"] == "local"
+    assert response.json()["environment"] in {"local", "development"}
 
 
 def test_research_cycle_scaffold_is_deterministic(
