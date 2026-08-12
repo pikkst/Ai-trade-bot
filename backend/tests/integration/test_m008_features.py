@@ -119,23 +119,24 @@ def db_session(database_engine: Engine) -> Session:
     session.close()
 
 
-def _clean_m008_rows(session: Session) -> None:
-    session.execute(text("delete from public.feature_values"))
-    session.execute(text("delete from public.feature_calculation_invalidations"))
-    session.execute(text("delete from public.feature_calculations"))
-    session.execute(text("delete from public.market_snapshot_candles"))
-    session.execute(text("delete from public.market_snapshots"))
-    session.execute(text("delete from public.candles"))
-    session.execute(text("delete from public.feature_set_versions"))
-    session.commit()
+def _clean_m008_rows(engine: Engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(text("delete from public.feature_values"))
+        conn.execute(text("delete from public.feature_calculation_invalidations"))
+        conn.execute(text("delete from public.feature_calculations"))
+        conn.execute(text("delete from public.market_snapshot_candles"))
+        conn.execute(text("delete from public.market_snapshots"))
+        conn.execute(text("delete from public.candles"))
+        conn.execute(text("delete from public.feature_set_versions"))
 
 
 @pytest.fixture()
-def clean_m008_data(db_session: Session) -> Session:
-    _clean_m008_rows(db_session)
+def clean_m008_data(database_engine: Engine, db_session: Session) -> Session:
+    _clean_m008_rows(database_engine)
     yield db_session
     db_session.rollback()
-    _clean_m008_rows(db_session)
+    db_session.close()
+    _clean_m008_rows(database_engine)
 
 
 def test_validate_snapshot_membership_rejects_wrong_symbol(
